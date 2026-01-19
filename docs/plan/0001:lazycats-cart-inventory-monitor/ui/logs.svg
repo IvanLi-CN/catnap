@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900">
+  <defs>
+    <style>
+      .bg { fill: #0b1220; }
+      .surface { fill: #0f1b33; stroke: none; }
+      .surface2 { fill: #0c172e; stroke: none; }
+      .line { stroke: rgba(27, 42, 74, 0.55); stroke-width: 1; }
+      .title { fill: #ffffff; font: 22px Inter, Arial, sans-serif; font-weight: 800; }
+      .h2 { fill: #e6eefc; font: 16px Inter, Arial, sans-serif; font-weight: 800; }
+      .text { fill: #e6eefc; font: 14px Inter, Arial, sans-serif; }
+      .muted { fill: #9bb0d0; font: 14px Inter, Arial, sans-serif; }
+      .mono { fill: #b9c7e6; font: 12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
+
+      .navLabel { fill: #cfe0ff; font: 14px Inter, Arial, sans-serif; font-weight: 650; }
+      .navLabelActive { fill: #ffffff; font: 14px Inter, Arial, sans-serif; font-weight: 850; }
+      .navAccent { fill: #2a8a55; }
+
+      .pill { fill: #101f3a; stroke: rgba(27, 42, 74, 0.55); stroke-width: 1; }
+      .pillOn { fill: #173428; stroke: rgba(42, 138, 85, 0.85); stroke-width: 1; }
+      .pillWarn { fill: #3b2f18; stroke: rgba(138, 106, 42, 0.9); stroke-width: 1; }
+      .pillErr { fill: #3b1a1a; stroke: rgba(138, 42, 42, 0.9); stroke-width: 1; }
+      .badgeText { fill: #e6eefc; font: 12px Inter, Arial, sans-serif; font-weight: 700; }
+    </style>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1440" height="900"/>
+
+  <!-- Top bar -->
+  <rect class="surface" x="24" y="24" width="1392" height="64" rx="14"/>
+  <text class="title" x="48" y="58">Catnap • 日志</text>
+  <text class="muted" x="48" y="76">按用户隔离 • 支持过滤与分页（cursor）</text>
+
+  <!-- Left nav -->
+  <rect class="surface" x="24" y="112" width="240" height="764" rx="14"/>
+  <text class="h2" x="48" y="148">导航</text>
+  <text class="navLabel" x="56" y="194">库存监控</text>
+  <text class="navLabel" x="56" y="234">全部产品</text>
+  <text class="navLabel" x="56" y="274">系统设置</text>
+  <rect class="navAccent" x="40" y="296" width="4" height="24" rx="2"/>
+  <text class="navLabelActive" x="56" y="314">日志</text>
+
+  <!-- Main -->
+  <rect class="surface" x="288" y="112" width="1128" height="764" rx="14"/>
+
+  <!-- Block A: filters -->
+  <rect class="surface2" x="312" y="136" width="1080" height="104" rx="14"/>
+  <text class="h2" x="336" y="172">过滤</text>
+  <!-- Controls (height=32, gap=24; avoid oversized action buttons) -->
+  <rect class="pill" x="336" y="192" width="168" height="32" rx="10"/>
+  <text class="badgeText" x="352" y="213">Level：info</text>
+  <rect class="pill" x="528" y="192" width="520" height="32" rx="10"/>
+  <text class="muted" x="544" y="213">关键字：scope/message…</text>
+  <rect class="pill" x="1072" y="192" width="144" height="32" rx="10"/>
+  <text class="badgeText" x="1088" y="213">limit：50</text>
+  <rect class="pillWarn" x="1240" y="192" width="128" height="32" rx="10"/>
+  <text class="badgeText" x="1288" y="213">刷新</text>
+
+  <!-- Block B: table (gap=24) -->
+  <rect class="surface2" x="312" y="264" width="1080" height="560" rx="14"/>
+  <text class="h2" x="336" y="300">列表</text>
+  <line class="line" x1="312" y1="320" x2="1392" y2="320"/>
+
+  <!-- Header row -->
+  <text class="muted" x="336" y="348">时间</text>
+  <text class="muted" x="504" y="348">级别</text>
+  <text class="muted" x="616" y="348">范围</text>
+  <text class="muted" x="824" y="348">消息</text>
+  <line class="line" x1="312" y1="364" x2="1392" y2="364"/>
+
+  <!-- Row 1 -->
+  <text class="muted" x="336" y="404">12:01:05</text>
+  <rect class="pillOn" x="496" y="386" width="88" height="28" rx="10"/>
+  <text class="badgeText" x="524" y="405">INFO</text>
+  <text class="mono" x="616" y="404">poller</text>
+  <text class="text" x="824" y="404">checked config=15 qty=1 price=1.50</text>
+  <line class="line" x1="336" y1="424" x2="1368" y2="424"/>
+
+  <!-- Row 2 -->
+  <text class="muted" x="336" y="464">12:02:08</text>
+  <rect class="pillWarn" x="496" y="446" width="88" height="28" rx="10"/>
+  <text class="badgeText" x="518" y="465">WARN</text>
+  <text class="mono" x="616" y="464">parser</text>
+  <text class="text" x="824" y="464">upstream layout changed: missing field \"库存\"</text>
+  <line class="line" x1="336" y1="484" x2="1368" y2="484"/>
+
+  <!-- Row 3 -->
+  <text class="muted" x="336" y="524">12:03:10</text>
+  <rect class="pillErr" x="496" y="506" width="88" height="28" rx="10"/>
+  <text class="badgeText" x="516" y="525">ERROR</text>
+  <text class="mono" x="616" y="524">notify.telegram</text>
+  <text class="text" x="824" y="524">send failed: timeout</text>
+
+  <!-- Pagination (compact; avoid oversized fields) -->
+  <rect class="pill" x="336" y="768" width="480" height="32" rx="10"/>
+  <text class="muted" x="352" y="789">cursor: nextCursor=opaque-string（null 表示到底）</text>
+  <rect class="pill" x="1240" y="768" width="128" height="32" rx="10"/>
+  <text class="badgeText" x="1280" y="789">下一页</text>
+
+</svg>
