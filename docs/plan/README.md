@@ -40,4 +40,4 @@
 
 | ID   | Title | Status | Plan | Last | Notes |
 |-----:|-------|--------|------|------|-------|
-| 0001 | 懒猫云购物车库存监控 | 待设计 | `0001:lazycats-cart-inventory-monitor/PLAN.md` | 2026-01-18 | - |
+| 0001 | 懒猫云购物车库存监控 | 待实现 | `0001:lazycats-cart-inventory-monitor/PLAN.md` | 2026-01-19 | - |
