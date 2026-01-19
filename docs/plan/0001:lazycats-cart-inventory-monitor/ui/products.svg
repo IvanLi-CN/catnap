@@ -1,0 +1,110 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900">
+  <defs>
+    <style>
+      .bg { fill: #0b1220; }
+      .surface { fill: #0f1b33; stroke: none; }
+      .surface2 { fill: #0c172e; stroke: none; }
+      .line { stroke: rgba(27, 42, 74, 0.55); stroke-width: 1; }
+      .title { fill: #ffffff; font: 22px Inter, Arial, sans-serif; font-weight: 800; }
+      .h2 { fill: #e6eefc; font: 16px Inter, Arial, sans-serif; font-weight: 800; }
+      .text { fill: #e6eefc; font: 14px Inter, Arial, sans-serif; }
+      .muted { fill: #9bb0d0; font: 14px Inter, Arial, sans-serif; }
+      .mono { fill: #b9c7e6; font: 12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
+
+      .navLabel { fill: #cfe0ff; font: 14px Inter, Arial, sans-serif; font-weight: 650; }
+      .navLabelActive { fill: #ffffff; font: 14px Inter, Arial, sans-serif; font-weight: 850; }
+      .navAccent { fill: #2a8a55; }
+
+      .pill { fill: #101f3a; stroke: rgba(27, 42, 74, 0.55); stroke-width: 1; }
+      .pillOn { fill: #173428; stroke: rgba(42, 138, 85, 0.85); stroke-width: 1; }
+      .pillWarn { fill: #3b2f18; stroke: rgba(138, 106, 42, 0.9); stroke-width: 1; }
+      .pillDisabled { fill: #1b2336; stroke: rgba(52, 65, 95, 0.8); stroke-width: 1; }
+      .badgeText { fill: #e6eefc; font: 12px Inter, Arial, sans-serif; font-weight: 700; }
+      .badgeTextCenter { fill: #e6eefc; font: 12px Inter, Arial, sans-serif; font-weight: 700; text-anchor: middle; dominant-baseline: middle; }
+    </style>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1440" height="900"/>
+
+  <!-- Top bar -->
+  <rect class="surface" x="24" y="24" width="1392" height="64" rx="14"/>
+  <text class="title" x="48" y="58">Catnap • 全部产品</text>
+  <text class="muted" x="48" y="76">分组：国家地区 → 可用区域 → 配置 • 点击切换监控（用户隔离）</text>
+  <rect class="pill" x="1200" y="40" width="192" height="32" rx="10"/>
+  <text class="badgeText" x="1216" y="61">刷新：手动</text>
+
+  <!-- Left nav -->
+  <rect class="surface" x="24" y="112" width="240" height="764" rx="14"/>
+  <text class="h2" x="48" y="148">导航</text>
+  <text class="navLabel" x="56" y="194">库存监控</text>
+  <rect class="navAccent" x="40" y="216" width="4" height="24" rx="2"/>
+  <text class="navLabelActive" x="56" y="234">全部产品</text>
+  <text class="navLabel" x="56" y="274">系统设置</text>
+  <text class="navLabel" x="56" y="314">日志</text>
+
+  <!-- Main -->
+  <rect class="surface" x="288" y="112" width="1128" height="764" rx="14"/>
+
+  <!-- Block A: filters -->
+  <rect class="surface2" x="312" y="136" width="1080" height="104" rx="14"/>
+  <text class="h2" x="336" y="172">筛选与分组</text>
+  <rect class="pill" x="336" y="192" width="200" height="32" rx="10"/>
+  <text class="badgeText" x="352" y="213">国家地区：全部</text>
+  <rect class="pill" x="560" y="192" width="200" height="32" rx="10"/>
+  <text class="badgeText" x="576" y="213">可用区域：全部</text>
+  <rect class="pill" x="784" y="192" width="312" height="32" rx="10"/>
+  <text class="muted" x="800" y="213">搜索：配置名 / 规格关键字…</text>
+  <rect class="pill" x="1120" y="192" width="248" height="32" rx="10"/>
+  <text class="badgeText" x="1136" y="213">仅看已监控</text>
+
+  <!-- Block B: group Fremont -->
+  <rect class="surface2" x="312" y="264" width="1080" height="336" rx="14"/>
+  <text class="h2" x="336" y="300">美国 / 弗里蒙特</text>
+  <text class="muted" x="336" y="324">配置卡片：规格 / 价格 / 库存 / 监控开关</text>
+  <line class="line" x1="312" y1="344" x2="1392" y2="344"/>
+
+  <!-- Cards (2 cols, gap=24, inner padding=24) -->
+  <!-- usable width inside = 1080-48=1032; 2 cols => 504 each; gap=24 -->
+  <rect class="surface" x="336" y="368" width="504" height="208" rx="14"/>
+  <text class="h2" x="360" y="400">弗里蒙特 1号</text>
+  <text class="muted" x="360" y="424">CPU 1核 • RAM 256M • 端口 20条</text>
+  <text class="text" x="360" y="448">¥ 1.00 / 月</text>
+  <rect class="pillOn" x="360" y="464" width="96" height="32" rx="10"/>
+  <text class="badgeTextCenter" x="408" y="480">库存 4</text>
+  <rect class="pillOn" x="720" y="464" width="96" height="32" rx="10"/>
+  <text class="badgeTextCenter" x="768" y="480">监控：开</text>
+  <text class="muted" x="360" y="536">变化检测：补货 / 价格 / 配置</text>
+
+  <rect class="surface" x="864" y="368" width="504" height="208" rx="14"/>
+  <text class="h2" x="888" y="400">弗里蒙特 2号</text>
+  <text class="muted" x="888" y="424">CPU 1核 • RAM 512M • 流量 2TB</text>
+  <text class="text" x="888" y="448">¥ 1.50 / 月</text>
+  <rect class="pillOn" x="888" y="464" width="96" height="32" rx="10"/>
+  <text class="badgeTextCenter" x="936" y="480">库存 1</text>
+  <rect class="pill" x="1248" y="464" width="96" height="32" rx="10"/>
+  <text class="badgeTextCenter" x="1296" y="480">监控：关</text>
+  <text class="muted" x="888" y="536">点击开关后立即持久化</text>
+
+  <!-- Block C: cloud server -->
+  <rect class="surface2" x="312" y="624" width="1080" height="200" rx="14"/>
+  <text class="h2" x="336" y="660">云服务器</text>
+  <text class="muted" x="336" y="684">长期有货：不提供库存监控开关</text>
+  <line class="line" x1="312" y1="704" x2="1392" y2="704"/>
+
+  <rect class="surface" x="336" y="720" width="504" height="104" rx="14"/>
+  <text class="h2" x="360" y="744">LAX-Premium Basic</text>
+  <text class="text" x="360" y="760">¥ 13.90 / 月</text>
+  <rect class="pillOn" x="360" y="776" width="120" height="32" rx="10"/>
+  <text class="badgeTextCenter" x="420" y="792">状态：有货</text>
+  <rect class="pillDisabled" x="720" y="776" width="96" height="32" rx="10"/>
+  <text class="badgeTextCenter" x="768" y="792">监控：禁用</text>
+
+  <rect class="surface" x="864" y="720" width="504" height="104" rx="14"/>
+  <text class="h2" x="888" y="744">LAX-Premium Plus</text>
+  <text class="text" x="888" y="760">¥ 24.90 / 月</text>
+  <rect class="pillOn" x="888" y="776" width="120" height="32" rx="10"/>
+  <text class="badgeTextCenter" x="948" y="792">状态：有货</text>
+  <rect class="pillDisabled" x="1248" y="776" width="96" height="32" rx="10"/>
+  <text class="badgeTextCenter" x="1296" y="792">监控：禁用</text>
+
+</svg>

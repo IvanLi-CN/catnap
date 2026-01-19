@@ -1,0 +1,524 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Wireframe Layout Audit</title>
+    <style>
+      :root {
+        --bg: #0b1220;
+        --panel: #0f1b33;
+        --panel2: #0c172e;
+        --border: #1b2a4a;
+        --text: #e6eefc;
+        --muted: #9bb0d0;
+        --ok: #2a8a55;
+        --bad: #c33d3d;
+      }
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font: 14px Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+      }
+      header {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        background: rgba(11, 18, 32, 0.92);
+        border-bottom: 1px solid rgba(27, 42, 74, 0.8);
+        backdrop-filter: blur(6px);
+      }
+      .wrap {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 16px 20px;
+      }
+      h1 {
+        margin: 0;
+        font-size: 16px;
+        font-weight: 800;
+      }
+      .sub {
+        margin: 10px 0 0;
+        color: var(--muted);
+        line-height: 1.45;
+      }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 10px;
+        border-radius: 10px;
+        background: var(--panel);
+        border: 1px solid var(--border);
+        color: var(--text);
+        cursor: pointer;
+        user-select: none;
+      }
+      .row {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        flex-wrap: wrap;
+        margin-top: 10px;
+      }
+      main {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 20px;
+      }
+      .card {
+        border: 1px solid var(--border);
+        background: var(--panel);
+        border-radius: 14px;
+        overflow: hidden;
+        margin-bottom: 18px;
+      }
+      .cardHead {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        padding: 12px 16px;
+        border-bottom: 1px solid rgba(27, 42, 74, 0.8);
+      }
+      .name {
+        font-weight: 800;
+      }
+      pre {
+        margin: 0;
+        padding: 12px 16px 14px;
+        color: var(--text);
+        background: var(--panel2);
+        overflow: auto;
+      }
+      code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      }
+      .ok {
+        color: var(--ok);
+        font-weight: 800;
+      }
+      .bad {
+        color: var(--bad);
+        font-weight: 800;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="wrap">
+        <h1>Wireframe Layout Audit（浏览器脚本测距）</h1>
+        <p class="sub">
+          该页会在浏览器中直接抓取 <code>/ui/*.svg</code>，用 SVG DOM（<code>getBBox()</code>）
+          计算关键容器与交互控件（pill/button）的相对间距，并输出异常点列表。
+        </p>
+        <div class="row">
+          <button id="run" class="pill" type="button">重新测量</button>
+          <span id="meta" class="sub"></span>
+        </div>
+      </div>
+    </header>
+
+    <main id="out"></main>
+
+    <script>
+      const SVGS = [
+        "inventory-monitor",
+        "products",
+        "settings",
+        "logs",
+        "unauthorized-401",
+      ];
+
+      const PILL_CLASSES = new Set([
+        "pill",
+        "pillOn",
+        "pillWarn",
+        "pillErr",
+        "pillDisabled",
+      ]);
+
+      const isFiniteNumber = (v) => typeof v === "number" && Number.isFinite(v);
+      const approx = (a, b, eps = 0.5) => Math.abs(a - b) <= eps;
+
+      const bboxOf = (el) => {
+        try {
+          // Works for SVGGraphicsElement
+          const b = el.getBBox();
+          return { x: b.x, y: b.y, w: b.width, h: b.height, r: b.x + b.width, b: b.y + b.height };
+        } catch {
+          return null;
+        }
+      };
+
+      const pickTopBar = (rects) =>
+        rects.find((r) => {
+          const b = bboxOf(r);
+          return (
+            r.classList.contains("surface") &&
+            b &&
+            approx(b.y, 24) &&
+            approx(b.h, 64) &&
+            approx(b.x, 24) &&
+            approx(b.w, 1392)
+          );
+        }) || null;
+
+      const pickNav = (rects) =>
+        rects.find((r) => {
+          const b = bboxOf(r);
+          return r.classList.contains("surface") && b && approx(b.x, 24) && approx(b.w, 240) && b.y >= 96;
+        }) || null;
+
+      const pickMain = (rects) =>
+        rects.find((r) => {
+          const b = bboxOf(r);
+          return r.classList.contains("surface") && b && b.x >= 240 && b.w >= 900 && b.y >= 96;
+        }) || null;
+
+      const contains = (outer, inner) =>
+        outer &&
+        inner &&
+        inner.x >= outer.x - 0.5 &&
+        inner.y >= outer.y - 0.5 &&
+        inner.r <= outer.r + 0.5 &&
+        inner.b <= outer.b + 0.5;
+
+      function summarize(svgEl, name) {
+        const rects = Array.from(svgEl.querySelectorAll("rect"));
+        const top = pickTopBar(rects);
+        const nav = pickNav(rects);
+        const main = pickMain(rects);
+
+        const topB = top ? bboxOf(top) : null;
+        const navB = nav ? bboxOf(nav) : null;
+        const mainB = main ? bboxOf(main) : null;
+
+        const issues = [];
+        const metrics = {};
+
+        // Unauthorized page is intentionally standalone.
+        if (name === "unauthorized-401") {
+          // Card might be drawn with gradients/filters (no class). Pick the largest rect excluding the bg.
+          const card = rects
+            .map((r) => ({ r, cls: r.getAttribute("class") || "", b: bboxOf(r) }))
+            .filter(({ b, cls }) => b && cls !== "bg")
+            .sort((a, b) => b.b.w * b.b.h - a.b.w * a.b.h)[0];
+          if (!card) issues.push("Standalone 401 card not found.");
+          if (card && !(card.b.w >= 800 && card.b.h >= 360)) issues.push("Standalone 401 card size too small.");
+          const btn = rects
+            .map((r) => ({ cls: r.getAttribute("class") || "", b: bboxOf(r) }))
+            .find(({ cls, b }) => cls === "pillWarn" && b);
+          if (!btn) {
+            issues.push("401 action button not found.");
+          } else {
+            metrics.unauthBtnW = Math.round(btn.b.w * 10) / 10;
+            metrics.unauthBtnH = Math.round(btn.b.h * 10) / 10;
+            if (btn.b.w > 180) issues.push(`401 button too wide: ${metrics.unauthBtnW} (expected <=180)`);
+            if (!approx(btn.b.h, 32)) issues.push(`401 button height: ${metrics.unauthBtnH} (expected ~32)`);
+          }
+          return { metrics, issues };
+        }
+
+        if (!topB) issues.push("Top bar container not found.");
+        if (!navB) issues.push("Left nav container not found.");
+        if (!mainB) issues.push("Main container not found.");
+
+        // Top bar internal padding (title/subtitle should not be squeezed).
+        if (topB) {
+          const texts = Array.from(svgEl.querySelectorAll("text"));
+          const titleEl = texts.find((t) => (t.getAttribute("class") || "").includes("title")) || null;
+          const mutedEls = texts.filter((t) => (t.getAttribute("class") || "").includes("muted"));
+          const titleB = titleEl ? bboxOf(titleEl) : null;
+          // subtitle is usually the first muted text that sits inside the top bar.
+          const subtitleEl =
+            mutedEls.find((t) => {
+              const b = bboxOf(t);
+              return b && contains(topB, b) && b.y >= topB.y && b.b <= topB.b;
+            }) || null;
+          const subtitleB = subtitleEl ? bboxOf(subtitleEl) : null;
+
+          if (titleB && contains(topB, titleB)) {
+            const topPad = titleB.y - topB.y;
+            metrics.topbarTitleTopPad = Math.round(topPad * 10) / 10;
+            if (topPad < 8) issues.push(`Topbar title top pad: ${metrics.topbarTitleTopPad} (expected >=8)`);
+          }
+          if (subtitleB && contains(topB, subtitleB)) {
+            const bottomPad = topB.b - subtitleB.b;
+            metrics.topbarSubtitleBottomPad = Math.round(bottomPad * 10) / 10;
+            if (bottomPad < 8) issues.push(`Topbar subtitle bottom pad: ${metrics.topbarSubtitleBottomPad} (expected >=8)`);
+          }
+        }
+
+        if (topB && navB) metrics.topToContent = Math.round((navB.y - topB.b) * 10) / 10;
+        if (navB && mainB) metrics.navToMain = Math.round((mainB.x - navB.r) * 10) / 10;
+
+        // Expected major gaps for this wireframe set.
+        const expectGap = 24;
+        if (isFiniteNumber(metrics.topToContent) && !approx(metrics.topToContent, expectGap))
+          issues.push(`Unexpected topToContent: ${metrics.topToContent} (expected ~${expectGap})`);
+        if (isFiniteNumber(metrics.navToMain) && !approx(metrics.navToMain, expectGap))
+          issues.push(`Unexpected navToMain: ${metrics.navToMain} (expected ~${expectGap})`);
+
+        // Find all pill-like controls and verify they keep inner padding (>=24) inside their nearest container.
+        // Prefer the smallest surface2 block containing the pill; fallback to main container.
+        const pills = rects
+          .map((r) => ({ r, cls: r.getAttribute("class") || "", b: bboxOf(r) }))
+          .filter(({ cls, b }) => PILL_CLASSES.has(cls) && b);
+
+        const blocksForContain = rects
+          .map((r) => ({ cls: r.getAttribute("class") || "", b: bboxOf(r) }))
+          .filter(({ cls, b }) => (cls === "surface2" || cls === "surface") && b && mainB && contains(mainB, b));
+
+        const pickContainer = (pillB) => {
+          // smallest area container
+          const candidates = blocksForContain
+            .filter(({ b }) => contains(b, pillB))
+            .sort((a, b) => a.b.w * a.b.h - b.b.w * b.b.h);
+          return candidates[0]?.b || mainB;
+        };
+
+        const badPills = [];
+        for (const { cls, b } of pills) {
+          if (!mainB || !contains(mainB, b)) continue;
+          const container = pickContainer(b);
+          if (!container) continue;
+          const leftGap = b.x - container.x;
+          const rightGap = container.r - b.r;
+          if (leftGap < 24) badPills.push({ cls, side: "left", gap: Math.round(leftGap * 10) / 10, x: b.x, y: b.y });
+          if (rightGap < 24) badPills.push({ cls, side: "right", gap: Math.round(rightGap * 10) / 10, x: b.x, y: b.y });
+        }
+
+        metrics.badPills = badPills.length;
+        if (badPills.length) issues.push(`Pill padding violations: ${badPills.length}`);
+
+        // Vertical rhythm: collect gaps between consecutive top-level blocks inside main (surface2 rects).
+        const blocks = rects
+          .map((r) => ({ r, cls: r.getAttribute("class") || "", b: bboxOf(r) }))
+          .filter(({ cls, b }) => cls === "surface2" && b && mainB && contains(mainB, b))
+          .map(({ b }) => b)
+          .sort((a, b) => a.y - b.y);
+
+        const blockGaps = [];
+        for (let i = 0; i + 1 < blocks.length; i++) {
+          const g = blocks[i + 1].y - blocks[i].b;
+          if (isFiniteNumber(g)) blockGaps.push(g);
+        }
+        metrics.blockGaps = blockGaps;
+
+        const oddGaps = blockGaps.filter((g) => !approx(g, 24) && !approx(g, 16));
+        if (oddGaps.length) {
+          issues.push(`Non-standard block gaps: ${oddGaps.join(", ")}`);
+        }
+
+        // Page-specific fine-grained checks (prove we measured the complained parts).
+        if (name === "settings") {
+          // Telegram inputs: expect 24px vertical gap between the two 600×32 input pills.
+          const tgInputs = rects
+            .map((r) => ({ cls: r.getAttribute("class") || "", b: bboxOf(r) }))
+            .filter(
+              ({ cls, b }) =>
+                cls === "pill" &&
+                b &&
+                approx(b.x, 520) &&
+                approx(b.w, 600) &&
+                approx(b.h, 32)
+            )
+            .sort((a, b) => a.b.y - b.b.y)
+            .map(({ b }) => b);
+
+          if (tgInputs.length >= 2) {
+            const gap = tgInputs[1].y - tgInputs[0].b;
+            metrics.settingsTgInputGap = Math.round(gap * 10) / 10;
+            if (!approx(gap, 24)) issues.push(`Telegram input gap: ${metrics.settingsTgInputGap} (expected ~24)`);
+          } else {
+            issues.push("Telegram input pills not found.");
+          }
+
+          // Bottom actions: keep compact and aligned.
+          const actions = rects
+            .map((r) => ({ cls: r.getAttribute("class") || "", b: bboxOf(r) }))
+            .filter(
+              ({ cls, b }) =>
+                (cls === "pillOn" || cls === "pillWarn") &&
+                b &&
+                approx(b.w, 160) &&
+                approx(b.h, 32) &&
+                b.y >= 720
+            )
+            .map(({ cls, b }) => ({ cls, b }))
+            .sort((a, b) => a.b.x - b.b.x);
+
+          metrics.settingsActionButtons = actions.length;
+          if (actions.length !== 2) issues.push(`Settings actions count: ${actions.length} (expected 2)`);
+          if (actions.length === 2 && !approx(actions[0].b.y, actions[1].b.y))
+            issues.push(`Settings actions not aligned: y=${actions[0].b.y} vs ${actions[1].b.y}`);
+
+          // Site base url "自动填充" button: keep compact (avoid oversized button block).
+          const autoFill = rects
+            .map((r) => ({ cls: r.getAttribute("class") || "", b: bboxOf(r) }))
+            .find(({ cls, b }) => cls === "pillWarn" && b && approx(b.y, 404) && approx(b.h, 32));
+          if (!autoFill) {
+            issues.push("Site base url auto-fill button not found.");
+          } else {
+            metrics.settingsAutoFillW = Math.round(autoFill.b.w * 10) / 10;
+            if (autoFill.b.w > 180) issues.push(`Auto-fill too wide: ${metrics.settingsAutoFillW} (expected <=180)`);
+          }
+
+          // Web Push: ensure the description doesn't stick to the title (reported by owner).
+          const t = Array.from(svgEl.querySelectorAll("text"));
+          const wpTitleEl = t.find((n) => (n.textContent || "").includes("Web Push（浏览器推送）"));
+          const wpDescEl = t.find((n) => (n.textContent || "").trim().startsWith("请求权限 →"));
+          const wpTitleB = wpTitleEl ? bboxOf(wpTitleEl) : null;
+          const wpDescB = wpDescEl ? bboxOf(wpDescEl) : null;
+          if (wpTitleB && wpDescB) {
+            const gap = wpDescB.y - wpTitleB.b;
+            metrics.settingsWebPushTitleToDesc = Math.round(gap * 10) / 10;
+            if (gap < 12) issues.push(`WebPush title->desc gap: ${metrics.settingsWebPushTitleToDesc} (expected >=12)`);
+          } else {
+            issues.push("WebPush title/desc not found.");
+          }
+        }
+
+        if (name === "inventory-monitor") {
+          // In-card bottom row: two pills should be equal width, with 16px gap (per card).
+          const rowPills = rects
+            .map((r) => ({ cls: r.getAttribute("class") || "", b: bboxOf(r) }))
+            .filter(({ cls, b }) => (cls === "pill" || cls === "pillOn") && b && approx(b.y, 464) && approx(b.h, 32))
+            .map(({ b }) => b)
+            .sort((a, b) => a.x - b.x);
+
+          metrics.monitorBottomPills = rowPills.length;
+          if (rowPills.length === 4) {
+            const checkPair = (a, b, idx) => {
+              const gap = b.x - a.r;
+              if (!approx(a.w, b.w)) issues.push(`Monitor card[${idx}] pill widths: ${a.w} vs ${b.w}`);
+              if (!approx(gap, 16)) issues.push(`Monitor card[${idx}] pill gap: ${Math.round(gap * 10) / 10} (expected ~16)`);
+            };
+            checkPair(rowPills[0], rowPills[1], 0);
+            checkPair(rowPills[2], rowPills[3], 1);
+          } else {
+            issues.push(`Monitor bottom pills not found as expected (got ${rowPills.length}, expected 4).`);
+          }
+
+          // Restock summary should be visible at region header (avoid "missing summary" regression).
+          // Copy rule: "补货 x 台 • 余 x 台" (optionally with a time suffix).
+          const texts = Array.from(svgEl.querySelectorAll("text")).map((t) => (t.textContent || "").trim());
+          const countRestockSummary = texts.filter((t) => t.includes("补货") && t.includes("余") && t.includes("台")).length;
+          metrics.monitorRestockSummaryLabels = countRestockSummary;
+          if (countRestockSummary < 2) issues.push(`Monitor restock summary labels: ${countRestockSummary} (expected >=2)`);
+        }
+
+        if (name === "logs") {
+          // Filter row refresh button: keep compact (avoid huge right-side action).
+          const refresh = rects
+            .map((r) => ({ cls: r.getAttribute("class") || "", b: bboxOf(r) }))
+            .find(({ cls, b }) => cls === "pillWarn" && b && approx(b.y, 192) && approx(b.h, 32));
+          if (!refresh) {
+            issues.push("Logs refresh button not found.");
+          } else {
+            metrics.logsRefreshW = Math.round(refresh.b.w * 10) / 10;
+            if (refresh.b.w > 140) issues.push(`Logs refresh too wide: ${metrics.logsRefreshW} (expected <=140)`);
+          }
+
+          // Pagination: keep compact (height=32) and aligned.
+          const pager = rects
+            .map((r) => ({ cls: r.getAttribute("class") || "", b: bboxOf(r) }))
+            .filter(({ cls, b }) => cls === "pill" && b && approx(b.y, 768))
+            .map(({ b }) => b)
+            .sort((a, b) => a.x - b.x);
+
+          metrics.logsPagerPills = pager.length;
+          if (pager.length !== 2) issues.push(`Logs pager pills: ${pager.length} (expected 2)`);
+          if (pager.length === 2) {
+            if (!approx(pager[0].h, 32) || !approx(pager[1].h, 32))
+              issues.push(`Logs pager height: ${pager[0].h}/${pager[1].h} (expected 32)`);
+            if (!approx(pager[0].y, pager[1].y))
+              issues.push(`Logs pager not aligned: y=${pager[0].y} vs ${pager[1].y}`);
+          }
+        }
+
+        if (name === "products") {
+          // Pills inside product cards should have centered labels (owner reported mis-centering).
+          const pillRects = rects
+            .map((r) => ({ cls: r.getAttribute("class") || "", b: bboxOf(r) }))
+            .filter(({ cls, b }) => (cls === "pill" || cls === "pillOn" || cls === "pillDisabled") && b && approx(b.h, 32))
+            .map(({ b }) => b);
+
+          const texts = Array.from(svgEl.querySelectorAll("text"))
+            .map((t) => ({ t, s: (t.textContent || "").trim(), b: bboxOf(t) }))
+            .filter(({ b }) => b);
+
+          const pickLabelFor = (pillB) =>
+            texts.find(({ b }) => contains(pillB, b)) || null;
+
+          const candidates = pillRects.filter((b) => b.y >= 440); // only in card area (avoid top bar)
+          let checked = 0;
+          let off = 0;
+          for (const pillB of candidates) {
+            const label = pickLabelFor(pillB);
+            if (!label) continue;
+            // Only check short chip-like labels.
+            if (!/^库存\\s|^监控：|^状态：/.test(label.s)) continue;
+            const pillCenter = pillB.x + pillB.w / 2;
+            const textCenter = label.b.x + label.b.w / 2;
+            const dx = Math.abs(textCenter - pillCenter);
+            checked += 1;
+            if (dx > 6) off += 1;
+          }
+          metrics.productsCenteredPillsChecked = checked;
+          metrics.productsCenteredPillsOff = off;
+          if (checked < 4) issues.push(`Products centered pills checked: ${checked} (expected >=4)`);
+          if (off) issues.push(`Products pill label not centered: ${off} / ${checked}`);
+        }
+
+        return { metrics, issues };
+      }
+
+      async function run() {
+        const out = document.getElementById("out");
+        out.innerHTML = "";
+        const meta = document.getElementById("meta");
+        meta.textContent = `运行时间：${new Date().toLocaleString()}`;
+
+        for (const name of SVGS) {
+          const url = `/ui/${name}.svg?v=${Date.now()}`;
+          const txt = await fetch(url).then((r) => r.text());
+          // getBBox() requires the SVG to be attached to the document and laid out.
+          const host = document.createElement("div");
+          host.style.position = "fixed";
+          host.style.left = "-20000px";
+          host.style.top = "-20000px";
+          host.style.width = "1440px";
+          host.style.height = "900px";
+          host.style.visibility = "hidden";
+          host.innerHTML = txt;
+          document.body.appendChild(host);
+
+          const svgEl = host.querySelector("svg");
+          const res = summarize(svgEl, name);
+
+          host.remove();
+          const ok = res.issues.length === 0;
+
+          const card = document.createElement("section");
+          card.className = "card";
+          card.innerHTML = `
+            <div class="cardHead">
+              <div class="name">${name}</div>
+              <div class="${ok ? "ok" : "bad"}">${ok ? "OK" : "ISSUES"}</div>
+            </div>
+            <pre><code>${JSON.stringify(res, null, 2)}</code></pre>
+          `;
+          out.appendChild(card);
+        }
+      }
+
+      document.getElementById("run").addEventListener("click", run);
+      run();
+    </script>
+  </body>
+</html>
