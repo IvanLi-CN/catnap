@@ -188,6 +188,7 @@ None.
 - 2026-01-20: 冻结方案：`system/dark/light` 三态主题（默认 system）、单向同步、Bun-only 手动配置、`@storybook/addon-vitest` 测试路径。
 - 2026-01-20: 完成实现：Storybook + 主题系统与切换入口 + Storybook 主题联动 + story-based tests（接入 CI）。
 - 2026-01-20: 补充口径：显式固定 Storybook 端口为 `18181`（避免默认端口冲突），同步到 scripts/测试配置/验收与契约。
+- 2026-01-20: 补齐 Storybook 覆盖：Pages（Monitoring/Products/Settings/Logs）+ Components（Product/Monitoring/Section）+ Layout（提取 `AppShell` 复用）。
 
 ## 参考（References）
 
