@@ -397,8 +397,13 @@ pub async fn list_logs(
 ) -> anyhow::Result<(Vec<LogEntryView>, Option<String>)> {
     let (cursor_ts, cursor_id) = cursor
         .and_then(|c| {
-            let mut parts = c.splitn(2, ':');
-            Some((parts.next()?.to_string(), parts.next()?.to_string()))
+            // Cursor format: "<RFC3339 ts>:<id>".
+            // RFC3339 timestamps contain `:` (e.g. "2026-01-19T00:00:00Z"), so we must split
+            // from the right to preserve the timestamp portion.
+            let mut parts = c.rsplitn(2, ':');
+            let id = parts.next()?.to_string();
+            let ts = parts.next()?.to_string();
+            Some((ts, id))
         })
         .unwrap_or(("9999-12-31T23:59:59Z".to_string(), "zzzz".to_string()));
 
