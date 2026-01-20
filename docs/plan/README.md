@@ -41,3 +41,4 @@
 | ID   | Title | Status | Plan | Last | Notes |
 |-----:|-------|--------|------|------|-------|
 | 0001 | 懒猫云购物车库存监控 | 待实现 | `0001:lazycats-cart-inventory-monitor/PLAN.md` | 2026-01-19 | - |
+| 0002 | Storybook 展示与主题切换（含亮色主题） | 待实现 | `0002:storybook-theme-switching/PLAN.md` | 2026-01-20 | - |
