@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { ThemeMenu } from "./ui/nav/ThemeMenu";
 import "./app.css";
 
 type ApiError = {
@@ -541,6 +542,7 @@ export function App() {
                 </>
               ) : null
             ) : null}
+            <ThemeMenu />
           </div>
         </header>
 

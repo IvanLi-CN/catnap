@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 已完成
 - Created: 2026-01-20
 - Last: 2026-01-20
 
@@ -41,6 +41,7 @@
   - 必须在 `web/` 引入 Storybook，并提供本地开发命令与静态构建命令（见 `contracts/cli.md`）。
   - 必须在 Storybook 中建立分组（至少：Foundations/Theme、Layout、Pages、Components）。
   - 必须提供“覆盖口径”：哪些目录/哪些导出需要配套 stories；并要求“代表性状态”最少覆盖（见下方验收与契约）。
+  - 必须显式固定 Storybook 端口为高位端口 `18181`（避免默认端口冲突），并将该口径写入 `contracts/cli.md` 与验收标准。
 
 - 亮色主题与主题切换（Web）
   - 必须支持 `system`/`dark`/`light` 三态主题偏好（`system` 跟随 `prefers-color-scheme`）。
@@ -81,7 +82,7 @@
 
 - Given 在 `web/` 完成依赖安装
   When 执行 `bun run storybook`
-  Then Storybook 可启动并展示分组（Foundations/Theme、Layout、Pages、Components）。
+  Then Storybook 可启动并在 `http://localhost:18181` 提供服务，且展示分组（Foundations/Theme、Layout、Pages、Components）。
 
 - Given Storybook 预览中包含主题示例（Foundations/Theme）
   When 在 Storybook 中切换主题为 `light`
@@ -118,10 +119,10 @@
 
 ## 实现里程碑（Milestones）
 
-- [ ] M1: 在 `web/` 初始化 Storybook（Bun-only：手动落地 `.storybook/*` + scripts；含基础分组与最小示例 stories）
-- [ ] M2: 落地主题 token（dark/light）与 Web 主题切换入口（含 system 支持与持久化）
-- [ ] M3: Storybook 主题切换接入并与 Web 主题状态对齐（按 `contracts/ui-theme.md`）
-- [ ] M4: 接入 story-based 自动化测试并接入 CI（含最小覆盖）
+- [x] M1: 在 `web/` 初始化 Storybook（Bun-only：手动落地 `.storybook/*` + scripts；含基础分组与最小示例 stories）
+- [x] M2: 落地主题 token（dark/light）与 Web 主题切换入口（含 system 支持与持久化）
+- [x] M3: Storybook 主题切换接入并与 Web 主题状态对齐（按 `contracts/ui-theme.md`）
+- [x] M4: 接入 story-based 自动化测试并接入 CI（含最小覆盖）
 
 ## 方案概述（Approach, high-level）
 
@@ -185,6 +186,8 @@ None.
 
 - 2026-01-20: 创建计划 #0002，补齐目标/范围/契约与验收草案。
 - 2026-01-20: 冻结方案：`system/dark/light` 三态主题（默认 system）、单向同步、Bun-only 手动配置、`@storybook/addon-vitest` 测试路径。
+- 2026-01-20: 完成实现：Storybook + 主题系统与切换入口 + Storybook 主题联动 + story-based tests（接入 CI）。
+- 2026-01-20: 补充口径：显式固定 Storybook 端口为 `18181`（避免默认端口冲突），同步到 scripts/测试配置/验收与契约。
 
 ## 参考（References）
 
