@@ -1,42 +1,9 @@
-use axum::{routing::get, Json, Router};
-use serde::Serialize;
-use std::{env, net::SocketAddr, path::PathBuf};
-use tower_http::{
-    services::{ServeDir, ServeFile},
-    trace::TraceLayer,
-};
-use tracing::info;
+use catnap::{build_app, RuntimeConfig};
+use sqlx::sqlite::SqlitePoolOptions;
+use std::{collections::HashMap, net::SocketAddr, path::PathBuf, sync::Arc};
+use time::OffsetDateTime;
+use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
-
-#[derive(Serialize)]
-struct HealthResponse {
-    status: &'static str,
-    version: String,
-}
-
-async fn health() -> Json<HealthResponse> {
-    let version = env::var("APP_EFFECTIVE_VERSION")
-        .ok()
-        .filter(|v| !v.trim().is_empty())
-        .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
-
-    Json(HealthResponse {
-        status: "ok",
-        version,
-    })
-}
-
-fn build_app(static_dir: PathBuf) -> Router {
-    let api = Router::new().route("/health", get(health));
-
-    let index = ServeFile::new(static_dir.join("index.html"));
-    let static_files = ServeDir::new(static_dir).fallback(index);
-
-    Router::new()
-        .nest("/api", api)
-        .fallback_service(static_files)
-        .layer(TraceLayer::new_for_http())
-}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -46,11 +13,63 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    let static_dir = env::var("STATIC_DIR").unwrap_or_else(|_| "web/dist".to_string());
-    let app = build_app(PathBuf::from(static_dir));
+    let config = RuntimeConfig::from_env();
 
-    let bind_addr = env::var("BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:18080".to_string());
-    let addr: SocketAddr = bind_addr.parse()?;
+    let db = SqlitePoolOptions::new()
+        .max_connections(5)
+        .connect(&config.db_url)
+        .await?;
+    catnap::db::init_db(&db).await?;
+
+    let catalog = catnap::upstream::CatalogSnapshot::empty(config.upstream_cart_url.clone());
+
+    let state = catnap::AppState {
+        config: config.clone(),
+        db: db.clone(),
+        catalog: std::sync::Arc::new(tokio::sync::RwLock::new(catalog)),
+        manual_refresh_gate: Arc::new(tokio::sync::Mutex::new(
+            HashMap::<String, OffsetDateTime>::new(),
+        )),
+        manual_refresh_status: Arc::new(tokio::sync::Mutex::new(HashMap::<
+            String,
+            catnap::models::RefreshStatusResponse,
+        >::new())),
+    };
+
+    tokio::spawn({
+        let state = state.clone();
+        async move {
+            let upstream =
+                match catnap::upstream::UpstreamClient::new(state.config.upstream_cart_url.clone())
+                {
+                    Ok(c) => c,
+                    Err(err) => {
+                        warn!(error = %err, "failed to create upstream client");
+                        return;
+                    }
+                };
+            match upstream.fetch_catalog().await {
+                Ok(catalog) => {
+                    if let Err(err) =
+                        catnap::db::upsert_catalog_configs(&state.db, &catalog.configs).await
+                    {
+                        warn!(error = %err, "failed to persist upstream catalog");
+                        return;
+                    }
+                    *state.catalog.write().await = catalog;
+                    info!("upstream catalog refreshed");
+                }
+                Err(err) => {
+                    warn!(error = %err, "failed to fetch upstream catalog");
+                }
+            }
+        }
+    });
+
+    catnap::poller::spawn(state.clone()).await;
+
+    let app = build_app(state, PathBuf::from(&config.static_dir));
+    let addr: SocketAddr = catnap::app::parse_socket_addr(&config.bind_addr)?;
 
     let listener = tokio::net::TcpListener::bind(addr).await.map_err(|err| {
         if err.kind() == std::io::ErrorKind::AddrInUse {
@@ -64,7 +83,14 @@ async fn main() -> anyhow::Result<()> {
 
     let addr = listener.local_addr()?;
     info!(%addr, "listening");
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
 
     Ok(())
+}
+
+async fn shutdown_signal() {
+    let _ = tokio::signal::ctrl_c().await;
+    info!("shutdown signal received");
 }

@@ -5,3 +5,11 @@
 /web/node_modules
 /web/dist
 
+# Local runtime artifacts
+*.db
+/tmp-catnap-run*.log
+/tmp-catnap-run*.pid
+/tmp-catnap-run.log
+/tmp-catnap-run.pid
+/tmp-ui-design-server.log
+/tmp-ui-design-server.pid

@@ -2,9 +2,9 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 已完成
 - Created: 2026-01-18
-- Last: 2026-01-19
+- Last: 2026-01-20
 
 ## 背景 / 问题陈述
 
@@ -178,70 +178,83 @@
 ## 里程碑（Milestones）
 
 - [x] M1: 冻结“库存数量口径”与监控触发条件（补货/价格/配置变化）
-- [ ] M2: 冻结数据模型与持久化方案（默认 SQLite；按用户或全局）
-- [ ] M3: 冻结 HTTP API 契约（含错误形状、示例与同源约束）
-- [ ] M4: 冻结 UI 信息架构（四模块导航、分组视图与交互）
-- [ ] M5: 轮询与抖动策略冻结（默认 1 分钟 + 抖动 + 失败重试与节流）
-- [ ] M6: 通知渠道设计冻结（TG / Web Push / 站点地址链接）
-- [ ] M7: 进入实现阶段（impl）并按计划交付
+- [x] M2: 冻结数据模型与持久化方案（默认 SQLite；按用户或全局）
+- [x] M3: 冻结 HTTP API 契约（含错误形状、示例与同源约束）
+- [x] M4: 冻结 UI 信息架构（四模块导航、分组视图与交互）
+- [x] M5: 轮询与抖动策略冻结（默认 1 分钟 + 抖动 + 失败重试与节流）
+- [x] M6: 通知渠道设计冻结（TG / Web Push / 站点地址链接）
+- [x] M7: 进入实现阶段（impl）并按计划交付
 
 ## 开发计划清单（Checklist）
 
 ### Backend
 
-- [ ] 鉴权：读取 `CATNAP_AUTH_USER_HEADER` 指定的 header 获取用户标识；缺失时 Web 返回 401 页面、API 返回 JSON 401（不泄露鉴权细节）
-- [ ] 同源：API 不提供 CORS；对带 `Origin` 的请求做同源校验（失败返回 403）
+- [x] 鉴权：读取 `CATNAP_AUTH_USER_HEADER` 指定的 header 获取用户标识；缺失时 Web 返回 401 页面、API 返回 JSON 401（不泄露鉴权细节）
+- [x] 同源：API 不提供 CORS；对带 `Origin` 的请求做同源校验（失败返回 403）
 - [ ] 抓取器（lazycats）：
-  - [ ] 抓取国家地区列表
-  - [ ] 抓取可用区域列表（含 fid/gid 映射）
-  - [ ] 抓取配置列表（pid/name/specs/price）
-  - [ ] 从 `/cart?fid=<fid>&gid=<gid>` 配置卡片解析 `库存： <n>`，并生成 `digest`（用于配置变化检测）；云服务器（`fid=2`）不解析库存字段
+  - [x] 抓取国家地区列表
+  - [x] 抓取可用区域列表（含 fid/gid 映射）
+  - [x] 抓取配置列表（pid/name/specs/price）
+  - [x] 从 `/cart?fid=<fid>&gid=<gid>` 配置卡片解析 `库存： <n>`，并生成 `digest`（用于配置变化检测）；云服务器（`fid=2`）不解析库存字段
   - [ ] 抖动 + 失败重试 + 限流（避免打爆上游）
-- [ ] 持久化（SQLite）：按 `contracts/db.md` 建表与访问层，保存快照、监控开关、设置、订阅与日志
-- [ ] API：
-  - [ ] `GET /api/bootstrap`（一次返回 catalog + monitoring + settings + user）
-  - [ ] `GET /api/products`（全量/过滤）
-  - [ ] `GET /api/monitoring`（返回当前用户已监控配置）
-  - [ ] `PATCH /api/monitoring/configs/{configId}`（开关监控）
-  - [ ] `GET/PUT /api/settings`
-  - [ ] `GET /api/logs`（按用户隔离 + 分页）
-  - [ ] `POST /api/notifications/web-push/subscriptions`
-- [ ] 轮询与变化检测：
-  - [ ] 按“用户隔离”的设置计算各用户的有效轮询计划（同时尽量复用上游抓取结果，避免重复抓取）
-  - [ ] 对比差异：库存数量、价格、digest（配置变化）
+- [x] 持久化（SQLite）：按 `contracts/db.md` 建表与访问层，保存快照、监控开关、设置、订阅与日志
+- [x] API：
+  - [x] `GET /api/bootstrap`（一次返回 catalog + monitoring + settings + user）
+  - [x] `GET /api/products`（全量/过滤）
+  - [x] `GET /api/monitoring`（返回当前用户已监控配置）
+  - [x] `PATCH /api/monitoring/configs/{configId}`（开关监控）
+  - [x] `GET/PUT /api/settings`
+  - [x] `GET /api/logs`（按用户隔离 + 分页）
+  - [x] `POST /api/notifications/web-push/subscriptions`
+- [x] 轮询与变化检测：
+  - [x] 按“用户隔离”的设置计算各用户的有效轮询计划（同时尽量复用上游抓取结果，避免重复抓取）
+  - [x] 对比差异：库存数量、价格、digest（配置变化）
   - [ ] 生成事件与去重/节流
-- [ ] 通知：
-  - [ ] Telegram：bot token + target（chat id/频道）可配置
-  - [ ] Web Push：VAPID + Service Worker + subscription
+- [x] 通知：
+  - [x] Telegram：bot token + target（chat id/频道）可配置
+  - [x] Web Push：VAPID + Service Worker + subscription
   - [ ] 通知内容包含：变化摘要、old/new、跳转链接（基于 `siteBaseUrl`）
-- [ ] 日志清理：按“天数 + 最大条数”双策略同时生效（默认 7 天 + 10000 条）
+- [x] 日志清理：按“天数 + 最大条数”双策略同时生效（默认 7 天 + 10000 条）
 
 ### Frontend (web/)
 
-- [ ] App 启动时调用 `GET /api/bootstrap` 获取初始化数据；失败/401 有明确 UI 状态
-- [ ] 导航：库存监控 / 全部产品 / 系统设置 / 日志
-- [ ] 全部产品：
-  - [ ] 分组视图（国家地区/区域/配置）
-  - [ ] 展示规格/价格/库存数量；一键切换“是否监控”
-- [ ] 库存监控：
-  - [ ] 一行一个可用区（region），行内为配置网格
-  - [ ] 支持折叠；默认展开；折叠状态本地记忆（可选）
-- [ ] 系统设置：
-  - [ ] 查询频率（分钟，默认 1）+ 抖动比例
-  - [ ] 站点地址默认值：`window.location.origin`（用户可改）
-  - [ ] Telegram 参数配置（不回显敏感字段）
-  - [ ] Web Push：申请权限、注册 service worker、上传 subscription
-- [ ] 日志：列表 + 过滤 + 分页
+- [x] App 启动时调用 `GET /api/bootstrap` 获取初始化数据；失败/401 有明确 UI 状态
+- [x] 导航：库存监控 / 全部产品 / 系统设置 / 日志
+- [x] 全部产品：
+  - [x] 分组视图（国家地区/区域/配置）
+  - [x] 展示规格/价格/库存数量；一键切换“是否监控”
+- [x] 库存监控：
+  - [x] 一行一个可用区（region），行内为配置网格
+  - [x] 支持折叠；默认展开；折叠状态本地记忆（可选）
+- [x] 系统设置：
+  - [x] 查询频率（分钟，默认 1）+ 抖动比例
+  - [x] 站点地址默认值：`window.location.origin`（用户可改）
+  - [x] Telegram 参数配置（不回显敏感字段）
+  - [x] Web Push：申请权限、注册 service worker、上传 subscription
+- [x] 日志：列表 + 过滤 + 分页
 
 ### Testing
 
-- [ ] 抓取解析：用保存的 HTML fixture 做单元测试（覆盖字段缺失与结构变化的容错）
-- [ ] API：集成测试覆盖 401/403/400 与核心成功路径
+- [x] 抓取解析：用保存的 HTML fixture 做单元测试（覆盖字段缺失与结构变化的容错）
+- [x] API：集成测试覆盖 401/403/400 与核心成功路径
 - [ ] E2E（可选）：切换监控 → 等待一次轮询 → 出现日志/通知
 
 ### Docs
 
-- [ ] `README.md`：本地运行、Docker 运行、配置项说明、反向代理注入用户 header 的示例（不暴露鉴权实现细节）
+- [x] `README.md`：本地运行、Docker 运行、配置项说明、反向代理注入用户 header 的示例（不暴露鉴权实现细节）
+
+## Change log
+
+- 2026-01-19: 落地后端 API + SQLite 持久化 + 上游抓取解析 + 轮询与 TG 通知；完善 Web UI（四模块 + Web Push 订阅上传）。
+- 2026-01-19: UI 对齐线框图：顶部标题栏右侧控件按页面差异化（产品：刷新：手动；监控：最近刷新；设置/日志：无）；侧栏导航视觉降噪；“全部产品”补齐筛选与分组区；配置卡片改为“规格/价格/库存/更新/监控开关”布局；“库存监控”增加分组头与折叠按钮；“日志”页对齐过滤条/表格/分页 footer。
+- 2026-01-19: UI 完全按 `ui/*.svg` 还原：恢复 `web/src/app.css` 并重构四页面布局/控件；更新 401 页面；Playwright（1440×900）复验截图：`tmp/ui-previews/playwright/impl-*.png`。
+- 2026-01-19: 401 页面“返回首页”按钮 hover 光标为手形（`cursor: pointer`）。
+- 2026-01-20: Web UI 增加后台自动刷新 + 路由切换刷新：按轮询间隔自适应（10–30s）拉取 `/api/products`，并在切到“库存监控/全部产品”时立即拉取一次，避免“更新时间”长期不变。
+- 2026-01-20: 监控页右上角新增“重新同步”按钮：`POST /api/refresh` 启动同步、`GET /api/refresh/status` 查询进度；按钮展示“同步中（x/y）/同步完成”，失败显示感叹号并在头部下方弹出 DaisyUI 风格 Alert（30s 限流）。
+- 2026-01-20: 细节修复：删除监控页内容区顶部“监控列表”区块；“重新同步”按钮放到顶栏“最近刷新”右侧；监控卡片“库存/更新”两枚 pill 固定宽度以消除多余空白；`fetch` 统一 `cache: no-store` + focus/visible 时主动刷新避免切页拿旧数据。
+- 2026-01-20: 全部产品：移除配置卡片中“点击开关后立即持久化”提示（降低无意义信息噪声）。
+- 2026-01-20: Web UI 自适应：整体居中（`max-width: 1440px`）并允许窗口缩小时不再左对齐；内容区与网格列宽支持收缩（避免横向溢出）。
+- 2026-01-20: UI 细节：Topbar 增加上下内边距与 title/subtitle 间距；壳体高度改为跟随视口（避免底部出现大块空白）。
 
 ## 方案概述（Approach, high-level）
 
