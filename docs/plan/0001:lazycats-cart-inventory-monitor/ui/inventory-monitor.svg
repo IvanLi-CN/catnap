@@ -36,8 +36,10 @@
   <!-- Top bar -->
   <rect class="surface" x="24" y="24" width="1392" height="64" rx="14"/>
   <text class="title" x="48" y="58">Catnap • 库存监控</text>
-  <rect class="pill" x="1200" y="40" width="192" height="32" rx="10"/>
-  <text class="badgeText" x="1216" y="61">最近刷新：刚刚</text>
+  <rect class="pill" x="1056" y="40" width="192" height="32" rx="10"/>
+  <text class="badgeText" x="1072" y="61">最近刷新：刚刚</text>
+  <rect class="pill" x="1264" y="40" width="128" height="32" rx="10"/>
+  <text class="badgeText" x="1280" y="61">重新同步</text>
 
   <!-- Left nav -->
   <rect class="surface" x="24" y="112" width="240" height="764" rx="14"/>
@@ -51,52 +53,47 @@
   <!-- Main -->
   <rect class="surface" x="288" y="112" width="1128" height="764" rx="14"/>
 
-  <!-- Block A: page header -->
-  <rect class="surface2" x="312" y="136" width="1080" height="104" rx="14"/>
-  <text class="h2" x="336" y="172">监控列表</text>
-  <text class="muted" x="336" y="200">按国家地区 / 可用区分组展示；支持折叠，默认展开（折叠状态可记忆）</text>
-
-  <!-- Block B: region expanded -->
-  <rect class="surface2" x="312" y="264" width="1080" height="288" rx="14"/>
-  <text class="h2" x="336" y="300">美国 / 弗里蒙特</text>
-  <text class="muted" x="336" y="324">2 个配置 • 展开 • 补货 2 台 • 余 5 台（最近 1 小时前）</text>
-  <rect class="pill" x="1248" y="288" width="120" height="32" rx="10"/>
-  <text class="badgeText" x="1286" y="309">折叠</text>
-  <line class="line" x1="312" y1="344" x2="1392" y2="344"/>
+  <!-- Block A: region expanded -->
+  <rect class="surface2" x="312" y="136" width="1080" height="288" rx="14"/>
+  <text class="h2" x="336" y="172">美国 / 弗里蒙特</text>
+  <text class="muted" x="336" y="196">2 个配置 • 展开 • 补货 2 台 • 余 5 台（最近 1 小时前）</text>
+  <rect class="pill" x="1248" y="160" width="120" height="32" rx="10"/>
+  <text class="badgeText" x="1286" y="181">折叠</text>
+  <line class="line" x1="312" y1="216" x2="1392" y2="216"/>
 
   <!-- Grid cards (count=2 => 2 cols, gap=24, inner padding=24) -->
   <!-- usable width inside = 1080-48=1032; 2 cols => 504 each; gap => 24 -->
   <!-- inside card: usable width = 504-48=456; 2 pills => 220 each; inner gap=16 -->
-  <rect class="surface" x="336" y="368" width="504" height="160" rx="14"/>
-  <text class="h2" x="360" y="400">弗里蒙特 1号</text>
-  <text class="muted" x="360" y="424">CPU 1核 • RAM 256M</text>
-  <text class="text" x="360" y="448">¥ 1.00 / 月</text>
-  <rect class="pillOn" x="360" y="464" width="220" height="32" rx="10"/>
-  <text class="badgeText" x="376" y="485">库存 4</text>
-  <rect class="pill" x="596" y="464" width="220" height="32" rx="10"/>
-  <text class="badgeText" x="612" y="485">更新：刚刚</text>
+  <rect class="surface" x="336" y="240" width="504" height="160" rx="14"/>
+  <text class="h2" x="360" y="272">弗里蒙特 1号</text>
+  <text class="muted" x="360" y="296">CPU 1核 • RAM 256M</text>
+  <text class="text" x="360" y="320">¥ 1.00 / 月</text>
+  <rect class="pillOn" x="360" y="336" width="220" height="32" rx="10"/>
+  <text class="badgeText" x="376" y="357">库存 4</text>
+  <rect class="pill" x="596" y="336" width="220" height="32" rx="10"/>
+  <text class="badgeText" x="612" y="357">更新：刚刚</text>
 
-  <rect class="surface" x="864" y="368" width="504" height="160" rx="14"/>
-  <text class="h2" x="888" y="400">弗里蒙特 2号</text>
-  <text class="muted" x="888" y="424">CPU 1核 • RAM 512M</text>
-  <text class="text" x="888" y="448">¥ 1.50 / 月</text>
-  <rect class="pillOn" x="888" y="464" width="220" height="32" rx="10"/>
-  <text class="badgeText" x="904" y="485">库存 1</text>
-  <rect class="pill" x="1124" y="464" width="220" height="32" rx="10"/>
-  <text class="badgeText" x="1140" y="485">更新：1 分钟前</text>
+  <rect class="surface" x="864" y="240" width="504" height="160" rx="14"/>
+  <text class="h2" x="888" y="272">弗里蒙特 2号</text>
+  <text class="muted" x="888" y="296">CPU 1核 • RAM 512M</text>
+  <text class="text" x="888" y="320">¥ 1.50 / 月</text>
+  <rect class="pillOn" x="888" y="336" width="220" height="32" rx="10"/>
+  <text class="badgeText" x="904" y="357">库存 1</text>
+  <rect class="pill" x="1124" y="336" width="220" height="32" rx="10"/>
+  <text class="badgeText" x="1140" y="357">更新：1 分钟前</text>
 
   <!-- 空列不展示“假数据”占位卡；真实数据出现时自然填充 -->
 
-  <!-- Block C: region collapsed -->
-  <rect class="surface2" x="312" y="576" width="1080" height="104" rx="14"/>
-  <text class="h2" x="336" y="612">中国香港 / HKG Premium</text>
-  <text class="muted" x="336" y="636">4 个配置 • 折叠 • 补货 1 台 • 余 0 台（最近 3 小时前）</text>
-  <rect class="pill" x="1248" y="600" width="120" height="32" rx="10"/>
-  <text class="badgeText" x="1286" y="621">展开</text>
+  <!-- Block B: region collapsed -->
+  <rect class="surface2" x="312" y="448" width="1080" height="104" rx="14"/>
+  <text class="h2" x="336" y="484">中国香港 / HKG Premium</text>
+  <text class="muted" x="336" y="508">4 个配置 • 折叠 • 补货 1 台 • 余 0 台（最近 3 小时前）</text>
+  <rect class="pill" x="1248" y="472" width="120" height="32" rx="10"/>
+  <text class="badgeText" x="1286" y="493">展开</text>
 
-  <!-- Block D: hint -->
-  <rect class="surface2" x="312" y="704" width="1080" height="120" rx="14"/>
-  <text class="h2" x="336" y="740">提示</text>
-  <text class="text" x="336" y="764">在“全部产品”中开启监控后，配置会出现在对应可用区行的网格里。</text>
-  <text class="muted" x="336" y="788">轮询频率与抖动在“系统设置”中配置；日志可追溯每次变更与通知。</text>
+  <!-- Block C: hint -->
+  <rect class="surface2" x="312" y="576" width="1080" height="120" rx="14"/>
+  <text class="h2" x="336" y="612">提示</text>
+  <text class="text" x="336" y="636">在“全部产品”中开启监控后，配置会出现在对应可用区行的网格里。</text>
+  <text class="muted" x="336" y="660">轮询频率与抖动在“系统设置”中配置；日志可追溯每次变更与通知。</text>
 </svg>
