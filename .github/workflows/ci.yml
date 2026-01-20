@@ -76,6 +76,11 @@ jobs:
             bun install
           fi
           bun run lint
+          bun run typecheck
+          bun run build
+          bun run build-storybook
+          bunx playwright install --with-deps chromium
+          bun run test:storybook
 
   unit-tests:
     name: Backend Tests
@@ -258,4 +263,3 @@ jobs:
             APP_EFFECTIVE_VERSION=${{ env.APP_EFFECTIVE_VERSION }}
           cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ steps.image-name.outputs.image_name_lower }}:buildcache
           cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ steps.image-name.outputs.image_name_lower }}:buildcache,mode=max
-

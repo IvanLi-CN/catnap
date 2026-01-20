@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { AppShell } from "./ui/layout/AppShell";
+import { ThemeMenu } from "./ui/nav/ThemeMenu";
 import "./app.css";
 
 type ApiError = {
@@ -16,20 +18,20 @@ class ApiHttpError extends Error {
   }
 }
 
-type UserView = { id: string; displayName?: string };
+export type UserView = { id: string; displayName?: string };
 
-type Country = { id: string; name: string };
-type Region = { id: string; countryId: string; name: string; locationName?: string };
+export type Country = { id: string; name: string };
+export type Region = { id: string; countryId: string; name: string; locationName?: string };
 
-type Spec = { key: string; value: string };
-type Money = { amount: number; currency: string; period: string };
-type Inventory = {
+export type Spec = { key: string; value: string };
+export type Money = { amount: number; currency: string; period: string };
+export type Inventory = {
   status: "unknown" | "available" | "unavailable";
   quantity: number;
   checkedAt: string;
 };
 
-type Config = {
+export type Config = {
   id: string;
   countryId: string;
   regionId: string | null;
@@ -42,7 +44,7 @@ type Config = {
   monitorEnabled: boolean;
 };
 
-type SettingsView = {
+export type SettingsView = {
   poll: { intervalMinutes: number; jitterPct: number };
   siteBaseUrl: string | null;
   notifications: {
@@ -51,7 +53,7 @@ type SettingsView = {
   };
 };
 
-type BootstrapResponse = {
+export type BootstrapResponse = {
   user: UserView;
   catalog: {
     countries: Country[];
@@ -64,19 +66,19 @@ type BootstrapResponse = {
   settings: SettingsView;
 };
 
-type ProductsResponse = {
+export type ProductsResponse = {
   configs: Config[];
   fetchedAt: string;
 };
 
-type RefreshStatusResponse = {
+export type RefreshStatusResponse = {
   state: "idle" | "syncing" | "success" | "error";
   done: number;
   total: number;
   message?: string;
 };
 
-type LogsResponse = {
+export type LogsResponse = {
   items: Array<{
     id: string;
     ts: string;
@@ -88,7 +90,7 @@ type LogsResponse = {
   nextCursor: string | null;
 };
 
-type Route = "monitoring" | "products" | "settings" | "logs";
+export type Route = "monitoring" | "products" | "settings" | "logs";
 
 function getRoute(): Route {
   const raw = window.location.hash.replace(/^#/, "");
@@ -465,141 +467,128 @@ export function App() {
     });
   }
 
-  return (
-    <div className="app">
-      <div className="shell">
-        <header className="topbar">
-          <div className="topbar-left">
-            <div className="topbar-title">Catnap • {routeTitle(route)}</div>
-            {route === "monitoring" ? null : (
-              <div className="topbar-subtitle">{routeSubtitle(route)}</div>
-            )}
-          </div>
-          <div className="topbar-right">
-            {route === "products" ? (
-              <button type="button" className="pill" disabled={loading} onClick={reloadBootstrap}>
-                刷新：手动
-              </button>
-            ) : route === "monitoring" ? (
-              bootstrap ? (
-                <>
-                  <span className="pill">
-                    最近刷新：{formatRelativeTime(bootstrap.catalog.fetchedAt, nowMs)}
-                  </span>
-                  <button
-                    type="button"
-                    className="pill"
-                    disabled={syncState === "syncing"}
-                    title="强制抓取上游并刷新（30s 限流）"
-                    onClick={() => void startSync()}
-                  >
-                    <span
-                      className={
-                        syncState === "syncing"
-                          ? "sync-icon spin"
-                          : syncState === "error"
-                            ? "sync-icon err"
-                            : syncState === "success"
-                              ? "sync-icon ok"
-                              : "sync-icon"
-                      }
-                      aria-hidden="true"
-                    >
-                      {syncState === "syncing" ? (
-                        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                          <path
-                            fill="currentColor"
-                            d="M12 4a8 8 0 0 1 7.9 6.7a1 1 0 1 1-2 .3A6 6 0 1 0 18 12a1 1 0 1 1 2 0a8 8 0 1 1-8-8"
-                          />
-                        </svg>
-                      ) : syncState === "error" ? (
-                        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                          <path fill="currentColor" d="M1 21h22L12 2zm12-3h-2v-2h2zm0-4h-2v-4h2z" />
-                        </svg>
-                      ) : syncState === "success" ? (
-                        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                          <path
-                            fill="currentColor"
-                            d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2m-1 14l-4-4l1.4-1.4L11 13.2l5.6-5.6L18 9z"
-                          />
-                        </svg>
-                      ) : (
-                        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                          <path
-                            fill="currentColor"
-                            d="M12 6V3L8 7l4 4V8a4 4 0 1 1-4 4H6a6 6 0 1 0 6-6"
-                          />
-                        </svg>
-                      )}
-                    </span>
-                    {syncState === "syncing"
-                      ? `同步中（${syncDone}/${syncTotal || "?"}）`
-                      : syncState === "success"
-                        ? "同步完成"
-                        : "重新同步"}
-                  </button>
-                </>
-              ) : null
-            ) : null}
-          </div>
-        </header>
+  const title = `Catnap • ${routeTitle(route)}`;
+  const subtitle = route === "monitoring" ? null : routeSubtitle(route);
+  const sidebar = (
+    <>
+      <div className="sidebar-title">导航</div>
+      <a className={route === "monitoring" ? "nav-item active" : "nav-item"} href="#monitoring">
+        库存监控
+      </a>
+      <a className={route === "products" ? "nav-item active" : "nav-item"} href="#products">
+        全部产品
+      </a>
+      <a className={route === "settings" ? "nav-item active" : "nav-item"} href="#settings">
+        系统设置
+      </a>
+      <a className={route === "logs" ? "nav-item active" : "nav-item"} href="#logs">
+        日志
+      </a>
+    </>
+  );
 
-        <div className="layout">
-          <nav className="sidebar">
-            <div className="sidebar-title">导航</div>
-            <a
-              className={route === "monitoring" ? "nav-item active" : "nav-item"}
-              href="#monitoring"
+  const actions = (
+    <>
+      {route === "products" ? (
+        <button type="button" className="pill" disabled={loading} onClick={reloadBootstrap}>
+          刷新：手动
+        </button>
+      ) : route === "monitoring" ? (
+        bootstrap ? (
+          <>
+            <span className="pill">
+              最近刷新：{formatRelativeTime(bootstrap.catalog.fetchedAt, nowMs)}
+            </span>
+            <button
+              type="button"
+              className="pill"
+              disabled={syncState === "syncing"}
+              title="强制抓取上游并刷新（30s 限流）"
+              onClick={() => void startSync()}
             >
-              库存监控
-            </a>
-            <a className={route === "products" ? "nav-item active" : "nav-item"} href="#products">
-              全部产品
-            </a>
-            <a className={route === "settings" ? "nav-item active" : "nav-item"} href="#settings">
-              系统设置
-            </a>
-            <a className={route === "logs" ? "nav-item active" : "nav-item"} href="#logs">
-              日志
-            </a>
-          </nav>
+              <span
+                className={
+                  syncState === "syncing"
+                    ? "sync-icon spin"
+                    : syncState === "error"
+                      ? "sync-icon err"
+                      : syncState === "success"
+                        ? "sync-icon ok"
+                        : "sync-icon"
+                }
+                aria-hidden="true"
+              >
+                {syncState === "syncing" ? (
+                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path
+                      fill="currentColor"
+                      d="M12 4a8 8 0 0 1 7.9 6.7a1 1 0 1 1-2 .3A6 6 0 1 0 18 12a1 1 0 1 1 2 0a8 8 0 1 1-8-8"
+                    />
+                  </svg>
+                ) : syncState === "error" ? (
+                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path fill="currentColor" d="M1 21h22L12 2zm12-3h-2v-2h2zm0-4h-2v-4h2z" />
+                  </svg>
+                ) : syncState === "success" ? (
+                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path
+                      fill="currentColor"
+                      d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2m-1 14l-4-4l1.4-1.4L11 13.2l5.6-5.6L18 9z"
+                    />
+                  </svg>
+                ) : (
+                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path fill="currentColor" d="M12 6V3L8 7l4 4V8a4 4 0 1 1-4 4H6a6 6 0 1 0 6-6" />
+                  </svg>
+                )}
+              </span>
+              {syncState === "syncing"
+                ? `同步中（${syncDone}/${syncTotal || "?"}）`
+                : syncState === "success"
+                  ? "同步完成"
+                  : "重新同步"}
+            </button>
+          </>
+        ) : null
+      ) : null}
+      <ThemeMenu />
+    </>
+  );
 
-          <main className="content">
-            {loading ? <p className="muted">Loading...</p> : null}
-            {error ? <p className="error">{error}</p> : null}
+  return (
+    <AppShell title={title} subtitle={subtitle} actions={actions} sidebar={sidebar}>
+      {loading ? <p className="muted">Loading...</p> : null}
+      {error ? <p className="error">{error}</p> : null}
 
-            {bootstrap ? (
-              route === "products" ? (
-                <ProductsView
-                  bootstrap={bootstrap}
-                  countriesById={countriesById}
-                  regionsById={regionsById}
-                  onToggle={toggleMonitoring}
-                />
-              ) : route === "settings" ? (
-                <SettingsViewPanel bootstrap={bootstrap} onSave={saveSettings} />
-              ) : route === "logs" ? (
-                <LogsView />
-              ) : (
-                <MonitoringView
-                  bootstrap={bootstrap}
-                  countriesById={countriesById}
-                  regionsById={regionsById}
-                  nowMs={nowMs}
-                  syncAlert={syncAlert}
-                  onDismissSyncAlert={() => {
-                    setSyncAlert(null);
-                    setSyncDone(0);
-                    setSyncTotal(0);
-                    setSyncState("idle");
-                  }}
-                />
-              )
-            ) : null}
-          </main>
-        </div>
-      </div>
-    </div>
+      {bootstrap ? (
+        route === "products" ? (
+          <ProductsView
+            bootstrap={bootstrap}
+            countriesById={countriesById}
+            regionsById={regionsById}
+            onToggle={toggleMonitoring}
+          />
+        ) : route === "settings" ? (
+          <SettingsViewPanel bootstrap={bootstrap} onSave={saveSettings} />
+        ) : route === "logs" ? (
+          <LogsView />
+        ) : (
+          <MonitoringView
+            bootstrap={bootstrap}
+            countriesById={countriesById}
+            regionsById={regionsById}
+            nowMs={nowMs}
+            syncAlert={syncAlert}
+            onDismissSyncAlert={() => {
+              setSyncAlert(null);
+              setSyncDone(0);
+              setSyncTotal(0);
+              setSyncState("idle");
+            }}
+          />
+        )
+      ) : null}
+    </AppShell>
   );
 }
 
@@ -624,7 +613,7 @@ function summarizeSpecs(specs: Spec[], max: number): string {
   return parts.join(" • ");
 }
 
-function ProductCard({
+export function ProductCard({
   cfg,
   onToggle,
 }: {
@@ -673,7 +662,7 @@ function ProductCard({
   );
 }
 
-function MonitoringCard({ cfg, nowMs }: { cfg: Config; nowMs: number }) {
+export function MonitoringCard({ cfg, nowMs }: { cfg: Config; nowMs: number }) {
   const invTone =
     cfg.inventory.status === "unknown" || cfg.inventory.quantity === 0 ? "warn" : "on";
   const invText =
@@ -700,7 +689,7 @@ function MonitoringCard({ cfg, nowMs }: { cfg: Config; nowMs: number }) {
   );
 }
 
-function ProductsView({
+export function ProductsView({
   bootstrap,
   countriesById,
   regionsById,
@@ -844,7 +833,7 @@ function ProductsView({
   );
 }
 
-function MonitoringView({
+export function MonitoringView({
   bootstrap,
   countriesById,
   regionsById,
@@ -919,7 +908,7 @@ function MonitoringView({
   );
 }
 
-function MonitoringSection({
+export function MonitoringSection({
   collapseKey,
   title,
   items,
@@ -988,7 +977,7 @@ function MonitoringSection({
   );
 }
 
-function SettingsViewPanel({
+export function SettingsViewPanel({
   bootstrap,
   onSave,
 }: {
@@ -1238,7 +1227,15 @@ function SettingsViewPanel({
   );
 }
 
-function LogsView() {
+export type LogsViewProps = {
+  fetchLogs?: (params: {
+    level: string;
+    cursor: string | null;
+    limit: number;
+  }) => Promise<LogsResponse>;
+};
+
+export function LogsView({ fetchLogs }: LogsViewProps = {}) {
   const [level, setLevel] = useState<string>("info");
   const [keyword, setKeyword] = useState<string>("");
   const [limit, setLimit] = useState<number>(50);
@@ -1246,6 +1243,18 @@ function LogsView() {
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+
+  const fetchLogsImpl = useCallback(
+    async (params: { level: string; cursor: string | null; limit: number }) => {
+      if (fetchLogs) return fetchLogs(params);
+      const q = new URLSearchParams();
+      q.set("level", params.level);
+      if (params.cursor) q.set("cursor", params.cursor);
+      q.set("limit", String(params.limit));
+      return api<LogsResponse>(`/api/logs?${q.toString()}`);
+    },
+    [fetchLogs],
+  );
 
   function formatClockTime(iso: string): string {
     const t = Date.parse(iso);
@@ -1278,11 +1287,7 @@ function LogsView() {
     setLoading(true);
     setError(null);
     try {
-      const q = new URLSearchParams();
-      q.set("level", level);
-      if (cursor) q.set("cursor", cursor);
-      q.set("limit", String(limit));
-      const res = await api<LogsResponse>(`/api/logs?${q.toString()}`);
+      const res = await fetchLogsImpl({ level, cursor, limit });
       setItems(res.items);
       setNextCursor(res.nextCursor);
     } catch (e) {
@@ -1298,10 +1303,7 @@ function LogsView() {
       setLoading(true);
       setError(null);
       try {
-        const q = new URLSearchParams();
-        q.set("level", level);
-        q.set("limit", String(limit));
-        const res = await api<LogsResponse>(`/api/logs?${q.toString()}`);
+        const res = await fetchLogsImpl({ level, cursor: null, limit });
         if (!cancelled) {
           setItems(res.items);
           setNextCursor(res.nextCursor);
@@ -1316,7 +1318,7 @@ function LogsView() {
     return () => {
       cancelled = true;
     };
-  }, [level, limit]);
+  }, [fetchLogsImpl, level, limit]);
 
   return (
     <div className="panel">
