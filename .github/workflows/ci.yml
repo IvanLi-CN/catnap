@@ -6,6 +6,15 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      bump_level:
+        description: Required when ref=main (major|minor|patch)
+        required: false
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -20,6 +29,32 @@ env:
   PLATFORMS: linux/amd64,linux/arm64
 
 jobs:
+  label-gate:
+    name: PR Label Gate
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+    outputs:
+      intent_label: ${{ steps.gate.outputs.intent_label }}
+      should_release: ${{ steps.gate.outputs.should_release }}
+      bump_level: ${{ steps.gate.outputs.bump_level }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Validate PR intent label
+        id: gate
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          bash ./.github/scripts/label-gate.sh
+
   lint:
     name: Lint & Checks
     runs-on: ubuntu-latest
@@ -152,6 +187,8 @@ jobs:
 
       - name: Compute effective version
         shell: bash
+        env:
+          BUMP_LEVEL: patch
         run: |
           bash ./.github/scripts/compute-version.sh
 
@@ -181,11 +218,38 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
 
+  release-intent:
+    name: Release Intent (gate)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+    outputs:
+      should_release: ${{ steps.intent.outputs.should_release }}
+      bump_level: ${{ steps.intent.outputs.bump_level }}
+      intent_label: ${{ steps.intent.outputs.intent_label }}
+      pr_number: ${{ steps.intent.outputs.pr_number }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Determine release intent
+        id: intent
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUMP_LEVEL: ${{ github.event.inputs.bump_level }}
+        run: |
+          bash ./.github/scripts/release-intent.sh
+
   release:
     name: Release (tag/assets/image)
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-    needs: [lint, unit-tests]
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && needs.release-intent.outputs.should_release == 'true'
+    needs: [lint, unit-tests, release-intent]
     timeout-minutes: 90
     permissions:
       contents: write
@@ -204,6 +268,8 @@ jobs:
 
           ref="${GITHUB_REF}"
           ref_name="${GITHUB_REF_NAME}"
+
+          echo "release intent: pr=${{ needs.release-intent.outputs.pr_number }} label=${{ needs.release-intent.outputs.intent_label }} bump_level=${{ needs.release-intent.outputs.bump_level }}"
 
           if [[ "${ref}" == refs/tags/* ]]; then
             tag="${ref_name}"
@@ -227,7 +293,8 @@ jobs:
               version="${tag#v}"
               echo "reuse existing tag: ${tag}"
             else
-              bash ./.github/scripts/compute-version.sh
+              export BUMP_LEVEL="${{ needs.release-intent.outputs.bump_level }}"
+              source ./.github/scripts/compute-version.sh
               version="${APP_EFFECTIVE_VERSION}"
               tag="v${version}"
               echo "computed version: ${version}"

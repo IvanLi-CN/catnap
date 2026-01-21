@@ -121,6 +121,15 @@ docker run --rm -p 18080:18080 \
   - `status=ok`
   - `version=<semver>`
 
+### Release intent（发版意图标签）
+
+合并到 `main` 的 PR 必须且只能选择一个标签（CI 会强制）：
+
+- `type:docs` / `type:skip`：不允许自动发版
+- `type:patch` / `type:minor` / `type:major`：允许自动发版，并按标签 bump 版本号
+
+> 无法关联到 PR 的 `push main`（direct push / 异常合并）默认跳过自动发版（仍会跑 lint/tests）。
+
 ### GHCR images（镜像）
 
 - 镜像：`ghcr.io/<owner>/catnap`
@@ -155,7 +164,7 @@ sha256sum -c catnap_<semver>_linux_amd64_gnu.tar.gz.sha256
 
 在 GitHub Actions 手动触发 `workflow_dispatch`：
 
-- ref=`main`：完整发布链路（tag/release/assets/GHCR；并更新 `latest`）
+- ref=`main`：完整发布链路（tag/release/assets/GHCR；并更新 `latest`）；必须提供 `bump_level=major|minor|patch`
 - ref=`refs/tags/v<semver>`：重跑/补齐该版本（assets/GHCR；不更新 `latest`）
 
 ### Smoke test（本地/CI）

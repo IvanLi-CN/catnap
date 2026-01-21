@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 已完成
 - Created: 2026-01-21
 - Last: 2026-01-21
 
@@ -144,11 +144,11 @@
 
 ## 实现里程碑（Milestones）
 
-- [ ] M1: PR label gate：新增/接入 `label-gate`，缺失/冲突/未知标签直接失败
-- [ ] M2: Release intent：新增/接入 `release-intent`，实现 commit→PR→labels 映射与无 PR 跳过
-- [ ] M3: Versioning：升级 `compute-version.sh` 支持 `BUMP_LEVEL` + base=highest tag + bump math + uniqueness
-- [ ] M4: Wiring：`push main` 发布 jobs 仅在 `should_release=true` 时执行
-- [ ] M5: 文档同步：`README.md` 补齐标签规则与手动发版参数说明
+- [x] M1: PR label gate：新增/接入 `label-gate`，缺失/冲突/未知标签直接失败
+- [x] M2: Release intent：新增/接入 `release-intent`，实现 commit→PR→labels 映射与无 PR 跳过
+- [x] M3: Versioning：升级 `compute-version.sh` 支持 `BUMP_LEVEL` + base=highest tag + bump math + uniqueness
+- [x] M4: Wiring：`push main` 发布 jobs 仅在 `should_release=true` 时执行
+- [x] M5: 文档同步：`README.md` 补齐标签规则与手动发版参数说明
 
 ## 开放问题（需要主人回答）
 
@@ -161,4 +161,4 @@ None.
 ## 变更记录（Change log）
 
 - 2026-01-21: 创建计划 0005，冻结 PR 标签意图、无 PR 跳过策略、base version 与 bump 规则。
-
+- 2026-01-21: 实现：PR `label-gate` + `release-intent` + `compute-version`（bump/base/uniqueness）+ release job gating；同步 README。
