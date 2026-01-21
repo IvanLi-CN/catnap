@@ -216,9 +216,9 @@ if ! pulls_json="$(
 fi
 
 mapfile -t pr_numbers < <(
-  python3 - <<'PY' <<<"${pulls_json}"
-import json, sys
-data = json.load(sys.stdin)
+  PULLS_JSON="${pulls_json}" python3 - <<'PY'
+import json, os
+data = json.loads(os.environ["PULLS_JSON"])
 for pr in data or []:
   n = pr.get("number")
   if n is not None:
@@ -264,9 +264,9 @@ if ! issue_json="$(
 fi
 
 mapfile -t labels < <(
-  python3 - <<'PY' <<<"${issue_json}"
-import json, sys
-data = json.load(sys.stdin)
+  ISSUE_JSON="${issue_json}" python3 - <<'PY'
+import json, os
+data = json.loads(os.environ["ISSUE_JSON"])
 for l in data.get("labels", []) or []:
   name = l.get("name")
   if name:

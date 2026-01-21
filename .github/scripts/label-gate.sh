@@ -53,9 +53,9 @@ issue_json="$(
 )" || fail "failed to fetch PR labels via GitHub API (repo=${repo}, pr=${pr_number})"
 
 mapfile -t labels < <(
-  python3 - <<'PY' <<<"${issue_json}"
-import json, sys
-data = json.load(sys.stdin)
+  ISSUE_JSON="${issue_json}" python3 - <<'PY'
+import json, os
+data = json.loads(os.environ["ISSUE_JSON"])
 for l in data.get("labels", []) or []:
   name = l.get("name")
   if name:
