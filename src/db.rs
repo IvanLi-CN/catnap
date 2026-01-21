@@ -1,7 +1,7 @@
 use crate::config::RuntimeConfig;
 use crate::models::*;
 use sqlx::{Row, SqlitePool};
-use time::{format_description::well_known::Rfc3339, OffsetDateTime};
+use time::{format_description::well_known::Rfc3339, OffsetDateTime, UtcOffset};
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
@@ -79,6 +79,13 @@ CREATE TABLE IF NOT EXISTS catalog_configs (
   source_gid TEXT NULL
 );
 
+CREATE TABLE IF NOT EXISTS inventory_samples_1m (
+  config_id TEXT NOT NULL,
+  ts_minute TEXT NOT NULL,
+  inventory_quantity INTEGER NOT NULL,
+  PRIMARY KEY (config_id, ts_minute)
+);
+
 CREATE TABLE IF NOT EXISTS monitoring_configs (
   user_id TEXT NOT NULL,
   config_id TEXT NOT NULL,
@@ -122,6 +129,7 @@ CREATE TABLE IF NOT EXISTS event_logs (
 
 CREATE INDEX IF NOT EXISTS idx_event_logs_user_ts ON event_logs (user_id, ts DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_event_logs_ts ON event_logs (ts DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_inventory_samples_1m_ts ON inventory_samples_1m (ts_minute);
 "#,
     )
     .execute(db)
@@ -136,6 +144,18 @@ fn now_rfc3339() -> String {
             // Should not happen; keep response stable.
             "1970-01-01T00:00:00Z".to_string()
         })
+}
+
+fn floor_to_minute_utc(dt: OffsetDateTime) -> OffsetDateTime {
+    let dt = dt.to_offset(UtcOffset::UTC);
+    let dt = dt.replace_second(0).unwrap_or(dt);
+    dt.replace_nanosecond(0).unwrap_or(dt)
+}
+
+fn floor_rfc3339_to_minute_utc(ts: &str) -> Option<String> {
+    let parsed = OffsetDateTime::parse(ts, &Rfc3339).ok()?;
+    let floored = floor_to_minute_utc(parsed);
+    floored.format(&Rfc3339).ok()
 }
 
 pub async fn ensure_user(
@@ -358,9 +378,72 @@ ON CONFLICT(id) DO UPDATE SET
         .bind(c.source_gid.as_deref())
         .execute(&mut *tx)
         .await?;
+
+        // Best-effort: write minute history samples without affecting current inventory availability.
+        if let Some(ts_minute) = floor_rfc3339_to_minute_utc(&c.inventory.checked_at) {
+            let _ = sqlx::query(
+                r#"
+INSERT INTO inventory_samples_1m (config_id, ts_minute, inventory_quantity)
+VALUES (?, ?, ?)
+ON CONFLICT(config_id, ts_minute) DO UPDATE SET
+  inventory_quantity = excluded.inventory_quantity
+"#,
+            )
+            .bind(&c.id)
+            .bind(ts_minute)
+            .bind(c.inventory.quantity.max(0))
+            .execute(&mut *tx)
+            .await;
+        }
     }
     tx.commit().await?;
     Ok(())
+}
+
+#[derive(Debug, Clone)]
+pub struct InventorySample1mRow {
+    pub config_id: String,
+    pub ts_minute: String,
+    pub inventory_quantity: i64,
+}
+
+pub async fn list_inventory_samples_1m(
+    db: &SqlitePool,
+    config_ids: &[String],
+    window_from: &str,
+    window_to: &str,
+) -> anyhow::Result<Vec<InventorySample1mRow>> {
+    if config_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let placeholders = std::iter::repeat_n("?", config_ids.len())
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql = format!(
+        r#"SELECT config_id, ts_minute, inventory_quantity
+           FROM inventory_samples_1m
+           WHERE config_id IN ({placeholders})
+             AND ts_minute >= ?
+             AND ts_minute <= ?
+           ORDER BY config_id ASC, ts_minute ASC"#
+    );
+
+    let mut query = sqlx::query(&sql);
+    for id in config_ids {
+        query = query.bind(id);
+    }
+    query = query.bind(window_from).bind(window_to);
+
+    let rows = query.fetch_all(db).await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| InventorySample1mRow {
+            config_id: row.get::<String, _>(0),
+            ts_minute: row.get::<String, _>(1),
+            inventory_quantity: row.get::<i64, _>(2),
+        })
+        .collect())
 }
 
 pub async fn insert_log(
@@ -506,4 +589,36 @@ WHERE id IN (
         .await?;
     }
     Ok(())
+}
+
+pub async fn cleanup_inventory_samples_1m(
+    db: &SqlitePool,
+    retention_days: i64,
+) -> anyhow::Result<()> {
+    if retention_days <= 0 {
+        return Ok(());
+    }
+    let cutoff = floor_to_minute_utc(
+        OffsetDateTime::now_utc().saturating_sub(time::Duration::days(retention_days)),
+    )
+    .format(&Rfc3339)
+    .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string());
+
+    sqlx::query("DELETE FROM inventory_samples_1m WHERE ts_minute < ?")
+        .bind(cutoff)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn floors_rfc3339_to_minute_utc() {
+        let ts = "2026-01-21T12:34:56Z";
+        let floored = floor_rfc3339_to_minute_utc(ts).unwrap();
+        assert_eq!(floored, "2026-01-21T12:34:00Z");
+    }
 }

@@ -209,6 +209,40 @@ pub struct ProductsResponse {
     pub fetched_at: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InventoryHistoryRequest {
+    pub config_ids: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InventoryHistoryResponse {
+    pub window: InventoryHistoryWindow,
+    pub series: Vec<InventoryHistorySeries>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InventoryHistoryWindow {
+    pub from: String,
+    pub to: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InventoryHistorySeries {
+    pub config_id: String,
+    pub points: Vec<InventoryHistoryPoint>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InventoryHistoryPoint {
+    pub ts_minute: String,
+    pub quantity: i64,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RefreshStatusResponse {

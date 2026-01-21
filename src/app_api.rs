@@ -21,6 +21,7 @@ pub fn router(state: AppState) -> Router {
         .route("/health", get(api_health))
         .route("/bootstrap", get(get_bootstrap))
         .route("/products", get(get_products))
+        .route("/inventory/history", post(post_inventory_history))
         .route("/refresh", post(post_refresh))
         .route("/refresh/status", get(get_refresh_status))
         .route("/monitoring", get(get_monitoring))
@@ -90,6 +91,18 @@ fn json_rate_limited() -> (StatusCode, Json<ErrorResponse>) {
             error: ErrorInfo {
                 code: "RATE_LIMITED",
                 message: "刷新太频繁，请稍后再试",
+            },
+        }),
+    )
+}
+
+fn json_internal_error() -> (StatusCode, Json<ErrorResponse>) {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(ErrorResponse {
+            error: ErrorInfo {
+                code: "INTERNAL",
+                message: "Internal error",
             },
         }),
     )
@@ -225,7 +238,7 @@ async fn post_refresh(
 async fn run_refresh_job(
     state: AppState,
     user_id: &str,
-    enabled: &[String],
+    _enabled: &[String],
     full_catalog: bool,
     tasks: Vec<RefreshTask>,
 ) {
@@ -234,7 +247,6 @@ async fn run_refresh_job(
     } else {
         tasks.len().max(1) as i64
     };
-    let enabled_set = enabled.iter().collect::<HashSet<_>>();
     let mut done: i64 = 0;
 
     let res: anyhow::Result<()> = async {
@@ -249,13 +261,11 @@ async fn run_refresh_job(
             return Ok(());
         }
 
-        for ((fid, gid), ids) in tasks.iter() {
+        for ((fid, gid), _ids) in tasks.iter() {
             let parsed = upstream.fetch_region_configs(fid, gid.as_deref()).await?;
-            let ids_set = ids.iter().collect::<HashSet<_>>();
 
             let parsed_map = parsed
                 .into_iter()
-                .filter(|c| enabled_set.contains(&c.id) && ids_set.contains(&c.id))
                 .map(|c| (c.id.clone(), c))
                 .collect::<HashMap<_, _>>();
 
@@ -395,6 +405,78 @@ async fn get_products(
     Ok(Json(ProductsResponse {
         configs,
         fetched_at: snapshot.fetched_at,
+    }))
+}
+
+async fn post_inventory_history(
+    State(state): State<AppState>,
+    _user: axum::extract::Extension<UserView>,
+    Json(req): Json<InventoryHistoryRequest>,
+) -> Result<Json<InventoryHistoryResponse>, (StatusCode, Json<ErrorResponse>)> {
+    const MAX_CONFIG_IDS: usize = 200;
+
+    let mut ids: Vec<String> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    for id in req.config_ids {
+        let id = id.trim().to_string();
+        if id.is_empty() {
+            continue;
+        }
+        if seen.insert(id.clone()) {
+            ids.push(id);
+        }
+        if ids.len() > MAX_CONFIG_IDS {
+            return Err(json_invalid_argument());
+        }
+    }
+    if ids.is_empty() {
+        return Err(json_invalid_argument());
+    }
+
+    let now = OffsetDateTime::now_utc();
+    let to = now
+        .replace_second(0)
+        .ok()
+        .and_then(|t| t.replace_nanosecond(0).ok())
+        .unwrap_or(now);
+    let from = to.saturating_sub(time::Duration::hours(24));
+
+    let to_s = to
+        .format(&Rfc3339)
+        .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string());
+    let from_s = from
+        .format(&Rfc3339)
+        .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string());
+
+    let rows = db::list_inventory_samples_1m(&state.db, &ids, &from_s, &to_s)
+        .await
+        .map_err(|_| json_internal_error())?;
+
+    let mut by_id: HashMap<String, Vec<InventoryHistoryPoint>> = HashMap::new();
+    for r in rows {
+        by_id
+            .entry(r.config_id)
+            .or_default()
+            .push(InventoryHistoryPoint {
+                ts_minute: r.ts_minute,
+                quantity: r.inventory_quantity,
+            });
+    }
+
+    let series = ids
+        .iter()
+        .map(|id| InventoryHistorySeries {
+            config_id: id.clone(),
+            points: by_id.remove(id).unwrap_or_default(),
+        })
+        .collect::<Vec<_>>();
+
+    Ok(Json(InventoryHistoryResponse {
+        window: InventoryHistoryWindow {
+            from: from_s,
+            to: to_s,
+        },
+        series,
     }))
 }
 

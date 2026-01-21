@@ -4,6 +4,8 @@ use std::collections::HashMap;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use tracing::{info, warn};
 
+const INVENTORY_HISTORY_RETENTION_DAYS: i64 = 30;
+
 pub async fn spawn(state: AppState) {
     tokio::spawn(async move {
         if let Err(err) = run(state).await {
@@ -55,6 +57,8 @@ async fn run(state: AppState) -> anyhow::Result<()> {
                 state.config.log_retention_max_rows,
             )
             .await;
+            let _ =
+                db::cleanup_inventory_samples_1m(&state.db, INVENTORY_HISTORY_RETENTION_DAYS).await;
             last_cleanup = Some(now);
         }
 
@@ -154,17 +158,13 @@ async fn poll_once(
             }
         }
 
-        // Update snapshot + DB for all parsed configs we care about.
-        let changed = parsed_map
-            .values()
-            .filter(|c| enabled.contains(&c.id))
-            .cloned()
-            .collect::<Vec<_>>();
+        // Update snapshot + DB for all parsed configs (sampling covers all configs we refreshed).
+        let changed = parsed_map.values().cloned().collect::<Vec<_>>();
         if !changed.is_empty() {
             db::upsert_catalog_configs(&state.db, &changed).await?;
             let mut lock = state.catalog.write().await;
             for c in lock.configs.iter_mut() {
-                if let Some(new_cfg) = changed.iter().find(|n| n.id == c.id) {
+                if let Some(new_cfg) = parsed_map.get(&c.id) {
                     *c = new_cfg.clone();
                 }
             }
