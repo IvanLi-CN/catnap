@@ -71,6 +71,15 @@ export type ProductsResponse = {
   fetchedAt: string;
 };
 
+export type InventoryHistoryPoint = { tsMinute: string; quantity: number };
+export type InventoryHistorySeries = { configId: string; points: InventoryHistoryPoint[] };
+export type InventoryHistoryResponse = {
+  window: { from: string; to: string };
+  series: InventoryHistorySeries[];
+};
+
+const EMPTY_HISTORY_BY_ID = new Map<string, InventoryHistoryPoint[]>();
+
 export type RefreshStatusResponse = {
   state: "idle" | "syncing" | "success" | "error";
   done: number;
@@ -155,6 +164,175 @@ function formatRelativeTime(iso: string, nowMs: number): string {
   if (diffH < 48) return `${diffH} 小时前`;
   const diffD = Math.floor(diffH / 24);
   return `${diffD} 天前`;
+}
+
+function clampNumber(v: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, v));
+}
+
+function useInventoryHistory(configIds: string[], refreshKey: string) {
+  const ids = useMemo(() => {
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const raw of configIds) {
+      const id = raw.trim();
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      out.push(id);
+      if (out.length >= 200) break;
+    }
+    return out;
+  }, [configIds]);
+
+  const [window, setWindow] = useState<InventoryHistoryResponse["window"] | null>(null);
+  const [byId, setById] = useState<Map<string, InventoryHistoryPoint[]>>(() => new Map());
+
+  useEffect(() => {
+    void refreshKey;
+    if (ids.length === 0) {
+      setWindow(null);
+      setById(new Map());
+      return;
+    }
+
+    let cancelled = false;
+
+    async function run() {
+      try {
+        const res = await api<InventoryHistoryResponse>("/api/inventory/history", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ configIds: ids }),
+        });
+        if (cancelled) return;
+        const m = new Map<string, InventoryHistoryPoint[]>();
+        for (const s of res.series) m.set(s.configId, s.points);
+        setWindow(res.window);
+        setById(m);
+      } catch {
+        if (!cancelled) {
+          setWindow(null);
+          setById(new Map());
+        }
+      }
+    }
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [ids, refreshKey]);
+
+  return { window, byId };
+}
+
+function TrendBackground({
+  points,
+  window,
+}: {
+  points: InventoryHistoryPoint[] | undefined;
+  window: InventoryHistoryResponse["window"] | null;
+}) {
+  if (!window) return null;
+
+  const fromMs = Date.parse(window.from);
+  const toMs = Date.parse(window.to);
+  if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || toMs <= fromMs) return null;
+
+  const width = 100;
+  const height = 40;
+  const baselineY = height;
+
+  const rawPoints = points ?? [];
+  if (rawPoints.length === 0) {
+    return (
+      <svg
+        className="trend-bg"
+        viewBox={`0 0 ${width} ${height}`}
+        preserveAspectRatio="none"
+        aria-hidden="true"
+      >
+        <path className="trend-empty" d={`M 0 ${height - 6} H ${width}`} />
+      </svg>
+    );
+  }
+
+  const sorted = rawPoints
+    .map((p) => ({ ...p, ms: Date.parse(p.tsMinute) }))
+    .filter((p) => Number.isFinite(p.ms))
+    .sort((a, b) => a.ms - b.ms);
+
+  if (sorted.length === 0) {
+    return (
+      <svg
+        className="trend-bg"
+        viewBox={`0 0 ${width} ${height}`}
+        preserveAspectRatio="none"
+        aria-hidden="true"
+      >
+        <path className="trend-empty" d={`M 0 ${height - 6} H ${width}`} />
+      </svg>
+    );
+  }
+
+  const scaled = sorted.map((p) => {
+    const t = clampNumber((p.ms - fromMs) / (toMs - fromMs), 0, 1);
+    const x = t * width;
+    const clamped = clampNumber(p.quantity, 0, 10);
+    const y = baselineY - (clamped / 10) * height;
+    return { x, y, raw: p.quantity };
+  });
+
+  const hasOver = scaled.some((p) => p.raw > 10);
+
+  const x0 = scaled[0].x;
+  const y0 = scaled[0].y;
+
+  let lineD = `M ${x0} ${y0}`;
+  let areaD = `M ${x0} ${baselineY} L ${x0} ${y0}`;
+  let overD = "";
+
+  for (let i = 1; i < scaled.length; i += 1) {
+    const { x, y } = scaled[i];
+    lineD += ` H ${x} V ${y}`;
+    areaD += ` H ${x} V ${y}`;
+
+    const prev = scaled[i - 1];
+    if (prev.raw > 10 && x > prev.x) {
+      overD += `M ${prev.x} ${prev.y} H ${x} `;
+    }
+    if ((prev.raw > 10 || scaled[i].raw > 10) && prev.y !== y) {
+      overD += `M ${x} ${prev.y} V ${y} `;
+    }
+  }
+
+  const last = scaled[scaled.length - 1];
+  if (width > last.x) {
+    lineD += ` H ${width}`;
+    areaD += ` H ${width}`;
+    if (last.raw > 10) {
+      overD += `M ${last.x} ${last.y} H ${width} `;
+    }
+  }
+  areaD += ` L ${width} ${baselineY} Z`;
+
+  return (
+    <svg
+      className="trend-bg"
+      viewBox={`0 0 ${width} ${height}`}
+      preserveAspectRatio="none"
+      aria-hidden="true"
+    >
+      <path className="trend-area" d={areaD} />
+      <path className="trend-line" d={lineD} />
+      {overD ? <path className="trend-over" d={overD} /> : null}
+      {hasOver ? (
+        <text className="trend-cap" x={width - 4} y={12} textAnchor="end">
+          10+
+        </text>
+      ) : null}
+    </svg>
+  );
 }
 
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
@@ -616,9 +794,13 @@ function summarizeSpecs(specs: Spec[], max: number): string {
 export function ProductCard({
   cfg,
   onToggle,
+  historyWindow = null,
+  historyPoints,
 }: {
   cfg: Config;
   onToggle: (configId: string, enabled: boolean) => void;
+  historyWindow?: InventoryHistoryResponse["window"] | null;
+  historyPoints?: InventoryHistoryPoint[];
 }) {
   const isCloud = !cfg.monitorSupported;
   const invTone = isCloud
@@ -630,60 +812,74 @@ export function ProductCard({
     ? "状态：有货"
     : cfg.inventory.status === "unknown"
       ? "库存 ?"
-      : cfg.inventory.quantity > 0
-        ? `库存 ${cfg.inventory.quantity}`
-        : "库存 0";
-  const invWidth = isCloud ? 120 : 96;
+      : cfg.inventory.quantity > 10
+        ? "库存 10+"
+        : cfg.inventory.quantity > 0
+          ? `库存 ${cfg.inventory.quantity}`
+          : "库存 0";
   const monitorTone = isCloud ? "disabled" : cfg.monitorEnabled ? "on" : "";
   const monitorText = isCloud ? "监控：禁用" : cfg.monitorEnabled ? "监控：开" : "监控：关";
   const foot = isCloud ? null : cfg.monitorEnabled ? "变化检测：补货 / 价格 / 配置" : null;
 
   return (
     <div className={`cfg-card ${isCloud ? "cloud" : "product"}`}>
-      <div className="cfg-title">{cfg.name}</div>
-      {isCloud ? null : <div className="cfg-sub">{summarizeSpecs(cfg.specs, 3) || "—"}</div>}
-      <div className="cfg-price">{formatMoney(cfg.price)}</div>
-      <div className="cfg-pills">
-        <div className={`pill ${invTone} center`} style={{ width: `${invWidth}px` }}>
-          {invText}
+      <TrendBackground points={historyPoints} window={historyWindow} />
+      <div className="card-content">
+        <div className="cfg-title">{cfg.name}</div>
+        {isCloud ? null : <div className="cfg-sub">{summarizeSpecs(cfg.specs, 3) || "—"}</div>}
+        <div className="cfg-price">{formatMoney(cfg.price)}</div>
+        {foot ? <div className="cfg-foot">{foot}</div> : null}
+        <div className="cfg-pills">
+          <div className={`pill badge ${invTone}`}>{invText}</div>
+          <button
+            type="button"
+            className={`pill badge ${monitorTone}`}
+            disabled={!cfg.monitorSupported}
+            onClick={() => onToggle(cfg.id, !cfg.monitorEnabled)}
+          >
+            {monitorText}
+          </button>
         </div>
-        <button
-          type="button"
-          className={`pill ${monitorTone} center`}
-          style={{ width: "96px" }}
-          disabled={!cfg.monitorSupported}
-          onClick={() => onToggle(cfg.id, !cfg.monitorEnabled)}
-        >
-          {monitorText}
-        </button>
       </div>
-      {foot ? <div className="cfg-foot">{foot}</div> : null}
     </div>
   );
 }
 
-export function MonitoringCard({ cfg, nowMs }: { cfg: Config; nowMs: number }) {
+export function MonitoringCard({
+  cfg,
+  nowMs,
+  historyWindow = null,
+  historyPoints,
+}: {
+  cfg: Config;
+  nowMs: number;
+  historyWindow?: InventoryHistoryResponse["window"] | null;
+  historyPoints?: InventoryHistoryPoint[];
+}) {
   const invTone =
     cfg.inventory.status === "unknown" || cfg.inventory.quantity === 0 ? "warn" : "on";
   const invText =
     cfg.inventory.status === "unknown"
       ? "库存：未知"
-      : cfg.inventory.quantity > 0
-        ? `库存 ${cfg.inventory.quantity}`
-        : "库存 0";
+      : cfg.inventory.quantity > 10
+        ? "库存 10+"
+        : cfg.inventory.quantity > 0
+          ? `库存 ${cfg.inventory.quantity}`
+          : "库存 0";
   return (
     <div className="mon-card">
-      <div className="mon-title">{cfg.name}</div>
-      <div className="mon-sub">{summarizeSpecs(cfg.specs, 2) || "—"}</div>
-      <div className="mon-price">{formatMoney(cfg.price)}</div>
-      <div className="mon-pills">
-        <div className={`pill ${invTone}`} style={{ width: "220px" }}>
-          {invText}
+      <TrendBackground points={historyPoints} window={historyWindow} />
+      <div className="card-content">
+        <div className="mon-title">{cfg.name}</div>
+        <div className="mon-sub">{summarizeSpecs(cfg.specs, 2) || "—"}</div>
+        <div className="mon-price">{formatMoney(cfg.price)}</div>
+        <div className="mon-pills">
+          <div className={`pill badge ${invTone}`}>{invText}</div>
+          <div className="pill badge">{`更新：${formatRelativeTime(
+            cfg.inventory.checkedAt,
+            nowMs,
+          )}`}</div>
         </div>
-        <div
-          className="pill"
-          style={{ width: "220px" }}
-        >{`更新：${formatRelativeTime(cfg.inventory.checkedAt, nowMs)}`}</div>
       </div>
     </div>
   );
@@ -750,6 +946,12 @@ export function ProductsView({
     });
     return entries;
   }, [filtered, countriesById]);
+
+  const visibleIds = useMemo(() => filtered.map((c) => c.id), [filtered]);
+  const { window: historyWindow, byId: historyById } = useInventoryHistory(
+    visibleIds,
+    bootstrap.catalog.fetchedAt,
+  );
 
   return (
     <div className="panel">
@@ -823,7 +1025,13 @@ export function ProductsView({
             <div className="divider-bleed" />
             <div className="grid" style={{ gridTemplateColumns: columnsForCount(items.length) }}>
               {items.map((cfg) => (
-                <ProductCard cfg={cfg} key={cfg.id} onToggle={onToggle} />
+                <ProductCard
+                  cfg={cfg}
+                  key={cfg.id}
+                  onToggle={onToggle}
+                  historyWindow={historyWindow}
+                  historyPoints={historyById.get(cfg.id)}
+                />
               ))}
             </div>
           </div>
@@ -852,6 +1060,13 @@ export function MonitoringView({
     () => bootstrap.catalog.configs.filter((c) => c.monitorEnabled),
     [bootstrap],
   );
+
+  const visibleIds = useMemo(() => enabled.map((c) => c.id), [enabled]);
+  const { window: historyWindow, byId: historyById } = useInventoryHistory(
+    visibleIds,
+    bootstrap.catalog.fetchedAt,
+  );
+
   const groups = useMemo(() => {
     const m = new Map<string, Config[]>();
     for (const cfg of enabled) {
@@ -894,6 +1109,8 @@ export function MonitoringView({
             title={`${country} / ${region}`}
             items={items}
             nowMs={nowMs}
+            historyWindow={historyWindow}
+            historyById={historyById}
           />
         );
       })}
@@ -913,11 +1130,15 @@ export function MonitoringSection({
   title,
   items,
   nowMs,
+  historyWindow = null,
+  historyById = EMPTY_HISTORY_BY_ID,
 }: {
   collapseKey: string;
   title: string;
   items: Config[];
   nowMs: number;
+  historyWindow?: InventoryHistoryResponse["window"] | null;
+  historyById?: Map<string, InventoryHistoryPoint[]>;
 }) {
   const [collapsed, setCollapsed] = useState<boolean>(
     () => localStorage.getItem(collapseKey) === "1",
@@ -968,7 +1189,13 @@ export function MonitoringSection({
           <div className="divider-bleed" />
           <div className="grid" style={{ gridTemplateColumns: columnsForCount(items.length) }}>
             {items.map((cfg) => (
-              <MonitoringCard cfg={cfg} key={cfg.id} nowMs={nowMs} />
+              <MonitoringCard
+                cfg={cfg}
+                key={cfg.id}
+                nowMs={nowMs}
+                historyWindow={historyWindow}
+                historyPoints={historyById.get(cfg.id)}
+              />
             ))}
           </div>
         </>
