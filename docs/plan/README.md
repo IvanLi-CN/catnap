@@ -44,3 +44,4 @@
 | 0002 | Storybook 展示与主题切换（含亮色主题） | 已完成 | `0002:storybook-theme-switching/PLAN.md` | 2026-01-20 | 补齐 stories 覆盖（components/pages/layout） |
 | 0003 | CI/CD：发版自动化（GHCR + GitHub Release + Release Assets）对标与补齐 | 已完成 | `0003:release-automation-alignment/PLAN.md` | 2026-01-21 | Release assets（4 targets + sha256）+ GHCR multi-arch + PR smoke test + UI embed |
 | 0004 | 配置卡片：库存历史与近 1 日走势（minute bucket） | 待实现 | `0004:inventory-history-trend/PLAN.md` | 2026-01-21 | 基线 `main@v0.1.4`；保留 30 天；API=sparse；>10=10+ |
+| 0005 | CI/CD：自动发版意图标签与版本号策略（防止 docs-only 发版） | 待实现 | `0005:release-intent-label-gating/PLAN.md` | 2026-01-21 | PR label gate：`type:docs|skip|patch|minor|major`；无关联 PR 的 `push main`=跳过；base=语义版本最大 tag（无 tag fallback `Cargo.toml`）；按标签 bump |
