@@ -31,6 +31,25 @@
   --pill-err: rgba(180, 35, 24, 0.12);
   --pill-err-border: rgba(180, 35, 24, 0.45);
 
+  /* Semi-transparent badges for card overlays (trend visible underneath) */
+  --badge: rgba(11, 18, 32, 0.06);
+  --badge-border: rgba(11, 18, 32, 0.18);
+  --badge-on: rgba(42, 138, 85, 0.18);
+  --badge-on-border: rgba(42, 138, 85, 0.55);
+  --badge-warn: rgba(138, 106, 42, 0.18);
+  --badge-warn-border: rgba(138, 106, 42, 0.55);
+  --badge-disabled: rgba(11, 18, 32, 0.05);
+  --badge-disabled-border: rgba(11, 18, 32, 0.18);
+  --badge-err: rgba(180, 35, 24, 0.16);
+  --badge-err-border: rgba(180, 35, 24, 0.55);
+
+  /* Trend (sparkline) colors */
+  --trend-line: rgba(42, 138, 85, 0.46);
+  --trend-fill: rgba(42, 138, 85, 0.14);
+  --trend-over: rgba(138, 106, 42, 0.75);
+  --trend-empty: rgba(11, 18, 32, 0.12);
+  --trend-cap: rgba(11, 18, 32, 0.46);
+
   --btn-hover: rgba(11, 18, 32, 0.06);
   --nav-item: rgba(11, 18, 32, 0.86);
   --nav-item-active: var(--text);
@@ -61,6 +80,23 @@
   --pill-err: #3b1a1a;
   --pill-err-border: rgba(138, 42, 42, 0.9);
 
+  --badge: rgba(16, 31, 58, 0.72);
+  --badge-border: rgba(27, 42, 74, 0.55);
+  --badge-on: rgba(23, 52, 40, 0.72);
+  --badge-on-border: rgba(42, 138, 85, 0.85);
+  --badge-warn: rgba(59, 47, 24, 0.72);
+  --badge-warn-border: rgba(138, 106, 42, 0.9);
+  --badge-disabled: rgba(27, 35, 54, 0.72);
+  --badge-disabled-border: rgba(52, 65, 95, 0.8);
+  --badge-err: rgba(59, 26, 26, 0.72);
+  --badge-err-border: rgba(138, 42, 42, 0.9);
+
+  --trend-line: rgba(154, 255, 209, 0.22);
+  --trend-fill: rgba(42, 138, 85, 0.18);
+  --trend-over: rgba(255, 206, 117, 0.42);
+  --trend-empty: rgba(230, 238, 252, 0.12);
+  --trend-cap: rgba(230, 238, 252, 0.6);
+
   --btn-hover: rgba(230, 238, 252, 0.06);
   --nav-item: rgba(230, 238, 252, 0.9);
   --nav-item-active: #ffffff;
@@ -87,6 +123,23 @@
     --pill-disabled-border: rgba(52, 65, 95, 0.8);
     --pill-err: #3b1a1a;
     --pill-err-border: rgba(138, 42, 42, 0.9);
+
+    --badge: rgba(16, 31, 58, 0.72);
+    --badge-border: rgba(27, 42, 74, 0.55);
+    --badge-on: rgba(23, 52, 40, 0.72);
+    --badge-on-border: rgba(42, 138, 85, 0.85);
+    --badge-warn: rgba(59, 47, 24, 0.72);
+    --badge-warn-border: rgba(138, 106, 42, 0.9);
+    --badge-disabled: rgba(27, 35, 54, 0.72);
+    --badge-disabled-border: rgba(52, 65, 95, 0.8);
+    --badge-err: rgba(59, 26, 26, 0.72);
+    --badge-err-border: rgba(138, 42, 42, 0.9);
+
+    --trend-line: rgba(154, 255, 209, 0.22);
+    --trend-fill: rgba(42, 138, 85, 0.18);
+    --trend-over: rgba(255, 206, 117, 0.42);
+    --trend-empty: rgba(230, 238, 252, 0.12);
+    --trend-cap: rgba(230, 238, 252, 0.6);
 
     --btn-hover: rgba(230, 238, 252, 0.06);
     --nav-item: rgba(230, 238, 252, 0.9);
@@ -423,6 +476,33 @@ select {
   border-color: var(--pill-err-border);
 }
 
+.pill.badge {
+  background: var(--badge);
+  border-color: var(--badge-border);
+  padding: 0 12px;
+  justify-content: center;
+}
+
+.pill.badge.on {
+  background: var(--badge-on);
+  border-color: var(--badge-on-border);
+}
+
+.pill.badge.warn {
+  background: var(--badge-warn);
+  border-color: var(--badge-warn-border);
+}
+
+.pill.badge.disabled {
+  background: var(--badge-disabled);
+  border-color: var(--badge-disabled-border);
+}
+
+.pill.badge.err {
+  background: var(--badge-err);
+  border-color: var(--badge-err-border);
+}
+
 .pill.center {
   justify-content: center;
   padding: 0;
@@ -524,6 +604,59 @@ select {
   background: var(--surface);
   border-radius: var(--r14);
   padding: 24px;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.card-content {
+  position: relative;
+  z-index: 1;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.trend-bg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.trend-area {
+  fill: var(--trend-fill);
+}
+
+.trend-line {
+  fill: none;
+  stroke: var(--trend-line);
+  stroke-width: 1.2;
+}
+
+.trend-over {
+  fill: none;
+  stroke: var(--trend-over);
+  stroke-width: 1.6;
+  stroke-dasharray: 2 2;
+}
+
+.trend-empty {
+  fill: none;
+  stroke: var(--trend-empty);
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+}
+
+.trend-cap {
+  fill: var(--trend-cap);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: -0.2px;
 }
 
 .cfg-card.product {
@@ -532,6 +665,10 @@ select {
 
 .cfg-card.cloud {
   height: 104px;
+}
+
+.mon-card {
+  height: 160px;
 }
 
 .cfg-title,
@@ -555,23 +692,28 @@ select {
 }
 
 .cfg-foot {
-  margin-top: 16px;
+  margin-top: 12px;
   color: var(--muted);
   font-size: 14px;
 }
 
 .cfg-pills {
-  margin-top: 16px;
+  margin-top: auto;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 12px;
+}
+
+.cfg-pills > :last-child {
+  margin-left: auto;
 }
 
 .mon-pills {
-  margin-top: 16px;
+  margin-top: auto;
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
 /* Collapse button in group block */

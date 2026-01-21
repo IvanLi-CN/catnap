@@ -4,6 +4,7 @@ use axum::{
 };
 use catnap::{build_app, AppState, RuntimeConfig};
 use sqlx::sqlite::SqlitePoolOptions;
+use sqlx::Row;
 use sqlx::SqlitePool;
 use std::{collections::HashMap, sync::Arc};
 use time::OffsetDateTime;
@@ -297,4 +298,122 @@ async fn logs_cursor_paginates_with_rfc3339_timestamps() {
     let items = json["items"].as_array().unwrap();
     assert_eq!(items.len(), 1);
     assert_eq!(items[0]["id"].as_str(), Some("a"));
+}
+
+#[tokio::test]
+async fn inventory_history_batch_query_returns_sparse_points() {
+    let t = make_app().await;
+
+    let ids = sqlx::query("SELECT id FROM catalog_configs ORDER BY id LIMIT 2")
+        .fetch_all(&t.db)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| r.get::<String, _>(0))
+        .collect::<Vec<_>>();
+    assert!(ids.len() >= 2);
+    let id1 = ids[0].clone();
+    let id2 = ids[1].clone();
+
+    let now = OffsetDateTime::now_utc()
+        .replace_second(0)
+        .unwrap()
+        .replace_nanosecond(0)
+        .unwrap();
+    let ts1 = now - time::Duration::minutes(3);
+    let ts2 = now - time::Duration::minutes(1);
+    let ts1 = ts1
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let ts2 = ts2
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+
+    // make_app() may have inserted a sample via upsert_catalog_configs; keep this test deterministic.
+    sqlx::query("DELETE FROM inventory_samples_1m WHERE config_id = ?")
+        .bind(&id1)
+        .execute(&t.db)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM inventory_samples_1m WHERE config_id = ?")
+        .bind(&id2)
+        .execute(&t.db)
+        .await
+        .unwrap();
+
+    sqlx::query(
+        "INSERT INTO inventory_samples_1m (config_id, ts_minute, inventory_quantity) VALUES (?, ?, ?)",
+    )
+    .bind(&id1)
+    .bind(&ts1)
+    .bind(0_i64)
+    .execute(&t.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO inventory_samples_1m (config_id, ts_minute, inventory_quantity) VALUES (?, ?, ?)",
+    )
+    .bind(&id1)
+    .bind(&ts2)
+    .bind(12_i64)
+    .execute(&t.db)
+    .await
+    .unwrap();
+
+    let body = serde_json::to_vec(&serde_json::json!({ "configIds": [id1, id2] })).unwrap();
+    let res = t
+        .app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/inventory/history")
+                .header("host", "example.com")
+                .header("x-user", "u_1")
+                .header("origin", "http://example.com")
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let bytes = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let series = json["series"].as_array().unwrap();
+    assert_eq!(series.len(), 2);
+    assert_eq!(series[0]["configId"].as_str(), Some(ids[0].as_str()));
+    assert_eq!(series[1]["configId"].as_str(), Some(ids[1].as_str()));
+
+    let points = series[0]["points"].as_array().unwrap();
+    assert_eq!(points.len(), 2);
+    assert_eq!(points[0]["tsMinute"].as_str(), Some(ts1.as_str()));
+    assert_eq!(points[0]["quantity"].as_i64(), Some(0));
+    assert_eq!(points[1]["tsMinute"].as_str(), Some(ts2.as_str()));
+    assert_eq!(points[1]["quantity"].as_i64(), Some(12));
+
+    let points2 = series[1]["points"].as_array().unwrap();
+    assert!(points2.is_empty());
+}
+
+#[tokio::test]
+async fn inventory_history_rejects_empty_config_ids() {
+    let t = make_app().await;
+    let body = serde_json::to_vec(&serde_json::json!({ "configIds": [] })).unwrap();
+    let res = t
+        .app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/inventory/history")
+                .header("host", "example.com")
+                .header("x-user", "u_1")
+                .header("origin", "http://example.com")
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
 }

@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 已完成
 - Created: 2026-01-21
 - Last: 2026-01-21
 
@@ -152,10 +152,10 @@
 
 ## 实现里程碑（Milestones）
 
-- [ ] M1: DB：新增 `inventory_samples_1m` 并写入 minute bucket（全量 configs + upsert）
-- [ ] M2: API：实现 `POST /api/inventory/history`（sparse points，rolling 24h）+ 测试（窗口/排序/空序列）
-- [ ] M3: UI：配置卡片 sparkline（库存监控 + 全部产品），X 轴按真实时间比例，>10 显示 10+
-- [ ] M4: 保留期：按 30 天清理旧样本（含测试与失败降级策略）
+- [x] M1: DB：新增 `inventory_samples_1m` 并写入 minute bucket（全量 configs + upsert）
+- [x] M2: API：实现 `POST /api/inventory/history`（sparse points，rolling 24h）+ 测试（窗口/排序/空序列）
+- [x] M3: UI：配置卡片 sparkline（库存监控 + 全部产品），X 轴按真实时间比例，>10 显示 10+
+- [x] M4: 保留期：按 30 天清理旧样本（含测试与失败降级策略）
 
 ## 方案概述（Approach, high-level）
 
@@ -198,6 +198,7 @@
 
 - 2026-01-21: 创建计划并冻结口径（API=sparse，rolling 24h，保留 30 天，>10=10+），状态切换为 `待实现`
 - 2026-01-21: UI 细化：背景 area 走势、徽章半透明、徽章与按钮紧凑与对齐
+- 2026-01-21: 实现完成：minute 历史表 + 批量 history API + 卡片背景 sparkline + 30 天清理 + 测试与质量门槛
 
 ## 参考（References）
 

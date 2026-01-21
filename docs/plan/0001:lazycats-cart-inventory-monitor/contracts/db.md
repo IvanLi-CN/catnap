@@ -31,6 +31,19 @@
 - `source_fid` TEXT NULL
 - `source_gid` TEXT NULL
 
+### `inventory_samples_1m`
+
+库存历史（按分钟桶）样本表：用于在配置卡片绘制近 24h 走势（sparse points）。
+
+- `config_id` TEXT NOT NULL
+- `ts_minute` TEXT NOT NULL（RFC3339，minute-aligned）
+- `inventory_quantity` INTEGER NOT NULL（>= 0）
+- PRIMARY KEY (`config_id`, `ts_minute`)
+
+索引建议（实现可选）：
+
+- `idx_inventory_samples_1m_ts` ON (`ts_minute`)
+
 ### `monitoring_configs`
 
 记录“某用户是否监控某配置”。
