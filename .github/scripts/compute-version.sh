@@ -28,6 +28,6 @@ done
 
 effective="${base_major}.${base_minor}.${candidate}"
 
+export APP_EFFECTIVE_VERSION="${effective}"
 echo "APP_EFFECTIVE_VERSION=${effective}" >> "${GITHUB_ENV:-/dev/stdout}"
 echo "Computed APP_EFFECTIVE_VERSION=${effective} (base ${cargo_ver})"
-
