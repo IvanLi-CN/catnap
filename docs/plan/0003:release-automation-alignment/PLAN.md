@@ -2,9 +2,9 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 已完成
 - Created: 2026-01-20
-- Last: 2026-01-20
+- Last: 2026-01-21
 
 ## 背景 / 问题陈述
 
@@ -183,12 +183,12 @@
 
 ## 实现里程碑（Milestones）
 
-- [ ] M1: Workflow 触发与权限对齐：保留 `push main` 自动发版 + `workflow_dispatch` 手动发版；移除 `release: published`
-- [ ] M2: Release assets：4 targets（amd64/arm64 × gnu/musl）构建、打包（tar.gz + sha256）并幂等上传
-- [ ] M3: GHCR 多架构发布：`linux/amd64,linux/arm64` 单镜像 `ghcr.io/<owner>/catnap`，含 `v<semver>` 与（main-only）`latest`，并写入 OCI labels
-- [ ] M4: smoke test：新增 `.github/scripts/smoke-test.sh` 并接入 PR/发布流程（`/api/health` + `/`）
-- [ ] M5: UI embed：将 web 静态资源 embed 到二进制，并保证 `/` 与 `/assets/*` 正常工作
-- [ ] M6: 文档同步：补齐 `README.md` 的 Releases / Images / Versioning / Manual publish（workflow_dispatch）说明
+- [x] M1: Workflow 触发与权限对齐：保留 `push main` 自动发版 + `workflow_dispatch` 手动发版；移除 `release: published`
+- [x] M2: Release assets：4 targets（amd64/arm64 × gnu/musl）构建、打包（tar.gz + sha256）并幂等上传
+- [x] M3: GHCR 多架构发布：`linux/amd64,linux/arm64` 单镜像 `ghcr.io/<owner>/catnap`，含 `v<semver>` 与（main-only）`latest`，并写入 OCI labels
+- [x] M4: smoke test：新增 `.github/scripts/smoke-test.sh` 并接入 PR/发布流程（`/api/health` + `/`）
+- [x] M5: UI embed：将 web 静态资源 embed 到二进制，并保证 `/` 与 `/assets/*` 正常工作
+- [x] M6: 文档同步：补齐 `README.md` 的 Releases / Images / Versioning / Manual publish（workflow_dispatch）说明
 
 ## 开放问题（需要主人回答）
 
@@ -202,6 +202,7 @@ None.
 
 - 2026-01-20: 创建计划 #0003，并冻结 release assets 矩阵、UI embed、单镜像与 major 级 pinning。
 - 2026-01-20: 冻结触发策略：自动发版 `push main`；手动发版使用 `workflow_dispatch`；移除 `release: published`。
+- 2026-01-21: 落地完整发布链路：Release assets（4 targets + sha256）、多架构 GHCR、PR smoke test、UI embed，并补齐 README 发布说明。
 
 ## 参考（References）
 
