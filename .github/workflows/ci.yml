@@ -208,7 +208,7 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
-          platforms: ${{ env.PLATFORMS }}
+          platforms: linux/amd64
           push: false
           tags: catnap:pr-${{ github.sha }}
           build-args: |
