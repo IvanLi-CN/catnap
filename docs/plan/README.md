@@ -45,3 +45,5 @@
 | 0003 | CI/CD：发版自动化（GHCR + GitHub Release + Release Assets）对标与补齐 | 已完成 | `0003:release-automation-alignment/PLAN.md` | 2026-01-21 | Release assets（4 targets + sha256）+ GHCR multi-arch + PR smoke test + UI embed |
 | 0004 | 配置卡片：库存历史与近 1 日走势（minute bucket） | 已完成 | `0004:inventory-history-trend/PLAN.md` | 2026-01-21 | 实现：history API（batch）+ 卡片背景 sparkline + 30 天清理；API=sparse；>10=10+ |
 | 0005 | CI/CD：自动发版意图标签与版本号策略（防止 docs-only 发版） | 待实现 | `0005:release-intent-label-gating/PLAN.md` | 2026-01-21 | PR label gate：`type:docs|skip|patch|minor|major`；无关联 PR 的 `push main`=跳过；base=语义版本最大 tag（无 tag fallback `Cargo.toml`）；按标签 bump |
+| 0006 | CI/CD：GitHub Actions 构建提速（PR：跳过 arm64 + gating + cache） | 待实现 | `0006:github-actions-performance/PLAN.md` | 2026-01-21 | 冻结：PR 跳过 `linux/arm64`；前端重型检查允许 gating；Docker cache backend=`type=gha`；目标：PR ≤ 10 分钟（含 smoke + docker amd64） |
+| 0007 | CI/CD：修复 Release job 失败（Determine release version/tag） | 待实现 | `0007:release-job-unblock/PLAN.md` | 2026-01-21 | root cause：step 内运行 `compute-version.sh` 但变量未在同一 shell 可见（`set -u` unbound）；冻结：新增 machine-readable 输出并在同 step 内读取 |
