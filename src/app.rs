@@ -2,19 +2,22 @@ use crate::config::RuntimeConfig;
 use crate::models::{ErrorResponse, RefreshStatusResponse};
 use axum::{
     body::Body,
-    extract::State,
+    extract::{OriginalUri, State},
     http::{header, HeaderMap, HeaderValue, Request, Response, StatusCode},
     response::IntoResponse,
     routing::get,
     Router,
 };
+use bytes::Bytes;
+use include_dir::{include_dir, Dir};
+use mime_guess::MimeGuess;
 use sqlx::SqlitePool;
-use std::{collections::HashMap, net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 use time::OffsetDateTime;
 use tokio::sync::{Mutex, RwLock};
-use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
-use tracing::warn;
+
+static WEB_DIST: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/web/dist");
 
 #[derive(Clone)]
 pub struct AppState {
@@ -206,20 +209,13 @@ fn unauthorized_html() -> &'static str {
 </html>"#
 }
 
-pub fn build_app(state: AppState, static_dir: PathBuf) -> Router {
+pub fn build_app(state: AppState) -> Router {
     let api = crate::app_api::router(state.clone());
-
-    let static_index = ServeFile::new(static_dir.join("index.html"));
-    let static_files = ServeDir::new(static_dir).fallback(static_index);
-    let static_service = axum::routing::get_service(static_files).handle_error(|err| async move {
-        warn!(error = %err, "static file error");
-        (StatusCode::INTERNAL_SERVER_ERROR, "internal error")
-    });
 
     Router::new()
         .route("/healthz", get(healthz))
         .nest("/api", api)
-        .fallback_service(static_service)
+        .fallback(serve_embedded_ui)
         .layer(TraceLayer::new_for_http())
         .layer(axum::middleware::from_fn_with_state(
             state,
@@ -229,6 +225,49 @@ pub fn build_app(state: AppState, static_dir: PathBuf) -> Router {
 
 async fn healthz() -> (StatusCode, &'static str) {
     (StatusCode::OK, "ok")
+}
+
+fn content_type_for_path(path: &str) -> HeaderValue {
+    if path.ends_with(".html") {
+        return HeaderValue::from_static("text/html; charset=utf-8");
+    }
+
+    let mime = MimeGuess::from_path(path).first_or_octet_stream();
+    HeaderValue::from_str(mime.essence_str())
+        .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream"))
+}
+
+async fn serve_embedded_ui(OriginalUri(uri): OriginalUri) -> Response<Body> {
+    let path = uri.path();
+    let path = path.trim_start_matches('/');
+    let requested = if path.is_empty() { "index.html" } else { path };
+
+    let file = WEB_DIST
+        .get_file(requested)
+        .or_else(|| WEB_DIST.get_file("index.html"));
+
+    let Some(file) = file else {
+        let mut res = Response::new(Body::from("missing embedded UI (run `bun run build`)"));
+        *res.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+        return res;
+    };
+
+    let served_path = file.path().to_string_lossy();
+    let mut res = Response::new(Body::from(Bytes::from_static(file.contents())));
+    res.headers_mut().insert(
+        header::CONTENT_TYPE,
+        content_type_for_path(served_path.as_ref()),
+    );
+    if served_path.as_ref() == "index.html" {
+        res.headers_mut()
+            .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+    } else if served_path.as_ref().starts_with("assets/") {
+        res.headers_mut().insert(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("public, max-age=31536000, immutable"),
+        );
+    }
+    res
 }
 
 async fn require_user_global(

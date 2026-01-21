@@ -3,7 +3,6 @@ use std::env;
 #[derive(Clone, Debug)]
 pub struct RuntimeConfig {
     pub bind_addr: String,
-    pub static_dir: String,
     pub effective_version: String,
 
     pub upstream_cart_url: String,
@@ -60,7 +59,6 @@ impl RuntimeConfig {
 
         Self {
             bind_addr: env::var("BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:18080".to_string()),
-            static_dir: env::var("STATIC_DIR").unwrap_or_else(|_| "web/dist".to_string()),
             effective_version,
             upstream_cart_url: env::var("CATNAP_UPSTREAM_CART_URL")
                 .unwrap_or_else(|_| "https://lazycats.online/cart".to_string()),

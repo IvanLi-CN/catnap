@@ -11,9 +11,7 @@
   - 默认：`0.0.0.0:18080`
   - 示例：`127.0.0.1:18080`
 
-- `STATIC_DIR`（optional）
-  - 说明：静态资源目录（Web build 输出）
-  - 默认：`web/dist`
+> Web UI 静态资源已内嵌到二进制：运行时不再依赖 `STATIC_DIR` 文件系统目录。
 
 - `APP_EFFECTIVE_VERSION`（optional）
   - 说明：部署版本（CI/容器注入）
