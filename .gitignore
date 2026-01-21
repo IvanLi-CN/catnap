@@ -4,6 +4,7 @@
 
 /web/node_modules
 /web/dist
+/web/storybook-static
 
 # Local runtime artifacts
 *.db

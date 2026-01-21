@@ -41,6 +41,6 @@
 | ID   | Title | Status | Plan | Last | Notes |
 |-----:|-------|--------|------|------|-------|
 | 0001 | 懒猫云购物车库存监控 | 已完成 | `0001:lazycats-cart-inventory-monitor/PLAN.md` | 2026-01-20 | UI 对齐 wireframes + 监控页重新同步（Playwright 复验） |
-| 0002 | Storybook 展示与主题切换（含亮色主题） | 待实现 | `0002:storybook-theme-switching/PLAN.md` | 2026-01-20 | - |
+| 0002 | Storybook 展示与主题切换（含亮色主题） | 已完成 | `0002:storybook-theme-switching/PLAN.md` | 2026-01-20 | 补齐 stories 覆盖（components/pages/layout） |
 | 0003 | CI/CD：发版自动化（GHCR + GitHub Release + Release Assets）对标与补齐 | 待实现 | `0003:release-automation-alignment/PLAN.md` | 2026-01-20 | Auto release: 合并后 push main；Manual release: `workflow_dispatch`；Release assets: linux/amd64+arm64（gnu+musl）；UI embed；单镜像 `ghcr.io/<owner>/catnap`；移除 `release: published`；对标 dockrev PR #5 |
 | 0004 | 配置卡片：库存历史与近 1 日走势（minute bucket） | 待实现 | `0004:inventory-history-trend/PLAN.md` | 2026-01-21 | 基线 `main@v0.1.4`；保留 30 天；API=sparse；>10=10+ |

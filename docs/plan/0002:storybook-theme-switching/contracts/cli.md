@@ -27,18 +27,18 @@ bun run test:storybook
 
 本计划冻结 `web/package.json` 的 scripts 口径（实现阶段按此落地）：
 
-- `storybook`: `storybook dev`
-- `storybook:ci`: `storybook dev --ci --no-open`
+- `storybook`: `storybook dev --port 18181`
+- `storybook:ci`: `storybook dev --ci --no-open --port 18181`
 - `build-storybook`: `storybook build`
 - `test:storybook`: `vitest --project=storybook`
 
-> 说明：如后续需要固定端口/输出目录，应在 scripts 中显式写出，并同步更新本文件与 `PLAN.md` 的验收标准。
+> 说明：为避免默认端口（如 `6006`）冲突，本计划要求显式固定到高位端口 `18181`；如后续需要调整端口/输出目录，应同步更新本文件与 `PLAN.md` 的验收标准。
 
 ### 输出（Output）
 
 - `bun run storybook`:
   - Format: human（终端日志）
-  - Runs a local server（默认端口通常为 `6006`，以实际配置为准）
+  - Runs a local server（固定端口：`18181`）
 - `bun run storybook:ci`:
   - Format: human（终端日志）
   - Runs a local server（不自动打开浏览器；用于测试启动）
