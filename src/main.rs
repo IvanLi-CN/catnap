@@ -1,6 +1,6 @@
 use catnap::{build_app, RuntimeConfig};
 use sqlx::sqlite::SqlitePoolOptions;
-use std::{collections::HashMap, net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 use time::OffsetDateTime;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
@@ -68,7 +68,7 @@ async fn main() -> anyhow::Result<()> {
 
     catnap::poller::spawn(state.clone()).await;
 
-    let app = build_app(state, PathBuf::from(&config.static_dir));
+    let app = build_app(state);
     let addr: SocketAddr = catnap::app::parse_socket_addr(&config.bind_addr)?;
 
     let listener = tokio::net::TcpListener::bind(addr).await.map_err(|err| {

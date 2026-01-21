@@ -5,14 +5,13 @@ use axum::{
 use catnap::{build_app, AppState, RuntimeConfig};
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::SqlitePool;
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 use time::OffsetDateTime;
 use tower::ServiceExt;
 
 fn test_config() -> RuntimeConfig {
     RuntimeConfig {
         bind_addr: "127.0.0.1:0".to_string(),
-        static_dir: "web/dist".to_string(),
         effective_version: "test".to_string(),
         upstream_cart_url: "https://lazycats.online/cart".to_string(),
         auth_user_header: Some("x-user".to_string()),
@@ -79,7 +78,7 @@ async fn make_app() -> TestApp {
     };
 
     TestApp {
-        app: build_app(state, PathBuf::from("web/dist")),
+        app: build_app(state),
         db,
     }
 }
