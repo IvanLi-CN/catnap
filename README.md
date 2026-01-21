@@ -111,3 +111,55 @@ docker run --rm -p 18080:18080 \
 
 > 仍建议通过反向代理注入 `X-User-Id` 并保持同源访问。
 
+## Releases / Images / Versioning
+
+### Versioning（版本号）
+
+- Tag：`v<semver>`（例如 `v0.1.0`）
+- CI 会计算并注入 `APP_EFFECTIVE_VERSION=<semver>`（Docker env + `/api/health.version`）
+- `/api/health`：
+  - `status=ok`
+  - `version=<semver>`
+
+### GHCR images（镜像）
+
+- 镜像：`ghcr.io/<owner>/catnap`
+- Tags（最低集合）：
+  - `v<semver>`
+  - `latest`（仅 `main` 自动发版会更新）
+
+示例：
+
+```bash
+docker pull ghcr.io/<owner>/catnap:v0.1.0
+docker pull ghcr.io/<owner>/catnap:latest
+```
+
+### GitHub Release assets（二进制）
+
+每个 Release 会附带可复用的二进制 tarball + sha256（共 8 个文件）：
+
+- `catnap_<semver>_linux_amd64_gnu.tar.gz`
+- `catnap_<semver>_linux_arm64_gnu.tar.gz`
+- `catnap_<semver>_linux_amd64_musl.tar.gz`
+- `catnap_<semver>_linux_arm64_musl.tar.gz`
+- 以及对应的 `.sha256`
+
+校验示例：
+
+```bash
+sha256sum -c catnap_<semver>_linux_amd64_gnu.tar.gz.sha256
+```
+
+### Manual publish（workflow_dispatch）
+
+在 GitHub Actions 手动触发 `workflow_dispatch`：
+
+- ref=`main`：完整发布链路（tag/release/assets/GHCR；并更新 `latest`）
+- ref=`refs/tags/v<semver>`：重跑/补齐该版本（assets/GHCR；不更新 `latest`）
+
+### Smoke test（本地/CI）
+
+```bash
+APP_EFFECTIVE_VERSION=0.1.0 bash ./.github/scripts/smoke-test.sh ./target/release/catnap
+```
