@@ -136,7 +136,7 @@ bun run build
 docker build -t catnap .
 docker run --rm -p 18080:18080 \
   -e CATNAP_AUTH_USER_HEADER=X-User-Id \
-  -e CATNAP_DB_URL=sqlite:/app/catnap.db \
+  -e CATNAP_DB_URL=sqlite:///app/catnap.db \
   catnap
 ```
 
