@@ -2,9 +2,9 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 部分完成（2/3）
 - Created: 2026-01-21
-- Last: 2026-01-21
+- Last: 2026-01-22
 
 ## 背景 / 问题陈述
 
@@ -107,8 +107,8 @@
 
 ## 实现里程碑（Milestones）
 
-- [ ] M1: 为 `compute-version.sh` 增加 machine-readable 输出模式（契约先行）
-- [ ] M2: 修复 `Determine release version/tag` step，确保同 step 内可读取版本号（不依赖 `$GITHUB_ENV`）
+- [x] M1: 为 `compute-version.sh` 增加 machine-readable 输出模式（契约先行）
+- [x] M2: 修复 `Determine release version/tag` step，确保同 step 内可读取版本号（不依赖 `$GITHUB_ENV`）
 - [ ] M3: 通过一次 `push main` 与一次 `push tag` 的 CI run 验证修复（日志可证）
 
 ## 风险 / 开放问题 / 假设（Risks, Open Questions, Assumptions）
@@ -120,6 +120,7 @@
 ## 变更记录（Change log）
 
 - 2026-01-21: 新建计划，冻结 Release job 失败的根因与修复契约。
+- 2026-01-22: 完成 M1/M2：`compute-version.sh --print-version` + workflow step 读取版本号（同 step 内）；checkout 显式开启 `fetch-tags`.
 
 ## 参考（References）
 
