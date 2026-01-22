@@ -41,7 +41,7 @@ docker compose up -d --build
 
 ## 数据持久化（SQLite）
 
-默认将 SQLite 文件放到 named volume：`catnap-data:/data`，并通过 `CATNAP_DB_URL=sqlite:///data/catnap.db` 指向它。
+默认将 SQLite 文件放到 named volume：`catnap-data:/data`。compose 会把 `catnap` 的 `working_dir` 设为 `/data`，因此推荐使用 `CATNAP_DB_URL=sqlite:catnap.db`（相对路径）来落到 `/data/catnap.db`。
 
 备份（导出 volume 内容到当前目录）示例：
 

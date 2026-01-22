@@ -6,10 +6,11 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
+    working_dir: /data
     environment:
       BIND_ADDR: 0.0.0.0:18080
       CATNAP_AUTH_USER_HEADER: ${CATNAP_AUTH_USER_HEADER:-X-User-Id}
-      CATNAP_DB_URL: ${CATNAP_DB_URL:-sqlite:///data/catnap.db}
+      CATNAP_DB_URL: ${CATNAP_DB_URL:-sqlite:catnap.db}
       CATNAP_UPSTREAM_CART_URL: ${CATNAP_UPSTREAM_CART_URL:-https://lazycats.vip/cart}
       CATNAP_WEB_PUSH_VAPID_PUBLIC_KEY: ${CATNAP_WEB_PUSH_VAPID_PUBLIC_KEY:-}
       CATNAP_DEFAULT_POLL_INTERVAL_MINUTES: ${CATNAP_DEFAULT_POLL_INTERVAL_MINUTES:-1}
