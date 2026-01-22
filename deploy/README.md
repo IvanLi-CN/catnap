@@ -33,7 +33,7 @@ docker compose up -d --build
 
 ## 目录说明
 
-- `deploy/compose.yaml`：`catnap` + `caddy` 的 compose 定义（含 SQLite 持久化 data 目录）。
+- `deploy/compose.yaml`：`catnap` + `caddy` 的 compose 定义（含 SQLite 持久化 volume）。
 - `deploy/Caddyfile`：反向代理配置（示例会注入 `X-User-Id: u_1`）。
 - `deploy/.env.example`：可复制为 `deploy/.env` 的环境变量模板。
 
@@ -41,20 +41,26 @@ docker compose up -d --build
 
 ## 数据持久化（SQLite）
 
-默认将 SQLite 文件 bind mount 到本机目录：`deploy/data/`，并通过 `CATNAP_DB_URL=sqlite:/data/catnap.db` 指向它。
+默认将 SQLite 文件放到 named volume：`catnap-data:/data`，并通过 `CATNAP_DB_URL=sqlite:/data/catnap.db` 指向它。
 
-备份示例（导出 `deploy/data/` 到当前目录）：
+备份（导出 volume 内容到当前目录）示例：
 
 ```bash
-tar -czf catnap-data.tgz -C deploy/data .
+docker run --rm \
+  -v catnap-data:/data:ro \
+  -v "$PWD":/backup \
+  busybox \
+  sh -c 'tar -czf /backup/catnap-data.tgz -C /data .'
 ```
 
-恢复示例（会覆盖 `deploy/data/` 内现有内容）：
+恢复示例（会覆盖 volume 内现有内容）：
 
 ```bash
-rm -rf deploy/data/*
-mkdir -p deploy/data
-tar -xzf catnap-data.tgz -C deploy/data
+docker run --rm \
+  -v catnap-data:/data \
+  -v "$PWD":/backup \
+  busybox \
+  sh -c 'rm -rf /data/* && tar -xzf /backup/catnap-data.tgz -C /data'
 ```
 
 ## 使用 GHCR 镜像（可选）
