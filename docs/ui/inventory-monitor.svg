@@ -1,0 +1,117 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900">
+  <defs>
+    <linearGradient id="sparkFill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="rgba(73, 194, 255, 0.45)"/>
+      <stop offset="1" stop-color="rgba(73, 194, 255, 0.00)"/>
+    </linearGradient>
+
+    <style>
+      .bg { fill: #0b1220; }
+      .surface { fill: #0f1b33; stroke: none; }
+      .surface2 { fill: #0c172e; stroke: none; }
+      .line { stroke: rgba(27, 42, 74, 0.55); stroke-width: 1; }
+      .title { fill: #ffffff; font: 22px Inter, Arial, sans-serif; font-weight: 800; }
+      .h2 { fill: #e6eefc; font: 16px Inter, Arial, sans-serif; font-weight: 800; }
+      .text { fill: #e6eefc; font: 14px Inter, Arial, sans-serif; }
+      .muted { fill: #9bb0d0; font: 14px Inter, Arial, sans-serif; }
+
+      .navLabel { fill: #cfe0ff; font: 14px Inter, Arial, sans-serif; font-weight: 650; }
+      .navLabelActive { fill: #ffffff; font: 14px Inter, Arial, sans-serif; font-weight: 850; }
+      .navAccent { fill: #2a8a55; }
+
+      .pill { fill: rgba(16, 31, 58, 0.62); stroke: rgba(27, 42, 74, 0.45); stroke-width: 1; }
+      .pillOn { fill: rgba(23, 52, 40, 0.62); stroke: rgba(42, 138, 85, 0.75); stroke-width: 1; }
+      .badgeText { fill: #e6eefc; font: 12px Inter, Arial, sans-serif; font-weight: 700; }
+
+      /* Trend background (no extra layout space; clipped to card) */
+      .trendGrid { stroke: rgba(27, 42, 74, 0.22); stroke-width: 1; }
+      .sparkArea { fill: url(#sparkFill); }
+      .sparkLine { stroke: rgba(73, 194, 255, 0.75); stroke-width: 2.5; fill: none; }
+    </style>
+
+    <clipPath id="clipCardA">
+      <rect x="336" y="240" width="504" height="160" rx="14"/>
+    </clipPath>
+    <clipPath id="clipCardB">
+      <rect x="864" y="240" width="504" height="160" rx="14"/>
+    </clipPath>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1440" height="900"/>
+
+  <!-- Top bar -->
+  <rect class="surface" x="24" y="24" width="1392" height="64" rx="14"/>
+  <text class="title" x="48" y="58">Catnap • 库存监控</text>
+  <rect class="pill" x="1056" y="40" width="168" height="32" rx="10"/>
+  <text class="badgeText" x="1140" y="61" text-anchor="middle">最近刷新：刚刚</text>
+  <rect class="pill" x="1264" y="40" width="96" height="32" rx="10"/>
+  <text class="badgeText" x="1312" y="61" text-anchor="middle">重新同步</text>
+
+  <!-- Left nav -->
+  <rect class="surface" x="24" y="112" width="240" height="764" rx="14"/>
+  <text class="h2" x="48" y="148">导航</text>
+  <rect class="navAccent" x="40" y="176" width="4" height="24" rx="2"/>
+  <text class="navLabelActive" x="56" y="194">库存监控</text>
+  <text class="navLabel" x="56" y="234">全部产品</text>
+  <text class="navLabel" x="56" y="274">系统设置</text>
+  <text class="navLabel" x="56" y="314">日志</text>
+
+  <!-- Main -->
+  <rect class="surface" x="288" y="112" width="1128" height="764" rx="14"/>
+
+  <!-- Block A: region expanded -->
+  <rect class="surface2" x="312" y="136" width="1080" height="288" rx="14"/>
+  <text class="h2" x="336" y="172">美国 / 弗里蒙特</text>
+  <text class="muted" x="336" y="196">2 个配置 • 展开 • 补货 2 台 • 余 5 台（最近 1 小时前）</text>
+  <rect class="pill" x="1264" y="160" width="72" height="32" rx="10"/>
+  <text class="badgeText" x="1300" y="181" text-anchor="middle">折叠</text>
+  <line class="line" x1="312" y1="216" x2="1392" y2="216"/>
+
+  <!-- Cards (same size as #0001: 504x160; trend is background only) -->
+  <rect class="surface" x="336" y="240" width="504" height="160" rx="14"/>
+  <g clip-path="url(#clipCardA)" opacity="0.18">
+    <path class="trendGrid" d="M336 272H840"/>
+    <path class="trendGrid" d="M336 304H840"/>
+    <path class="trendGrid" d="M336 336H840"/>
+    <path class="trendGrid" d="M336 368H840"/>
+    <path class="sparkArea" d="M348 388H420V380H520V388H640V356H720V372H828V392H348Z"/>
+    <path class="sparkLine" d="M348 388H420V380H520V388H640V356H720V372H828"/>
+  </g>
+  <text class="h2" x="360" y="272">弗里蒙特 1号</text>
+  <text class="muted" x="360" y="296">CPU 1核 • RAM 256M</text>
+  <text class="text" x="360" y="320">¥ 1.00 / 月</text>
+  <rect class="pillOn" x="360" y="352" width="96" height="32" rx="10"/>
+  <text class="badgeText" x="408" y="373" text-anchor="middle">库存 4</text>
+  <rect class="pill" x="472" y="352" width="128" height="32" rx="10"/>
+  <text class="badgeText" x="536" y="373" text-anchor="middle">更新：刚刚</text>
+
+  <rect class="surface" x="864" y="240" width="504" height="160" rx="14"/>
+  <g clip-path="url(#clipCardB)" opacity="0.18">
+    <path class="trendGrid" d="M864 272H1368"/>
+    <path class="trendGrid" d="M864 304H1368"/>
+    <path class="trendGrid" d="M864 336H1368"/>
+    <path class="trendGrid" d="M864 368H1368"/>
+    <path class="sparkArea" d="M876 388H980V388H1120V372H1240V388H1356V392H876Z"/>
+    <path class="sparkLine" d="M876 388H980V388H1120V372H1240V388H1356"/>
+  </g>
+  <text class="h2" x="888" y="272">弗里蒙特 2号</text>
+  <text class="muted" x="888" y="296">CPU 1核 • RAM 512M</text>
+  <text class="text" x="888" y="320">¥ 1.50 / 月</text>
+  <rect class="pillOn" x="888" y="352" width="96" height="32" rx="10"/>
+  <text class="badgeText" x="936" y="373" text-anchor="middle">库存 1</text>
+  <rect class="pill" x="1000" y="352" width="144" height="32" rx="10"/>
+  <text class="badgeText" x="1072" y="373" text-anchor="middle">更新：1 分钟前</text>
+
+  <!-- Block B: region collapsed -->
+  <rect class="surface2" x="312" y="448" width="1080" height="104" rx="14"/>
+  <text class="h2" x="336" y="484">中国香港 / HKG Premium</text>
+  <text class="muted" x="336" y="508">4 个配置 • 折叠 • 补货 1 台 • 余 0 台（最近 3 小时前）</text>
+  <rect class="pill" x="1264" y="472" width="72" height="32" rx="10"/>
+  <text class="badgeText" x="1300" y="493" text-anchor="middle">展开</text>
+
+  <!-- Block C: hint -->
+  <rect class="surface2" x="312" y="576" width="1080" height="120" rx="14"/>
+  <text class="h2" x="336" y="612">提示</text>
+  <text class="text" x="336" y="636">走势是背景层：不改变卡片高度/内边距。</text>
+  <text class="muted" x="336" y="660">X 轴按真实时间比例映射；未来 SSE 推送同样用“刷新事件”写点。</text>
+</svg>
