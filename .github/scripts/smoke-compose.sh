@@ -16,7 +16,7 @@ if [[ ! -f "${compose_file}" ]]; then
 fi
 
 cleanup() {
-  (cd deploy && "${compose_cmd[@]}" down -v --remove-orphans) >/dev/null 2>&1 || true
+  (cd deploy && "${compose_cmd[@]}" -f "${compose_file_basename}" down -v --remove-orphans) >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
@@ -43,9 +43,9 @@ wait_ready() {
 if ! wait_ready; then
   echo "compose stack failed to become ready: ${base_url}" >&2
   echo "--- docker compose ps ---" >&2
-  (cd deploy && "${compose_cmd[@]}" ps) >&2 || true
+  (cd deploy && "${compose_cmd[@]}" -f "${compose_file_basename}" ps) >&2 || true
   echo "--- docker compose logs (tail) ---" >&2
-  (cd deploy && "${compose_cmd[@]}" logs --tail 200) >&2 || true
+  (cd deploy && "${compose_cmd[@]}" -f "${compose_file_basename}" logs --tail 200) >&2 || true
   exit 1
 fi
 
