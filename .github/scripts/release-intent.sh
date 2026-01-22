@@ -180,6 +180,21 @@ if [[ "${event_name}" != "push" ]]; then
   exit 0
 fi
 
+if [[ "${ref}" == refs/tags/* ]]; then
+  # Tag push: allow release-meta to validate tag format and propagate a clear failure for invalid tags.
+  should_release="true"
+  bump_level="none"
+  intent_label="push:tag"
+  pr_number="none"
+  log "tag push ref=${ref} should_release=${should_release} bump_level=${bump_level}"
+
+  write_output "should_release" "${should_release}"
+  write_output "bump_level" "${bump_level}"
+  write_output "intent_label" "${intent_label}"
+  write_output "pr_number" "${pr_number}"
+  exit 0
+fi
+
 if [[ "${ref}" != "refs/heads/main" ]]; then
   warn "unsupported ref for automatic release intent: ${ref}; defaulting to should_release=false"
   write_output "should_release" "false"
