@@ -1,6 +1,6 @@
 # catnap
 
-`lazycats.online/cart` 的库存监控与通知（同源 Web UI + Rust 后端）。
+`lazycats.vip/cart` 的库存监控与通知（同源 Web UI + Rust 后端）。
 
 ## Quick start（本地）
 
@@ -27,7 +27,7 @@ export BIND_ADDR=127.0.0.1:18080
 
 # 可选
 export CATNAP_DB_URL=sqlite:catnap.db
-export CATNAP_UPSTREAM_CART_URL=https://lazycats.online/cart
+export CATNAP_UPSTREAM_CART_URL=https://lazycats.vip/cart
 
 cargo run
 ```

@@ -48,7 +48,7 @@
 
 - Response（响应）:
   - `200`:
-    - `{"user":{"id":"u_123"},"catalog":{"countries":[],"regions":[],"configs":[],"fetchedAt":"2026-01-18T00:00:00Z","source":{"url":"https://lazycats.online/cart"}},"monitoring":{"enabledConfigIds":[],"poll":{"intervalSeconds":60,"jitterPct":0.1}},"settings":{"notifications":{"telegram":{"enabled":false},"webPush":{"enabled":false}},"siteBaseUrl":null}}`
+    - `{"user":{"id":"u_123"},"catalog":{"countries":[],"regions":[],"configs":[],"fetchedAt":"2026-01-18T00:00:00Z","source":{"url":"https://lazycats.vip/cart"}},"monitoring":{"enabledConfigIds":[],"poll":{"intervalSeconds":60,"jitterPct":0.1}},"settings":{"notifications":{"telegram":{"enabled":false},"webPush":{"enabled":false}},"siteBaseUrl":null}}`
 
 ## Products（GET /api/products）
 

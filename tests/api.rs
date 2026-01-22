@@ -14,7 +14,7 @@ fn test_config() -> RuntimeConfig {
     RuntimeConfig {
         bind_addr: "127.0.0.1:0".to_string(),
         effective_version: "test".to_string(),
-        upstream_cart_url: "https://lazycats.online/cart".to_string(),
+        upstream_cart_url: "https://lazycats.vip/cart".to_string(),
         auth_user_header: Some("x-user".to_string()),
         default_poll_interval_minutes: 1,
         default_poll_jitter_pct: 0.1,

@@ -21,7 +21,7 @@
 
 - `CATNAP_UPSTREAM_CART_URL`（optional）
   - 说明：上游入口 URL（用于抓取国家地区/区域/配置）
-  - 默认：`https://lazycats.online/cart`
+  - 默认：`https://lazycats.vip/cart`
 
 ## 鉴权（不对客户端暴露细节）
 
