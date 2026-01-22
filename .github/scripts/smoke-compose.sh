@@ -3,7 +3,6 @@ set -euo pipefail
 
 compose_file="${1:-deploy/compose.yaml}"
 base_url="${2:-http://127.0.0.1:8080}"
-compose_file_basename="$(basename "${compose_file}")"
 
 compose_cmd=(docker compose)
 if ! docker compose version >/dev/null 2>&1; then
@@ -15,18 +14,20 @@ if [[ ! -f "${compose_file}" ]]; then
   exit 1
 fi
 
+compose_dir="$(cd "$(dirname "${compose_file}")" && pwd -P)"
+compose_file_basename="$(basename "${compose_file}")"
+
 cleanup() {
-  (cd deploy && "${compose_cmd[@]}" -f "${compose_file_basename}" down -v --remove-orphans) >/dev/null 2>&1 || true
+  (cd "${compose_dir}" && "${compose_cmd[@]}" -f "${compose_file_basename}" down -v --remove-orphans) >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
-mkdir -p deploy
-if [[ -f deploy/.env.example ]] && [[ ! -f deploy/.env ]]; then
-  cp deploy/.env.example deploy/.env
+if [[ -f "${compose_dir}/.env.example" ]] && [[ ! -f "${compose_dir}/.env" ]]; then
+  cp "${compose_dir}/.env.example" "${compose_dir}/.env"
 fi
 
 (
-  cd deploy
+  cd "${compose_dir}"
   "${compose_cmd[@]}" -f "${compose_file_basename}" up -d --no-build
 )
 
@@ -43,19 +44,19 @@ wait_ready() {
 if ! wait_ready; then
   echo "compose stack failed to become ready: ${base_url}" >&2
   echo "--- docker compose ps ---" >&2
-  (cd deploy && "${compose_cmd[@]}" -f "${compose_file_basename}" ps) >&2 || true
+  (cd "${compose_dir}" && "${compose_cmd[@]}" -f "${compose_file_basename}" ps) >&2 || true
   echo "--- docker compose logs (tail) ---" >&2
-  (cd deploy && "${compose_cmd[@]}" -f "${compose_file_basename}" logs --tail 200) >&2 || true
+  (cd "${compose_dir}" && "${compose_cmd[@]}" -f "${compose_file_basename}" logs --tail 200) >&2 || true
   exit 1
 fi
 
 catnap_container_id="$(
-  cd deploy
+  cd "${compose_dir}"
   "${compose_cmd[@]}" -f "${compose_file_basename}" ps -q catnap
 )"
 if [[ -z "${catnap_container_id}" ]]; then
   echo "failed to resolve catnap container id" >&2
-  (cd deploy && "${compose_cmd[@]}" -f "${compose_file_basename}" ps) >&2 || true
+  (cd "${compose_dir}" && "${compose_cmd[@]}" -f "${compose_file_basename}" ps) >&2 || true
   exit 1
 fi
 

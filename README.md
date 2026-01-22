@@ -144,13 +144,13 @@ docker run --rm -p 18080:18080 \
 
 ### Docker Compose（推荐）
 
-使用现成的 compose + Caddy 反向代理示例：`deploy/`（包含 SQLite 持久化 volume + 同源反向代理注入 header）。
+使用现成的 compose + Caddy 反向代理示例：`deploy/`（包含 SQLite 持久化 data 目录 + 同源反向代理注入 header）。
 
 ```bash
 cp deploy/.env.example deploy/.env
 cd deploy
 docker compose up -d --build
-# 如果你的环境只有 Docker Compose v1：
+# Docker Compose v1（如果你的环境没有 `docker compose` 子命令）
 # docker-compose up -d --build
 ```
 

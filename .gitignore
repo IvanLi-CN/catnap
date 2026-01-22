@@ -9,6 +9,7 @@
 
 # Local runtime artifacts
 *.db
+/deploy/data
 /tmp-catnap-run*.log
 /tmp-catnap-run*.pid
 /tmp-catnap-run.log

@@ -1,4 +1,4 @@
-name: catnap
+version: "3.8"
 
 services:
   catnap:
@@ -17,7 +17,7 @@ services:
       CATNAP_LOG_RETENTION_DAYS: ${CATNAP_LOG_RETENTION_DAYS:-7}
       CATNAP_LOG_RETENTION_MAX_ROWS: ${CATNAP_LOG_RETENTION_MAX_ROWS:-10000}
     volumes:
-      - catnap-data:/data
+      - ./data:/data
     restart: unless-stopped
 
   caddy:
@@ -33,6 +33,5 @@ services:
     restart: unless-stopped
 
 volumes:
-  catnap-data:
   caddy-data:
   caddy-config:
