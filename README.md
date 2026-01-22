@@ -113,6 +113,14 @@ docker run --rm -p 18080:18080 \
 
 ## Releases / Images / Versioning
 
+## CI（PR gating）
+
+为缩短 PR 反馈时延，CI 会按变更路径做 job/step gating（契约：`.github/scripts/ci-path-gate.sh`）：
+
+- `Release Chain Smoke (PR)`：仅当命中以下任一变更时才会运行：`Dockerfile`、`.github/**`、`deploy/**`、`Cargo.toml`/`Cargo.lock`、`src/**`、`web/**`
+- 前端重型检查（storybook + test-storybook + Playwright 安装）：仅当 `web/**` 变更时才会运行
+- 注意：为了满足后端对 `web/dist` 的 embed 依赖，CI 仍会先执行一次 `bun run build` 来生成 `web/dist`
+
 ### Versioning（版本号）
 
 - Tag：`v<semver>`（例如 `v0.1.0`）
