@@ -181,12 +181,22 @@ if [[ "${event_name}" != "push" ]]; then
 fi
 
 if [[ "${ref}" == refs/tags/* ]]; then
-  # Tag push: allow release-meta to validate tag format and propagate a clear failure for invalid tags.
-  should_release="true"
-  bump_level="none"
-  intent_label="push:tag"
-  pr_number="none"
-  log "tag push ref=${ref} should_release=${should_release} bump_level=${bump_level}"
+  # Tag push:
+  # - Allow release-meta to validate tag format and propagate a clear failure for invalid tags.
+  # - Avoid duplicate releases when the workflow itself creates/pushes a tag on main.
+  if [[ "${GITHUB_ACTOR:-}" == "github-actions[bot]" ]]; then
+    should_release="false"
+    bump_level="none"
+    intent_label="push:tag:bot-skip"
+    pr_number="none"
+    log "tag push by github-actions[bot]; skip to avoid duplicate release ref=${ref}"
+  else
+    should_release="true"
+    bump_level="none"
+    intent_label="push:tag"
+    pr_number="none"
+    log "tag push ref=${ref} should_release=${should_release} bump_level=${bump_level}"
+  fi
 
   write_output "should_release" "${should_release}"
   write_output "bump_level" "${bump_level}"
