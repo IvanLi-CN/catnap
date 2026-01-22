@@ -3,6 +3,41 @@ set -euo pipefail
 
 # Compute effective semver from git tags (fallback Cargo.toml), with bump level and uniqueness.
 
+print_version="false"
+github_output_path=""
+
+# Important: this script is sometimes sourced. When sourced, do NOT parse caller's positional args.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --print-version)
+        print_version="true"
+        shift
+        ;;
+      --github-output)
+        if [[ $# -lt 2 ]]; then
+          echo "Missing value for --github-output" >&2
+          exit 2
+        fi
+        github_output_path="$2"
+        shift 2
+        ;;
+      *)
+        echo "Unknown argument: $1" >&2
+        exit 2
+        ;;
+    esac
+  done
+fi
+
+log() {
+  if [[ "${print_version}" == "true" ]]; then
+    echo "$@" >&2
+  else
+    echo "$@"
+  fi
+}
+
 root_dir="$(git rev-parse --show-toplevel)"
 
 git fetch --tags --force >/dev/null 2>&1 || true
@@ -77,9 +112,24 @@ done
 effective="${next_major}.${next_minor}.${candidate}"
 
 export APP_EFFECTIVE_VERSION="${effective}"
-echo "APP_EFFECTIVE_VERSION=${effective}" >> "${GITHUB_ENV:-/dev/stdout}"
 
-echo "Computed APP_EFFECTIVE_VERSION=${effective}"
-echo "  bump_level=${bump_level}"
-echo "  base_version=${base_ver} (${base_source})"
-echo "  target_tag=v${effective}"
+if [[ -n "${github_output_path}" ]]; then
+  echo "version=${effective}" >> "${github_output_path}"
+  echo "APP_EFFECTIVE_VERSION=${effective}" >> "${github_output_path}"
+fi
+
+if [[ "${print_version}" == "true" ]]; then
+  printf '%s\n' "${effective}"
+  exit 0
+fi
+
+if [[ -n "${GITHUB_ENV:-}" ]]; then
+  echo "APP_EFFECTIVE_VERSION=${effective}" >> "${GITHUB_ENV}"
+else
+  echo "APP_EFFECTIVE_VERSION=${effective}"
+fi
+
+log "Computed APP_EFFECTIVE_VERSION=${effective}"
+log "  bump_level=${bump_level}"
+log "  base_version=${base_ver} (${base_source})"
+log "  target_tag=v${effective}"
