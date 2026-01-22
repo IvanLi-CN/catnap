@@ -109,7 +109,7 @@ export const demoBootstrap: BootstrapResponse = {
   },
   settings: {
     poll: { intervalMinutes: 1, jitterPct: 0.2 },
-    siteBaseUrl: "https://lazycats.cloud",
+    siteBaseUrl: "https://lazycats.vip",
     notifications: {
       telegram: { enabled: true, configured: true, target: "@catnap" },
       webPush: { enabled: false, vapidPublicKey: "demo-vapid-public-key" },

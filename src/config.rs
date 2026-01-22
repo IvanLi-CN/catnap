@@ -61,7 +61,7 @@ impl RuntimeConfig {
             bind_addr: env::var("BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:18080".to_string()),
             effective_version,
             upstream_cart_url: env::var("CATNAP_UPSTREAM_CART_URL")
-                .unwrap_or_else(|_| "https://lazycats.online/cart".to_string()),
+                .unwrap_or_else(|_| "https://lazycats.vip/cart".to_string()),
             auth_user_header,
             default_poll_interval_minutes,
             default_poll_jitter_pct,
