@@ -241,6 +241,12 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Mark job start
+        id: job-start
+        shell: bash
+        run: |
+          echo "ts=$(date +%s)" >> "${GITHUB_OUTPUT}"
+
       - name: Set up Bun (optional)
         if: hashFiles('web/package.json') != ''
         uses: oven-sh/setup-bun@v2
@@ -248,6 +254,7 @@ jobs:
           bun-version: 1
 
       - name: Cache Bun install cache (optional)
+        id: cache-bun
         if: hashFiles('web/package.json') != ''
         uses: actions/cache@v4
         with:
@@ -271,22 +278,42 @@ jobs:
           toolchain: stable
 
       - name: Compute effective version
+        id: compute-version
         shell: bash
         env:
           BUMP_LEVEL: patch
         run: |
+          set -euo pipefail
+          start="$(date +%s)"
           bash ./.github/scripts/compute-version.sh
+          echo "duration_sec=$(( $(date +%s) - start ))" >> "${GITHUB_OUTPUT}"
 
       - name: Build backend (release)
-        run: cargo build --release --locked
-
-      - name: Smoke test (binary)
+        id: build-backend
         shell: bash
         run: |
+          set -euo pipefail
+          start="$(date +%s)"
+          cargo build --release --locked
+          echo "duration_sec=$(( $(date +%s) - start ))" >> "${GITHUB_OUTPUT}"
+
+      - name: Smoke test (binary)
+        id: smoke-binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          start="$(date +%s)"
           bash ./.github/scripts/smoke-test.sh ./target/release/catnap
+          echo "duration_sec=$(( $(date +%s) - start ))" >> "${GITHUB_OUTPUT}"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
+      - name: Mark Docker build start
+        id: docker-build-start
+        shell: bash
+        run: |
+          echo "ts=$(date +%s)" >> "${GITHUB_OUTPUT}"
 
       - name: Docker build (no push, GHA cache best-effort)
         id: docker-build
@@ -307,14 +334,35 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Record Docker build timing
+        id: docker-build-timing
+        if: always()
+        shell: bash
+        run: |
+          start="${{ steps.docker-build-start.outputs.ts }}"
+          if [[ -z "${start}" ]]; then
+            echo "WARN: missing docker build start timestamp; skipping timing." >&2
+            echo "duration_sec=" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          echo "duration_sec=$(( $(date +%s) - start ))" >> "${GITHUB_OUTPUT}"
+
       - name: Warn on Docker cache export failure (retrying without cache-to)
         if: steps.docker-build.outcome == 'failure'
         shell: bash
         run: |
           echo "WARN: Docker build step failed with GHA cache enabled; retrying without cache-to. If the retry succeeds, this is treated as a cache export/transient issue; real build errors must still fail the job." >&2
 
+      - name: Mark Docker build start (fallback)
+        id: docker-build-fallback-start
+        if: steps.docker-build.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "ts=$(date +%s)" >> "${GITHUB_OUTPUT}"
+
       - name: Docker build (no push, fallback without cache-to)
         if: steps.docker-build.outcome == 'failure'
+        id: docker-build-fallback
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -329,6 +377,53 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
           cache-from: type=gha
+
+      - name: Record Docker build timing (fallback)
+        id: docker-build-fallback-timing
+        if: steps.docker-build.outcome == 'failure' && always()
+        shell: bash
+        run: |
+          start="${{ steps.docker-build-fallback-start.outputs.ts }}"
+          if [[ -z "${start}" ]]; then
+            echo "WARN: missing docker build fallback start timestamp; skipping timing." >&2
+            echo "duration_sec=" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          echo "duration_sec=$(( $(date +%s) - start ))" >> "${GITHUB_OUTPUT}"
+
+      - name: Summary (timings)
+        if: always()
+        shell: bash
+        run: |
+          fmt_sec() {
+            local v="$1"
+            if [[ -z "${v}" ]]; then
+              echo "n/a"
+            else
+              echo "${v}s"
+            fi
+          }
+
+          start_ts="${{ steps.job-start.outputs.ts }}"
+          if [[ -z "${start_ts}" ]]; then
+            total="n/a"
+          else
+            total="$(fmt_sec "$(( $(date +%s) - start_ts ))")"
+          fi
+
+          docker_fallback_status="${{ steps.docker-build-fallback.conclusion || 'skipped' }}"
+          {
+            echo "### PR release chain timings"
+            echo "- total: ${total}"
+            echo "- reason: ${{ needs.path-gate.outputs.reason }}"
+            echo "- effective_version: ${{ env.APP_EFFECTIVE_VERSION }}"
+            echo "- bun_cache_hit: ${{ steps.cache-bun.outputs.cache-hit || 'n/a' }}"
+            echo "- compute_version: $(fmt_sec '${{ steps.compute-version.outputs.duration_sec }}')"
+            echo "- cargo_build_release: $(fmt_sec '${{ steps.build-backend.outputs.duration_sec }}')"
+            echo "- smoke_test: $(fmt_sec '${{ steps.smoke-binary.outputs.duration_sec }}')"
+            echo "- docker_build_primary(outcome=${{ steps.docker-build.outcome }}): $(fmt_sec '${{ steps.docker-build-timing.outputs.duration_sec }}')"
+            echo "- docker_build_fallback(conclusion=${docker_fallback_status}): $(fmt_sec '${{ steps.docker-build-fallback-timing.outputs.duration_sec }}')"
+          } >> "${GITHUB_STEP_SUMMARY}"
 
   release-intent:
     name: Release Intent (gate)

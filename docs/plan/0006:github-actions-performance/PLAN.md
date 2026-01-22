@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 部分完成（3/4）
+- Status: 已完成
 - Created: 2026-01-21
 - Last: 2026-01-22
 
@@ -136,7 +136,7 @@
 
 ## 实现里程碑（Milestones）
 
-- [ ] M1: 采集并固化 PR baseline（至少 1 个 run），把关键 step timing 写入 job summary
+- [x] M1: 采集并固化 PR baseline（至少 1 个 run），把关键 step timing 写入 job summary
 - [x] M2: 引入 Bun/Playwright 缓存策略并验证命中（不改变既有检查口径）
 - [x] M3: 落地 PR gating + PR docker build 仅 `linux/amd64`（并补齐 buildx cache best-effort）
 - [x] M4: 文档同步（README/plan notes），确保贡献者可理解触发规则与排障入口
@@ -159,6 +159,7 @@
 
 - 2026-01-21: 冻结口径：PR 跳过 arm64；允许前端 gating；Docker cache backend=`type=gha`；目标 PR ≤ 10 分钟。
 - 2026-01-22: 实现：新增 `ci-path-gate.sh` 并在 CI 中落地 PR gating；补齐 Bun/Playwright cache；Docker build cache 切到 `type=gha` 并提供 best-effort fallback；同步 README 与 Index 状态。
+- 2026-01-22: 补齐：为 PR 的 `Release Chain Smoke (PR)` job 增加 timings summary；baseline 参考 Actions run `21235535755`（workflow ~3m，PR smoke job ~2m31s）。
 
 ## 参考（References）
 
