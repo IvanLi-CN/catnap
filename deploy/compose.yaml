@@ -1,0 +1,38 @@
+name: catnap
+
+services:
+  catnap:
+    image: ${CATNAP_IMAGE:-catnap:local}
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    environment:
+      BIND_ADDR: 0.0.0.0:18080
+      CATNAP_AUTH_USER_HEADER: ${CATNAP_AUTH_USER_HEADER:-X-User-Id}
+      CATNAP_DB_URL: ${CATNAP_DB_URL:-sqlite:/data/catnap.db}
+      CATNAP_UPSTREAM_CART_URL: ${CATNAP_UPSTREAM_CART_URL:-https://lazycats.vip/cart}
+      CATNAP_WEB_PUSH_VAPID_PUBLIC_KEY: ${CATNAP_WEB_PUSH_VAPID_PUBLIC_KEY:-}
+      CATNAP_DEFAULT_POLL_INTERVAL_MINUTES: ${CATNAP_DEFAULT_POLL_INTERVAL_MINUTES:-1}
+      CATNAP_DEFAULT_POLL_JITTER_PCT: ${CATNAP_DEFAULT_POLL_JITTER_PCT:-0.1}
+      CATNAP_LOG_RETENTION_DAYS: ${CATNAP_LOG_RETENTION_DAYS:-7}
+      CATNAP_LOG_RETENTION_MAX_ROWS: ${CATNAP_LOG_RETENTION_MAX_ROWS:-10000}
+    volumes:
+      - catnap-data:/data
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2
+    depends_on:
+      - catnap
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    restart: unless-stopped
+
+volumes:
+  catnap-data:
+  caddy-data:
+  caddy-config:

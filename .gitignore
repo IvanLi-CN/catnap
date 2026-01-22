@@ -1,5 +1,6 @@
 /target
 /.env
+/deploy/.env
 **/.DS_Store
 
 /web/node_modules
