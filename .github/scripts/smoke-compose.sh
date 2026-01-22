@@ -93,7 +93,7 @@ fi
 
 api_json="$(
   origin="$(
-    printf '%s' "${base_url}" | sed -E 's#^(https?://[^/]+).*#\\1#'
+    printf '%s' "${base_url}" | sed -E 's#^(https?://[^/]+).*#\1#'
   )"
   curl -fsS \
     -H "Origin: ${origin}" \
