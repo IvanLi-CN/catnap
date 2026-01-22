@@ -466,6 +466,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          fetch-tags: true
 
       - name: Determine release version/tag
         id: release-meta
@@ -500,9 +501,8 @@ jobs:
               version="${tag#v}"
               echo "reuse existing tag: ${tag}"
             else
-              export BUMP_LEVEL="${{ needs.release-intent.outputs.bump_level }}"
-              source ./.github/scripts/compute-version.sh
-              version="${APP_EFFECTIVE_VERSION}"
+              bump_level="${{ needs.release-intent.outputs.bump_level }}"
+              version="$(BUMP_LEVEL="${bump_level}" bash ./.github/scripts/compute-version.sh --print-version)"
               tag="v${version}"
               echo "computed version: ${version}"
             fi
