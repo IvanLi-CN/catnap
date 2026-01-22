@@ -68,6 +68,11 @@ if [[ -z "${ci_head_sha}" ]]; then
   fi
 fi
 
+# Tag create pushes have a synthetic all-zero "before" sha; treat it as absent so we can fall back to merge-base.
+if [[ "${ci_base_sha:-}" =~ ^0{40}$ ]]; then
+  ci_base_sha=""
+fi
+
 if [[ -z "${ci_head_sha}" ]]; then
   ci_head_sha="$(git rev-parse HEAD)"
 fi
@@ -84,12 +89,14 @@ fi
 
 reason=""
 files=""
+diff_computed="false"
 if [[ -z "${ci_base_sha}" ]]; then
   reason="no_base_sha"
 else
   if git cat-file -e "${ci_base_sha}^{commit}" 2>/dev/null && git cat-file -e "${ci_head_sha}^{commit}" 2>/dev/null; then
     files="$(git diff --name-only "${ci_base_sha}...${ci_head_sha}" || true)"
     reason="diff:${ci_base_sha:0:7}...${ci_head_sha:0:7}"
+    diff_computed="true"
   else
     warn "missing commit objects for diff: base=${ci_base_sha} head=${ci_head_sha}"
     reason="missing_git_objects"
@@ -100,22 +107,26 @@ frontend_changed="false"
 backend_changed="false"
 docker_changed="false"
 
-if [[ -n "${files}" ]]; then
-  while IFS= read -r f; do
-    [[ -z "${f}" ]] && continue
+if [[ "${diff_computed}" == "true" ]]; then
+  if [[ -n "${files}" ]]; then
+    while IFS= read -r f; do
+      [[ -z "${f}" ]] && continue
 
-    case "${f}" in
-      web/*) frontend_changed="true" ;;
-    esac
+      case "${f}" in
+        web/*) frontend_changed="true" ;;
+      esac
 
-    case "${f}" in
-      src/*|Cargo.toml|Cargo.lock) backend_changed="true" ;;
-    esac
+      case "${f}" in
+        src/*|Cargo.toml|Cargo.lock) backend_changed="true" ;;
+      esac
 
-    case "${f}" in
-      Dockerfile|.github/*|deploy/*) docker_changed="true" ;;
-    esac
-  done <<<"${files}"
+      case "${f}" in
+        Dockerfile|.github/*|deploy/*) docker_changed="true" ;;
+      esac
+    done <<<"${files}"
+  else
+    reason="${reason};no_changes"
+  fi
 else
   if [[ "${ci_assume_changed}" == "true" ]]; then
     frontend_changed="true"

@@ -121,6 +121,8 @@
 
 - 2026-01-21: 新建计划，冻结 Release job 失败的根因与修复契约。
 - 2026-01-22: 完成 M1/M2：`compute-version.sh --print-version` + workflow step 读取版本号（同 step 内）；checkout 显式开启 `fetch-tags`.
+- 2026-01-22: 补齐 tag 路径：CI 支持 `push tag` 触发；`release-intent.sh` 支持 tag push（由 `release-meta` 校验 tag 合法性，非法 tag 明确失败）。
+- 2026-01-22: Review 修复：避免 `github-actions[bot]` tag push 触发重复 release；tag create 的 path-gate 不再误判为“全量变更”。
 
 ## 参考（References）
 
