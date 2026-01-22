@@ -92,8 +92,11 @@ if [[ "${ui_unauth_code}" != "401" ]]; then
 fi
 
 api_json="$(
+  origin="$(
+    printf '%s' "${base_url}" | sed -E 's#^(https?://[^/]+).*#\\1#'
+  )"
   curl -fsS \
-    -H 'origin: http://127.0.0.1:8080' \
+    -H "Origin: ${origin}" \
     "${base_url}/api/health"
 )"
 
