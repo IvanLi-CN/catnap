@@ -23,24 +23,45 @@ fn main() {
 }
 
 fn hash_dir(dir: &Path, hasher: &mut DefaultHasher) {
-    let mut stack: Vec<PathBuf> = vec![dir.to_path_buf()];
-    while let Some(path) = stack.pop() {
+    let mut queue: Vec<PathBuf> = vec![dir.to_path_buf()];
+    let mut i = 0usize;
+    while i < queue.len() {
+        let path = &queue[i];
+        i += 1;
+
         println!("cargo:rerun-if-changed={}", path.display());
 
-        let Ok(entries) = fs::read_dir(&path) else {
+        let Ok(entries) = fs::read_dir(path) else {
             continue;
         };
-        for entry in entries.flatten() {
-            let p = entry.path();
+
+        // `read_dir` iteration order is not guaranteed; sort paths so the build id is stable
+        // when the dist contents are unchanged.
+        let mut paths: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
+        paths.sort();
+
+        for p in paths {
             println!("cargo:rerun-if-changed={}", p.display());
 
-            p.display().to_string().hash(hasher);
-            if let Ok(meta) = entry.metadata() {
-                meta.len().hash(hasher);
-                hash_modified(meta.modified().ok(), hasher);
-                if meta.is_dir() {
-                    stack.push(p);
+            p.to_string_lossy().hash(hasher);
+            let Ok(meta) = fs::symlink_metadata(&p) else {
+                continue;
+            };
+
+            if meta.is_dir() {
+                queue.push(p);
+                continue;
+            }
+
+            meta.len().hash(hasher);
+            if meta.is_file() {
+                if let Ok(bytes) = fs::read(&p) {
+                    bytes.hash(hasher);
+                } else {
+                    hash_modified(meta.modified().ok(), hasher);
                 }
+            } else {
+                hash_modified(meta.modified().ok(), hasher);
             }
         }
     }

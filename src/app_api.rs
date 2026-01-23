@@ -69,6 +69,7 @@ async fn enforce_same_origin(
         .or_else(|| headers.get(header::HOST))
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.split(',').next())
+        .map(str::trim)
         .unwrap_or_default();
 
     let scheme = headers
