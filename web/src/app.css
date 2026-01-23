@@ -209,7 +209,7 @@ select {
 
 .shell {
   width: 100%;
-  max-width: 1440px;
+  max-width: 1680px;
   height: 100vh;
   height: 100dvh;
   padding: 24px;
@@ -317,15 +317,59 @@ select {
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
-  background: var(--surface);
+  background: var(--surface2);
+  border: 1px solid var(--line);
   border-radius: var(--r14);
-  padding: 24px;
+  --content-pad-x: 24px;
+  --content-pad-y: 12px;
+  padding: var(--content-pad-y) var(--content-pad-x);
+  overflow: hidden;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.content::before,
+.content::after {
+  content: "";
+  position: absolute;
+  left: var(--content-pad-x);
+  right: var(--content-pad-x);
+  height: 12px;
+  pointer-events: none;
+  opacity: 0;
+  z-index: 3;
+  transition: opacity 120ms ease-out;
+}
+
+.content::before {
+  top: var(--content-pad-y);
+  background: linear-gradient(to bottom, var(--surface2), transparent);
+}
+
+.content::after {
+  bottom: var(--content-pad-y);
+  background: linear-gradient(to bottom, transparent, var(--surface2));
+}
+
+.content[data-fade-top="1"]::before {
+  opacity: 0.92;
+}
+
+.content[data-fade-bottom="1"]::after {
+  opacity: 0.92;
+}
+
+.content-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: auto;
+  padding-bottom: 4px;
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
 
-.content::-webkit-scrollbar {
+.content-scroll::-webkit-scrollbar {
   width: 0;
   height: 0;
 }
@@ -337,7 +381,8 @@ select {
 }
 
 .panel-section {
-  background: var(--surface2);
+  background: var(--surface);
+  border: 1px solid var(--line);
   border-radius: var(--r14);
   padding: 24px;
 }
@@ -597,17 +642,24 @@ select {
 .grid {
   display: grid;
   gap: var(--gap);
+  /* Use auto-fill so groups with fewer cards don't stretch cards to full width. */
+  grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
 }
 
 .cfg-card,
 .mon-card {
   background: var(--surface);
+  border: 1px solid var(--line);
   border-radius: var(--r14);
   padding: 24px;
   position: relative;
   overflow: hidden;
   display: flex;
   flex-direction: column;
+}
+
+.cfg-card {
+  padding-bottom: 22px;
 }
 
 .card-content {
@@ -659,42 +711,110 @@ select {
   letter-spacing: -0.2px;
 }
 
-.cfg-card.product {
-  height: 208px;
+.cfg-cap,
+.mon-cap {
+  position: absolute;
+  right: 24px;
+  top: 18px;
+  z-index: 0;
+  pointer-events: none;
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: -1px;
+  color: var(--trend-cap);
+  opacity: 0.55;
 }
 
-.cfg-card.cloud {
-  height: 104px;
+.cfg-cap {
+  font-size: 72px;
 }
 
-.mon-card {
-  height: 160px;
+.mon-cap {
+  font-size: 56px;
+}
+
+.cfg-cap.warn,
+.mon-cap.warn {
+  opacity: 0.38;
+}
+
+.cfg-card.product .cfg-title,
+.cfg-card.product .cfg-specs,
+.cfg-card.product .cfg-price,
+.cfg-card.product .cfg-foot {
+  padding-right: 104px;
+}
+
+.mon-card .mon-title,
+.mon-card .mon-specs,
+.mon-card .mon-price {
+  padding-right: 92px;
 }
 
 .cfg-title,
 .mon-title {
   font-size: 16px;
   font-weight: 800;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.cfg-sub,
-.mon-sub {
-  margin-top: 8px;
+.cfg-specs,
+.mon-specs {
+  margin-top: 6px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 16px;
+  row-gap: 4px;
   color: var(--muted);
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1.2;
+  min-height: calc(2 * 1.2em + 4px);
+}
+
+.spec-cell {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.spec-cell .spec-k {
+  flex: 0 0 auto;
+  font-weight: 650;
+  color: rgba(11, 18, 32, 0.62);
+}
+
+:root[data-theme="dark"] .spec-cell .spec-k {
+  color: rgba(230, 238, 252, 0.66);
+}
+
+.spec-cell .spec-v {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.spec-cell.empty {
+  opacity: 0;
 }
 
 .cfg-price,
 .mon-price {
-  margin-top: 8px;
+  margin-top: 6px;
   font-size: 14px;
 }
 
 .cfg-foot {
-  margin-top: 12px;
+  margin-top: 8px;
   color: var(--muted);
   font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .cfg-pills {
@@ -714,6 +834,12 @@ select {
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+.mon-update {
+  font-size: 12px;
+  line-height: 1.2;
+  color: var(--muted);
 }
 
 /* Collapse button in group block */

@@ -17,6 +17,7 @@ use time::OffsetDateTime;
 use tokio::sync::{Mutex, RwLock};
 use tower_http::trace::TraceLayer;
 
+const WEB_DIST_BUILD_ID: &str = env!("CATNAP_WEB_DIST_BUILD_ID");
 static WEB_DIST: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/web/dist");
 
 #[derive(Clone)]
@@ -257,6 +258,10 @@ async fn serve_embedded_ui(OriginalUri(uri): OriginalUri) -> Response<Body> {
     res.headers_mut().insert(
         header::CONTENT_TYPE,
         content_type_for_path(served_path.as_ref()),
+    );
+    res.headers_mut().insert(
+        header::HeaderName::from_static("x-web-dist-build-id"),
+        HeaderValue::from_str(WEB_DIST_BUILD_ID).unwrap_or_else(|_| HeaderValue::from_static("0")),
     );
     if served_path.as_ref() == "index.html" {
         res.headers_mut()

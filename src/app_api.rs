@@ -65,8 +65,10 @@ async fn enforce_same_origin(
     };
 
     let host = headers
-        .get(header::HOST)
+        .get("x-forwarded-host")
+        .or_else(|| headers.get(header::HOST))
         .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(',').next())
         .unwrap_or_default();
 
     let scheme = headers

@@ -21,7 +21,12 @@ class ApiHttpError extends Error {
 export type UserView = { id: string; displayName?: string };
 
 export type Country = { id: string; name: string };
-export type Region = { id: string; countryId: string; name: string; locationName?: string };
+export type Region = {
+  id: string;
+  countryId: string;
+  name: string;
+  locationName?: string;
+};
 
 export type Spec = { key: string; value: string };
 export type Money = { amount: number; currency: string; period: string };
@@ -62,7 +67,10 @@ export type BootstrapResponse = {
     fetchedAt: string;
     source: { url: string };
   };
-  monitoring: { enabledConfigIds: string[]; poll: { intervalSeconds: number; jitterPct: number } };
+  monitoring: {
+    enabledConfigIds: string[];
+    poll: { intervalSeconds: number; jitterPct: number };
+  };
   settings: SettingsView;
 };
 
@@ -72,7 +80,10 @@ export type ProductsResponse = {
 };
 
 export type InventoryHistoryPoint = { tsMinute: string; quantity: number };
-export type InventoryHistorySeries = { configId: string; points: InventoryHistoryPoint[] };
+export type InventoryHistorySeries = {
+  configId: string;
+  points: InventoryHistoryPoint[];
+};
 export type InventoryHistoryResponse = {
   window: { from: string; to: string };
   series: InventoryHistorySeries[];
@@ -283,8 +294,6 @@ function TrendBackground({
     return { x, y, raw: p.quantity };
   });
 
-  const hasOver = scaled.some((p) => p.raw > 10);
-
   const x0 = scaled[0].x;
   const y0 = scaled[0].y;
 
@@ -326,11 +335,6 @@ function TrendBackground({
       <path className="trend-area" d={areaD} />
       <path className="trend-line" d={lineD} />
       {overD ? <path className="trend-over" d={overD} /> : null}
-      {hasOver ? (
-        <text className="trend-cap" x={width - 4} y={12} textAnchor="end">
-          10+
-        </text>
-      ) : null}
     </svg>
   );
 }
@@ -437,6 +441,42 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    if (!bootstrap) return;
+    const countries = bootstrap.catalog.countries.length;
+    const regions = bootstrap.catalog.regions.length;
+    if (countries > 0 && regions > 0) return;
+
+    let cancelled = false;
+    let attempts = 0;
+    let timeoutId: number | null = null;
+
+    const schedule = (delayMs: number) => {
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
+      timeoutId = window.setTimeout(() => void retry(), delayMs);
+    };
+
+    async function retry() {
+      attempts += 1;
+      try {
+        const json = await api<BootstrapResponse>("/api/bootstrap");
+        if (cancelled) return;
+        setBootstrap(json);
+        const ok = json.catalog.countries.length > 0 && json.catalog.regions.length > 0;
+        if (!ok && attempts < 6) schedule(900 + attempts * 250);
+      } catch {
+        if (cancelled) return;
+        if (attempts < 6) schedule(900 + attempts * 250);
+      }
+    }
+
+    schedule(700);
+    return () => {
+      cancelled = true;
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
+    };
+  }, [bootstrap]);
+
+  useEffect(() => {
     if (!hasBootstrap) return;
     if (route !== "monitoring" && route !== "products") return;
 
@@ -535,7 +575,9 @@ export function App() {
     setSyncState("syncing");
 
     try {
-      const st = await api<RefreshStatusResponse>("/api/refresh", { method: "POST" });
+      const st = await api<RefreshStatusResponse>("/api/refresh", {
+        method: "POST",
+      });
       setSyncDone(st.done);
       setSyncTotal(st.total);
       setSyncState(st.state);
@@ -774,21 +816,80 @@ function groupKey(c: Config): string {
   return `${c.countryId}::${c.regionId ?? ""}`;
 }
 
-function columnsForCount(count: number): string {
-  if (count <= 2) return "repeat(auto-fit, minmax(280px, 504px))";
-  return "repeat(auto-fit, minmax(280px, 328px))";
+type SpecCell = { label: string; value: string } | null;
+type SpecSlotCell = { key: string; label: string; value: string } | { key: string; empty: true };
+
+const SPEC_SLOTS = ["s1", "s2", "s3", "s4", "s5", "s6"] as const;
+
+function specBucket(key: string): {
+  id: "cpu" | "ram" | "disk" | "bandwidth" | "traffic" | "ports" | "other";
+  label: string;
+  priority: number;
+} {
+  const k = key.trim().toLowerCase();
+  if (!k) return { id: "other", label: "规格", priority: 900 };
+  if (k === "cpu" || k.includes("cpu") || k.includes("核心"))
+    return { id: "cpu", label: "CPU", priority: 10 };
+  if (k === "ram" || k.includes("ram") || k.includes("memory") || k.includes("内存"))
+    return { id: "ram", label: "内存", priority: 20 };
+  if (
+    k === "disk" ||
+    k.includes("disk") ||
+    k.includes("storage") ||
+    k.includes("磁盘") ||
+    k.includes("硬盘")
+  )
+    return { id: "disk", label: "磁盘", priority: 30 };
+  if (k.includes("带宽") || k.includes("bandwidth"))
+    return { id: "bandwidth", label: "带宽", priority: 40 };
+  if (k.includes("流量") || k.includes("traffic") || k.includes("transfer"))
+    return { id: "traffic", label: "流量", priority: 50 };
+  if (k.includes("端口") || k.includes("port")) return { id: "ports", label: "端口", priority: 60 };
+  return { id: "other", label: key.trim() || "规格", priority: 900 };
 }
 
-function summarizeSpecs(specs: Spec[], max: number): string {
-  const parts: string[] = [];
-  for (const s of specs) {
-    const key = s.key.trim();
-    const value = s.value.trim();
+function buildSpecCells(specs: Spec[], maxCells: number): SpecCell[] {
+  const picked = new Map<string, SpecCell>();
+  const extras: Array<{ pr: number; idx: number; cell: SpecCell }> = [];
+
+  for (let i = 0; i < specs.length; i += 1) {
+    const rawKey = specs[i]?.key ?? "";
+    const rawValue = specs[i]?.value ?? "";
+    const key = rawKey.trim();
+    const value = rawValue.trim();
     if (!key && !value) continue;
-    parts.push(key ? `${key} ${value}`.trim() : value);
-    if (parts.length >= max) break;
+
+    const bucket = specBucket(key);
+    const cell: SpecCell = { label: bucket.label, value: value || "—" };
+    const bucketKey = bucket.id;
+
+    if (bucketKey !== "other") {
+      if (!picked.has(bucketKey)) picked.set(bucketKey, cell);
+    } else {
+      extras.push({ pr: bucket.priority, idx: i, cell });
+    }
   }
-  return parts.join(" • ");
+
+  const ordered: SpecCell[] = [
+    picked.get("cpu") ?? null,
+    picked.get("ram") ?? null,
+    picked.get("disk") ?? null,
+    picked.get("bandwidth") ?? null,
+    picked.get("traffic") ?? null,
+    picked.get("ports") ?? null,
+  ];
+
+  extras.sort((a, b) => a.pr - b.pr || a.idx - b.idx);
+  for (const e of extras) ordered.push(e.cell);
+
+  const out: SpecCell[] = [];
+  for (const c of ordered) {
+    if (!c) continue;
+    out.push(c);
+    if (out.length >= maxCells) break;
+  }
+
+  return out;
 }
 
 export function ProductCard({
@@ -803,34 +904,52 @@ export function ProductCard({
   historyPoints?: InventoryHistoryPoint[];
 }) {
   const isCloud = !cfg.monitorSupported;
-  const invTone = isCloud
-    ? "on"
-    : cfg.inventory.status === "unknown" || cfg.inventory.quantity === 0
-      ? "warn"
-      : "on";
-  const invText = isCloud
-    ? "状态：有货"
+  const capTone =
+    isCloud || (cfg.inventory.status !== "unknown" && cfg.inventory.quantity > 0) ? "" : "warn";
+  const capText = isCloud
+    ? null
     : cfg.inventory.status === "unknown"
-      ? "库存 ?"
+      ? "?"
       : cfg.inventory.quantity > 10
-        ? "库存 10+"
-        : cfg.inventory.quantity > 0
-          ? `库存 ${cfg.inventory.quantity}`
-          : "库存 0";
+        ? "10+"
+        : String(cfg.inventory.quantity);
   const monitorTone = isCloud ? "disabled" : cfg.monitorEnabled ? "on" : "";
   const monitorText = isCloud ? "监控：禁用" : cfg.monitorEnabled ? "监控：开" : "监控：关";
   const foot = isCloud ? null : cfg.monitorEnabled ? "变化检测：补货 / 价格 / 配置" : null;
+  const rawSpecCells = isCloud ? [] : buildSpecCells(cfg.specs, 4);
+  const specCells: SpecSlotCell[] = isCloud
+    ? []
+    : SPEC_SLOTS.slice(0, 4).map((key, i) => {
+        const c = rawSpecCells[i];
+        return c ? { key, ...c } : { key, empty: true };
+      });
 
   return (
     <div className={`cfg-card ${isCloud ? "cloud" : "product"}`}>
       <TrendBackground points={historyPoints} window={historyWindow} />
+      {capText ? <div className={`cfg-cap ${capTone}`}>{capText}</div> : null}
       <div className="card-content">
         <div className="cfg-title">{cfg.name}</div>
-        {isCloud ? null : <div className="cfg-sub">{summarizeSpecs(cfg.specs, 3) || "—"}</div>}
+        {isCloud ? null : (
+          <div className="cfg-specs" aria-label="规格">
+            {specCells.map((c) =>
+              "empty" in c ? (
+                <div className="spec-cell empty" key={c.key}>
+                  <span className="spec-k"> </span>
+                  <span className="spec-v"> </span>
+                </div>
+              ) : (
+                <div className="spec-cell" key={c.key}>
+                  <span className="spec-k">{c.label}</span>
+                  <span className="spec-v">{c.value}</span>
+                </div>
+              ),
+            )}
+          </div>
+        )}
         <div className="cfg-price">{formatMoney(cfg.price)}</div>
         {foot ? <div className="cfg-foot">{foot}</div> : null}
         <div className="cfg-pills">
-          <div className={`pill badge ${invTone}`}>{invText}</div>
           <button
             type="button"
             className={`pill badge ${monitorTone}`}
@@ -856,26 +975,42 @@ export function MonitoringCard({
   historyWindow?: InventoryHistoryResponse["window"] | null;
   historyPoints?: InventoryHistoryPoint[];
 }) {
-  const invTone =
-    cfg.inventory.status === "unknown" || cfg.inventory.quantity === 0 ? "warn" : "on";
-  const invText =
+  const capTone = cfg.inventory.status === "unknown" || cfg.inventory.quantity === 0 ? "warn" : "";
+  const capText =
     cfg.inventory.status === "unknown"
-      ? "库存：未知"
+      ? "?"
       : cfg.inventory.quantity > 10
-        ? "库存 10+"
-        : cfg.inventory.quantity > 0
-          ? `库存 ${cfg.inventory.quantity}`
-          : "库存 0";
+        ? "10+"
+        : String(cfg.inventory.quantity);
+  const rawSpecCells = buildSpecCells(cfg.specs, 4);
+  const specCells: SpecSlotCell[] = SPEC_SLOTS.slice(0, 4).map((key, i) => {
+    const c = rawSpecCells[i];
+    return c ? { key, ...c } : { key, empty: true };
+  });
   return (
     <div className="mon-card">
       <TrendBackground points={historyPoints} window={historyWindow} />
+      <div className={`mon-cap ${capTone}`}>{capText}</div>
       <div className="card-content">
         <div className="mon-title">{cfg.name}</div>
-        <div className="mon-sub">{summarizeSpecs(cfg.specs, 2) || "—"}</div>
+        <div className="mon-specs" aria-label="规格">
+          {specCells.map((c) =>
+            "empty" in c ? (
+              <div className="spec-cell empty" key={c.key}>
+                <span className="spec-k"> </span>
+                <span className="spec-v"> </span>
+              </div>
+            ) : (
+              <div className="spec-cell" key={c.key}>
+                <span className="spec-k">{c.label}</span>
+                <span className="spec-v">{c.value}</span>
+              </div>
+            ),
+          )}
+        </div>
         <div className="mon-price">{formatMoney(cfg.price)}</div>
         <div className="mon-pills">
-          <div className={`pill badge ${invTone}`}>{invText}</div>
-          <div className="pill badge">{`更新：${formatRelativeTime(
+          <div className="mon-update">{`更新：${formatRelativeTime(
             cfg.inventory.checkedAt,
             nowMs,
           )}`}</div>
@@ -1023,7 +1158,7 @@ export function ProductsView({
             <div className="panel-title">{title}</div>
             <div className="panel-subtitle">{subtitle}</div>
             <div className="divider-bleed" />
-            <div className="grid" style={{ gridTemplateColumns: columnsForCount(items.length) }}>
+            <div className="grid">
               {items.map((cfg) => (
                 <ProductCard
                   cfg={cfg}
@@ -1187,7 +1322,7 @@ export function MonitoringSection({
       {collapsed ? null : (
         <>
           <div className="divider-bleed" />
-          <div className="grid" style={{ gridTemplateColumns: columnsForCount(items.length) }}>
+          <div className="grid">
             {items.map((cfg) => (
               <MonitoringCard
                 cfg={cfg}
