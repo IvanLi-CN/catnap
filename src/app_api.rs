@@ -64,23 +64,23 @@ async fn enforce_same_origin(
         return next.run(req).await;
     };
 
+    // Do not trust `x-forwarded-*` headers here: depending on deployment boundaries they may be
+    // user-controlled, which would undermine same-origin/CSRF protection.
     let host = headers
-        .get("x-forwarded-host")
-        .or_else(|| headers.get(header::HOST))
+        .get(header::HOST)
         .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.split(',').next())
         .map(str::trim)
         .unwrap_or_default();
 
-    let scheme = headers
-        .get("x-forwarded-proto")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.split(',').next())
-        .unwrap_or("http")
-        .trim();
-
-    let expected = format!("{scheme}://{host}");
-    if origin.trim() != expected {
+    // Compare the Origin authority (host[:port]) to the Host header.
+    let origin = origin.trim();
+    let Ok(origin_uri) = origin.parse::<axum::http::Uri>() else {
+        return json_forbidden().into_response();
+    };
+    let Some(origin_authority) = origin_uri.authority() else {
+        return json_forbidden().into_response();
+    };
+    if !origin_authority.as_str().eq_ignore_ascii_case(host) {
         return json_forbidden().into_response();
     }
 

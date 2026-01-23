@@ -440,11 +440,12 @@ export function App() {
     }
   }, []);
 
+  const catalogCountriesLen = bootstrap?.catalog.countries.length ?? 0;
+  const catalogRegionsLen = bootstrap?.catalog.regions.length ?? 0;
+
   useEffect(() => {
-    if (!bootstrap) return;
-    const countries = bootstrap.catalog.countries.length;
-    const regions = bootstrap.catalog.regions.length;
-    if (countries > 0 && regions > 0) return;
+    if (!hasBootstrap) return;
+    if (catalogCountriesLen > 0 && catalogRegionsLen > 0) return;
 
     let cancelled = false;
     let attempts = 0;
@@ -471,10 +472,14 @@ export function App() {
           const hasRegions = prevCatalog.regions.length > 0;
           if (hasCountries && hasRegions) return prev;
 
-          const nextCountries = hasCountries ? prevCatalog.countries : jsonCatalog.countries;
-          const nextRegions = hasRegions ? prevCatalog.regions : jsonCatalog.regions;
-          if (nextCountries === prevCatalog.countries && nextRegions === prevCatalog.regions)
-            return prev;
+          const canBackfillCountries = !hasCountries && jsonCatalog.countries.length > 0;
+          const canBackfillRegions = !hasRegions && jsonCatalog.regions.length > 0;
+          if (!canBackfillCountries && !canBackfillRegions) return prev;
+
+          const nextCountries = canBackfillCountries
+            ? jsonCatalog.countries
+            : prevCatalog.countries;
+          const nextRegions = canBackfillRegions ? jsonCatalog.regions : prevCatalog.regions;
 
           return {
             ...prev,
@@ -499,7 +504,7 @@ export function App() {
       cancelled = true;
       if (timeoutId !== null) window.clearTimeout(timeoutId);
     };
-  }, [bootstrap]);
+  }, [catalogCountriesLen, catalogRegionsLen, hasBootstrap]);
 
   useEffect(() => {
     if (!hasBootstrap) return;
