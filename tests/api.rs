@@ -169,6 +169,48 @@ async fn bootstrap_returns_catalog_and_settings() {
 }
 
 #[tokio::test]
+async fn same_origin_accepts_last_forwarded_values() {
+    let t = make_app().await;
+    let res = t
+        .app
+        .oneshot(
+            Request::builder()
+                .uri("/api/bootstrap")
+                .header("host", "example.com")
+                .header("x-user", "u_1")
+                .header("origin", "https://example.com")
+                .header("x-forwarded-host", "evil.com, example.com")
+                .header("x-forwarded-proto", "http, https")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn same_origin_rejects_first_forwarded_values() {
+    let t = make_app().await;
+    let res = t
+        .app
+        .oneshot(
+            Request::builder()
+                .uri("/api/bootstrap")
+                .header("host", "example.com")
+                .header("x-user", "u_1")
+                .header("origin", "https://evil.com")
+                .header("x-forwarded-host", "evil.com, example.com")
+                .header("x-forwarded-proto", "https, https")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
 async fn monitoring_toggle_persists() {
     let t = make_app().await;
     let bytes = serde_json::to_vec(&serde_json::json!({ "enabled": true })).unwrap();
