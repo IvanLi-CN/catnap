@@ -55,7 +55,7 @@ async fn api_health(
 }
 
 async fn enforce_same_origin(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     req: Request<Body>,
     next: Next,
 ) -> Response<Body> {
@@ -64,20 +64,53 @@ async fn enforce_same_origin(
         return next.run(req).await;
     };
 
-    let host = headers
+    // Whether this deployment trusts proxy-injected headers. If we already rely on a proxy to provide
+    // the user identity header, we also treat `x-forwarded-*` as trusted metadata.
+    let trust_proxy_headers = state.config.auth_user_header.is_some();
+
+    let host_header = headers
         .get(header::HOST)
         .and_then(|v| v.to_str().ok())
+        .map(str::trim)
         .unwrap_or_default();
 
-    let scheme = headers
-        .get("x-forwarded-proto")
+    let forwarded_host = headers
+        .get("x-forwarded-host")
         .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.split(',').next())
-        .unwrap_or("http")
-        .trim();
+        .and_then(|v| v.split(',').map(str::trim).rfind(|v| !v.is_empty()));
 
-    let expected = format!("{scheme}://{host}");
-    if origin.trim() != expected {
+    let expected_host = if trust_proxy_headers {
+        forwarded_host.unwrap_or(host_header)
+    } else {
+        host_header
+    };
+
+    let expected_scheme = if trust_proxy_headers {
+        headers
+            .get("x-forwarded-proto")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.split(',').map(str::trim).rfind(|v| !v.is_empty()))
+            .unwrap_or("http")
+    } else {
+        req.uri().scheme_str().unwrap_or("http")
+    };
+
+    // Compare Origin scheme + authority (host[:port]) to the effective external scheme + Host.
+    let origin = origin.trim();
+    let Ok(origin_uri) = origin.parse::<axum::http::Uri>() else {
+        return json_forbidden().into_response();
+    };
+    let Some(origin_scheme) = origin_uri.scheme_str() else {
+        return json_forbidden().into_response();
+    };
+    let Some(origin_authority) = origin_uri.authority() else {
+        return json_forbidden().into_response();
+    };
+    if !origin_authority
+        .as_str()
+        .eq_ignore_ascii_case(expected_host)
+        || !origin_scheme.eq_ignore_ascii_case(expected_scheme)
+    {
         return json_forbidden().into_response();
     }
 

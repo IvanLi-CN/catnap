@@ -15,3 +15,9 @@
 /tmp-catnap-run.pid
 /tmp-ui-design-server.log
 /tmp-ui-design-server.pid
+
+# Local dev / screenshots
+/tmp-*.log
+/tmp-*.pid
+/tmp-*.png
+/tmp-dev-proxy.ts

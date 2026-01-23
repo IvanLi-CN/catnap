@@ -15,6 +15,7 @@ FROM rust:1 AS rust-builder
 WORKDIR /app
 
 COPY Cargo.toml Cargo.lock ./
+COPY build.rs ./
 COPY src/ ./src/
 COPY --from=web-builder /app/web/dist ./web/dist
 RUN cargo build --release --locked
