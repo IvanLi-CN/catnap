@@ -36,14 +36,16 @@ export function AppShell({ title, subtitle, actions, sidebar, children }: AppShe
     scrollEl.addEventListener("scroll", updateFades, { passive: true });
     window.addEventListener("resize", updateFades, { passive: true });
 
-    const ro = new ResizeObserver(() => updateFades());
-    ro.observe(scrollEl);
-    ro.observe(scrollInnerEl);
+    const ResizeObserverCtor = (globalThis as unknown as { ResizeObserver?: typeof ResizeObserver })
+      .ResizeObserver;
+    const ro = ResizeObserverCtor ? new ResizeObserverCtor(() => updateFades()) : null;
+    ro?.observe(scrollEl);
+    ro?.observe(scrollInnerEl);
 
     return () => {
       scrollEl.removeEventListener("scroll", updateFades);
       window.removeEventListener("resize", updateFades);
-      ro.disconnect();
+      ro?.disconnect();
     };
   }, []);
 

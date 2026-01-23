@@ -460,7 +460,32 @@ export function App() {
       try {
         const json = await api<BootstrapResponse>("/api/bootstrap");
         if (cancelled) return;
-        setBootstrap(json);
+        // Only backfill missing catalog metadata; avoid clobbering newer in-memory updates.
+        setBootstrap((prev) => {
+          if (!prev) return json;
+
+          const prevCatalog = prev.catalog;
+          const jsonCatalog = json.catalog;
+
+          const hasCountries = prevCatalog.countries.length > 0;
+          const hasRegions = prevCatalog.regions.length > 0;
+          if (hasCountries && hasRegions) return prev;
+
+          const nextCountries = hasCountries ? prevCatalog.countries : jsonCatalog.countries;
+          const nextRegions = hasRegions ? prevCatalog.regions : jsonCatalog.regions;
+          if (nextCountries === prevCatalog.countries && nextRegions === prevCatalog.regions)
+            return prev;
+
+          return {
+            ...prev,
+            catalog: {
+              ...prevCatalog,
+              countries: nextCountries,
+              regions: nextRegions,
+            },
+          };
+        });
+
         const ok = json.catalog.countries.length > 0 && json.catalog.regions.length > 0;
         if (!ok && attempts < 6) schedule(900 + attempts * 250);
       } catch {
