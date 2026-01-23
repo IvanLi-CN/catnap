@@ -25,6 +25,8 @@ bun run build-storybook
 
 默认固定端口：`18181`（避免使用默认端口导致冲突）。
 
+如果你看到 Storybook 启动在默认端口（例如 `6006`），通常说明你没有通过 `web/package.json` 的脚本启动（或当前目录不在 `web/`）。请用 `cd web && bun run storybook`（或 `storybook:ci`）启动。
+
 ### Stories 分组与覆盖口径
 
 - Foundations/Theme：主题 tokens 与主题切换效果
