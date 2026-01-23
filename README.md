@@ -2,7 +2,22 @@
 
 `lazycats.vip/cart` 的库存监控与通知（同源 Web UI + Rust 后端）。
 
-## Quick start（本地）
+## 功能
+
+- 监控 `lazycats.vip/cart` 的库存变化
+- Telegram 通知
+- Web Push（可选）
+- SQLite 持久化（默认）
+
+## 架构与访问模型
+
+- 后端：Rust 服务（同时提供 API + 静态 Web UI）
+- 前端：`web/` 构建产物 `web/dist` 会被后端 embed
+- 访问模型：默认假设**受信任的反向代理**会注入“用户标识”header（浏览器无法手动添加该 header）
+
+> 如果要对公网提供服务，请先在反向代理层增加强鉴权（例如 Basic/OIDC/网关），不要把固定用户 ID header 暴露给不受信任的客户端。
+
+## 快速开始（本地开发）
 
 ### 1) 准备
 
@@ -59,6 +74,20 @@ curl -sS \
   http://127.0.0.1:18080/api/bootstrap | jq
 ```
 
+## 配置（环境变量）
+
+服务端配置均通过环境变量读取（见 `src/config.rs`）。常用项：
+
+- `BIND_ADDR`：监听地址，默认 `0.0.0.0:18080`
+- `CATNAP_AUTH_USER_HEADER`：用户标识 header 名（由反向代理注入），默认空（不启用）
+- `CATNAP_DB_URL`：数据库连接串，默认 `sqlite:catnap.db`
+- `CATNAP_UPSTREAM_CART_URL`：上游页面，默认 `https://lazycats.vip/cart`
+- `CATNAP_WEB_PUSH_VAPID_PUBLIC_KEY`：Web Push VAPID public key（base64url，可选）
+- `CATNAP_DEFAULT_POLL_INTERVAL_MINUTES`：默认轮询间隔（分钟，>= 1），默认 `1`
+- `CATNAP_DEFAULT_POLL_JITTER_PCT`：默认抖动比例（0..=1），默认 `0.1`
+- `CATNAP_LOG_RETENTION_DAYS`：日志保留天数（>= 0），默认 `7`
+- `CATNAP_LOG_RETENTION_MAX_ROWS`：日志最大行数（>= 0），默认 `10000`
+
 ## 通知配置
 
 ### Telegram
@@ -99,21 +128,35 @@ bun run typecheck
 bun run build
 ```
 
-## Docker
+## 部署
+
+### Docker（单容器）
 
 ```bash
 docker build -t catnap .
 docker run --rm -p 18080:18080 \
   -e CATNAP_AUTH_USER_HEADER=X-User-Id \
-  -e CATNAP_DB_URL=sqlite:/app/catnap.db \
+  -e CATNAP_DB_URL=sqlite:///app/catnap.db \
   catnap
 ```
 
 > 仍建议通过反向代理注入 `X-User-Id` 并保持同源访问。
 
-## Releases / Images / Versioning
+### Docker Compose（推荐）
 
-## CI（PR gating）
+使用现成的 compose + Caddy 反向代理示例：`deploy/`（包含 SQLite 持久化 volume + 同源反向代理注入 header）。
+
+```bash
+cp deploy/.env.example deploy/.env
+cd deploy
+docker compose up -d --build
+# Docker Compose v1（如果你的环境没有 `docker compose` 子命令）
+# docker-compose up -d --build
+```
+
+详情见 `deploy/README.md`。
+
+## CI / Release
 
 为缩短 PR 反馈时延，CI 会按变更路径做 job/step gating（契约：`.github/scripts/ci-path-gate.sh`）：
 

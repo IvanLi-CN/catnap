@@ -326,6 +326,7 @@ jobs:
           file: ./Dockerfile
           platforms: linux/amd64
           push: false
+          load: true
           tags: catnap:pr-${{ github.sha }}
           build-args: |
             APP_EFFECTIVE_VERSION=${{ env.APP_EFFECTIVE_VERSION }}
@@ -371,6 +372,7 @@ jobs:
           file: ./Dockerfile
           platforms: linux/amd64
           push: false
+          load: true
           tags: catnap:pr-${{ github.sha }}
           build-args: |
             APP_EFFECTIVE_VERSION=${{ env.APP_EFFECTIVE_VERSION }}
@@ -379,6 +381,20 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
           cache-from: type=gha
+
+      - name: Smoke test (docker compose)
+        id: smoke-compose
+        if: |
+          steps.docker-build.outcome == 'success' ||
+          steps.docker-build-fallback.conclusion == 'success'
+        shell: bash
+        env:
+          CATNAP_IMAGE: catnap:pr-${{ github.sha }}
+        run: |
+          set -euo pipefail
+          start="$(date +%s)"
+          bash ./.github/scripts/smoke-compose.sh
+          echo "duration_sec=$(( $(date +%s) - start ))" >> "${GITHUB_OUTPUT}"
 
       - name: Record Docker build timing (fallback)
         id: docker-build-fallback-timing
@@ -423,6 +439,7 @@ jobs:
             echo "- compute_version: $(fmt_sec '${{ steps.compute-version.outputs.duration_sec }}')"
             echo "- cargo_build_release: $(fmt_sec '${{ steps.build-backend.outputs.duration_sec }}')"
             echo "- smoke_test: $(fmt_sec '${{ steps.smoke-binary.outputs.duration_sec }}')"
+            echo "- smoke_compose: $(fmt_sec '${{ steps.smoke-compose.outputs.duration_sec }}')"
             echo "- docker_build_primary(outcome=${{ steps.docker-build.outcome }}): $(fmt_sec '${{ steps.docker-build-timing.outputs.duration_sec }}')"
             echo "- docker_build_fallback(conclusion=${docker_fallback_status}): $(fmt_sec '${{ steps.docker-build-fallback-timing.outputs.duration_sec }}')"
           } >> "${GITHUB_STEP_SUMMARY}"

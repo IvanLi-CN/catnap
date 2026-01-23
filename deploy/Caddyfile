@@ -1,0 +1,10 @@
+:8080 {
+  encode zstd gzip
+
+  reverse_proxy catnap:18080 {
+    # Demo only: inject a fixed user id.
+    # For production, add authentication and map identity -> user id properly.
+    header_up X-User-Id u_1
+    header_up X-Forwarded-Proto {scheme}
+  }
+}

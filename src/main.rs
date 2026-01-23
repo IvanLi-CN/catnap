@@ -1,6 +1,6 @@
 use catnap::{build_app, RuntimeConfig};
-use sqlx::sqlite::SqlitePoolOptions;
-use std::{collections::HashMap, net::SocketAddr, sync::Arc};
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use std::{collections::HashMap, net::SocketAddr, str::FromStr, sync::Arc};
 use time::OffsetDateTime;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
@@ -15,9 +15,10 @@ async fn main() -> anyhow::Result<()> {
 
     let config = RuntimeConfig::from_env();
 
+    let db_opts = SqliteConnectOptions::from_str(&config.db_url)?.create_if_missing(true);
     let db = SqlitePoolOptions::new()
         .max_connections(5)
-        .connect(&config.db_url)
+        .connect_with(db_opts)
         .await?;
     catnap::db::init_db(&db).await?;
 
