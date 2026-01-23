@@ -77,7 +77,12 @@ async fn enforce_same_origin(
     let forwarded_host = headers
         .get("x-forwarded-host")
         .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.split(',').map(str::trim).filter(|v| !v.is_empty()).last());
+        .and_then(|v| {
+            v.split(',')
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .next_back()
+        });
 
     let expected_host = if trust_proxy_headers {
         forwarded_host.unwrap_or(host_header)
@@ -89,7 +94,12 @@ async fn enforce_same_origin(
         headers
             .get("x-forwarded-proto")
             .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.split(',').map(str::trim).filter(|v| !v.is_empty()).last())
+            .and_then(|v| {
+                v.split(',')
+                    .map(str::trim)
+                    .filter(|v| !v.is_empty())
+                    .next_back()
+            })
             .unwrap_or("http")
     } else {
         req.uri().scheme_str().unwrap_or("http")
