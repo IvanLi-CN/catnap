@@ -35,7 +35,7 @@
 - UI：在 `web/src/App.tsx` 的 `SettingsViewPanel` 中，为 Telegram 增加“测试”按钮与状态提示（pending/success/error）。
 - UI：为 Web Push 增加“测试”按钮与状态提示（pending/success/error）。
 - API：新增 Telegram 测试通知 endpoint（见契约），支持“临时覆盖 token/target（不保存）”。
-- API：新增 Web Push 测试 endpoint（见契约），向请求提供的 subscription 发送测试 Push（不保存 subscription）。
+- API：新增 Web Push 测试 endpoint（见契约），向已保存的 subscription 发送测试 Push（不从请求体接收 endpoint；不保存新的 subscription）。
 - Server：补齐“发送 Web Push”所需的最小实现（加密负载 + VAPID 签名 + 向 push service 发起请求），仅用于测试 endpoint。
 - Observability：测试通知的成功/失败写入 `logs`（不包含 bot token 的任何明文）。
 - Tests：后端新增集成测试覆盖 endpoint 的校验与失败路径（不访问真实 Telegram）。
@@ -149,7 +149,7 @@
 - UI 侧以“最小状态机”实现：idle → pending → success/error，并在 pending 时禁用按钮防重复点击。
 - API 侧新增两个内部 endpoints：
   - Telegram：接收临时 token/target/text 并发送（不保存）；为可测试性，上游请求需要可被本地 stub（避免真实网络）。
-  - Web Push：接收 subscription + payload 并发送（不保存 subscription）；发送所需 VAPID keys 由服务端配置提供。
+  - Web Push：使用已保存 subscription + payload 并发送（不从请求体接收 endpoint）；发送所需 VAPID keys 由服务端配置提供。
 - 记录日志用于排障：成功/失败都应写入 `logs`，但不包含敏感字段（bot token）。
 
 ## 风险 / 开放问题 / 假设（Risks, Open Questions, Assumptions）
@@ -160,4 +160,4 @@
 ## 变更记录（Change log）
 
 - 2026-01-23: 创建计划 #0008（待设计）。
-- 2026-01-24: 完成实现：新增 2 个测试 endpoints；补齐 Web Push 发送链路（VAPID private/subject）；UI 增加测试按钮与状态提示；补齐集成测试与 README。
+- 2026-01-24: 完成实现：新增 2 个测试 endpoints；补齐 Web Push 发送链路（VAPID private/subject）；UI 增加测试按钮与状态提示；补齐集成测试与 README；Web Push endpoint 增加 SSRF 防护（不从请求体接收 endpoint）。

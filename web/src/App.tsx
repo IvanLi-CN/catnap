@@ -1657,7 +1657,7 @@ export function SettingsViewPanel({
                   throw new Error("订阅信息不完整");
                 }
 
-                await api<{ ok: true }>("/api/notifications/web-push/test", {
+                await api("/api/notifications/web-push/subscriptions", {
                   method: "POST",
                   headers: { "content-type": "application/json" },
                   body: JSON.stringify({
@@ -1665,6 +1665,13 @@ export function SettingsViewPanel({
                       endpoint: json.endpoint,
                       keys: { p256dh: json.keys.p256dh, auth: json.keys.auth },
                     },
+                  }),
+                });
+
+                await api<{ ok: true }>("/api/notifications/web-push/test", {
+                  method: "POST",
+                  headers: { "content-type": "application/json" },
+                  body: JSON.stringify({
                     title: "catnap",
                     body: `测试通知 ${new Date().toISOString()}`,
                     url: "/settings",

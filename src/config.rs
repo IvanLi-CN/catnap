@@ -24,6 +24,9 @@ pub struct RuntimeConfig {
     pub web_push_vapid_public_key: Option<String>,
     pub web_push_vapid_private_key: Option<String>,
     pub web_push_vapid_subject: Option<String>,
+
+    /// Test-only escape hatch for integration tests (never enabled via env).
+    pub allow_insecure_local_web_push_endpoints: bool,
 }
 
 impl RuntimeConfig {
@@ -92,6 +95,7 @@ impl RuntimeConfig {
                 .ok()
                 .map(|v| v.trim().to_string())
                 .filter(|v| !v.is_empty()),
+            allow_insecure_local_web_push_endpoints: false,
         }
     }
 }

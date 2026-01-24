@@ -12,6 +12,7 @@ use axum::{
 };
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
+use std::net::IpAddr;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use tracing::warn;
 
@@ -652,6 +653,11 @@ async fn post_web_push_subscription(
     user: axum::extract::Extension<UserView>,
     Json(req): Json<WebPushSubscribeRequest>,
 ) -> Result<Json<WebPushSubscribeResponse>, (StatusCode, Json<ErrorResponse>)> {
+    validate_web_push_endpoint(
+        req.subscription.endpoint.as_str(),
+        state.config.allow_insecure_local_web_push_endpoints,
+    )
+    .await?;
     let id = db::insert_web_push_subscription(&state.db, &user.0.id, req)
         .await
         .map_err(|_| json_invalid_argument())?;
@@ -671,7 +677,6 @@ struct TelegramTestRequest {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct WebPushTestRequest {
-    subscription: WebPushSubscription,
     title: Option<String>,
     body: Option<String>,
     url: Option<String>,
@@ -788,19 +793,20 @@ async fn post_web_push_test(
 
     let user_id = user.0.id.clone();
 
-    let endpoint = req.subscription.endpoint.trim();
-    if endpoint.is_empty() {
-        return Err(json_invalid_argument_with_message(
-            "subscription.endpoint 不能为空",
-        ));
-    }
-    let p256dh = req.subscription.keys.p256dh.trim();
-    let auth = req.subscription.keys.auth.trim();
-    if p256dh.is_empty() || auth.is_empty() {
-        return Err(json_invalid_argument_with_message(
-            "subscription.keys.p256dh/auth 不能为空",
-        ));
-    }
+    let subscription = db::get_latest_web_push_subscription(&state.db, &user_id)
+        .await
+        .map_err(|_| json_internal_error())?
+        .ok_or_else(|| {
+            json_invalid_argument_with_message(
+                "缺少已保存的 Web Push subscription（请先“启用推送”并上传订阅）",
+            )
+        })?;
+
+    validate_web_push_endpoint(
+        subscription.endpoint.as_str(),
+        state.config.allow_insecure_local_web_push_endpoints,
+    )
+    .await?;
 
     let Some(vapid_private_key) = state.config.web_push_vapid_private_key.as_deref() else {
         return Err(json_internal_error_with_message(
@@ -812,6 +818,15 @@ async fn post_web_push_test(
             "缺少 CATNAP_WEB_PUSH_VAPID_SUBJECT（服务端未配置，无法发送测试 Push）",
         ));
     };
+
+    let endpoint = subscription.endpoint.trim();
+    let p256dh = subscription.keys.p256dh.trim();
+    let auth = subscription.keys.auth.trim();
+    if endpoint.is_empty() || p256dh.is_empty() || auth.is_empty() {
+        return Err(json_invalid_argument_with_message(
+            "Web Push subscription 不完整（请重新上传订阅）",
+        ));
+    }
 
     let subscription_info = SubscriptionInfo::new(endpoint, p256dh, auth);
 
@@ -896,6 +911,103 @@ async fn post_web_push_test(
             )
             .await;
             Err(json_internal_error_with_message("Web Push: timeout"))
+        }
+    }
+}
+
+async fn validate_web_push_endpoint(
+    endpoint: &str,
+    allow_insecure_local: bool,
+) -> Result<(), (StatusCode, Json<ErrorResponse>)> {
+    let endpoint = endpoint.trim();
+    if endpoint.is_empty() {
+        return Err(json_invalid_argument_with_message(
+            "subscription.endpoint 不能为空",
+        ));
+    }
+
+    let uri: axum::http::Uri = endpoint
+        .parse()
+        .map_err(|_| json_invalid_argument_with_message("subscription.endpoint 不是合法 URL"))?;
+
+    let scheme = uri
+        .scheme_str()
+        .ok_or_else(|| json_invalid_argument_with_message("subscription.endpoint 缺少 scheme"))?;
+
+    if allow_insecure_local {
+        if scheme != "http" && scheme != "https" {
+            return Err(json_invalid_argument_with_message(
+                "subscription.endpoint scheme 仅支持 http/https",
+            ));
+        }
+        return Ok(());
+    }
+
+    if scheme != "https" {
+        return Err(json_invalid_argument_with_message(
+            "subscription.endpoint 必须为 https",
+        ));
+    }
+
+    let authority = uri
+        .authority()
+        .ok_or_else(|| json_invalid_argument_with_message("subscription.endpoint 缺少 host"))?;
+    let host = authority.host().trim().to_ascii_lowercase();
+
+    if host == "localhost" || host.ends_with(".localhost") {
+        return Err(json_invalid_argument_with_message(
+            "subscription.endpoint host 不允许为 localhost",
+        ));
+    }
+
+    if let Some(port) = authority.port_u16() {
+        if port != 443 {
+            return Err(json_invalid_argument_with_message(
+                "subscription.endpoint 仅允许 443 端口",
+            ));
+        }
+    }
+
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        if !is_public_ip(ip) {
+            return Err(json_invalid_argument_with_message(
+                "subscription.endpoint 不允许指向私网/本机地址",
+            ));
+        }
+        return Ok(());
+    }
+
+    let Ok(addrs) = tokio::net::lookup_host((host.as_str(), 443)).await else {
+        return Err(json_invalid_argument_with_message(
+            "subscription.endpoint host 无法解析",
+        ));
+    };
+
+    if addrs.map(|a| a.ip()).any(|ip| !is_public_ip(ip)) {
+        return Err(json_invalid_argument_with_message(
+            "subscription.endpoint 不允许指向私网/本机地址",
+        ));
+    }
+
+    Ok(())
+}
+
+fn is_public_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            !(v4.is_private()
+                || v4.is_loopback()
+                || v4.is_link_local()
+                || v4.is_multicast()
+                || v4.is_unspecified()
+                || v4.octets()[0] == 0)
+        }
+        IpAddr::V6(v6) => {
+            !(v6.is_loopback()
+                || v6.is_unspecified()
+                || v6.is_multicast()
+                || v6.is_unique_local()
+                || v6.is_unicast_link_local())
         }
     }
 }

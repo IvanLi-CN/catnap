@@ -31,6 +31,7 @@ fn test_config() -> RuntimeConfig {
         web_push_vapid_public_key: None,
         web_push_vapid_private_key: None,
         web_push_vapid_subject: None,
+        allow_insecure_local_web_push_endpoints: false,
     }
 }
 
@@ -412,16 +413,24 @@ async fn web_push_test_hits_subscription_endpoint() {
     cfg.web_push_vapid_private_key =
         Some("IQ9Ur0ykXoHS9gzfYX0aBjy9lvdrjx_PFUXmie9YRcY".to_string());
     cfg.web_push_vapid_subject = Some("mailto:test@example.com".to_string());
+    cfg.allow_insecure_local_web_push_endpoints = true;
     let t = make_app_with_config(cfg).await;
 
+    sqlx::query(
+        r#"INSERT INTO web_push_subscriptions (id, user_id, endpoint, p256dh, auth, created_at)
+           VALUES (?, ?, ?, ?, ?, ?)"#,
+    )
+    .bind("sub_1")
+    .bind("u_1")
+    .bind(format!("{}/push", push_base))
+    .bind("BLMbF9ffKBiWQLCKvTHb6LO8Nb6dcUh6TItC455vu2kElga6PQvUmaFyCdykxY2nOSSL3yKgfbmFLRTUaGv4yV8")
+    .bind("xS03Fi5ErfTNH_l9WHE9Ig")
+    .bind("2026-01-24T00:00:00Z")
+    .execute(&t.db)
+    .await
+    .unwrap();
+
     let bytes = serde_json::to_vec(&serde_json::json!({
-        "subscription": {
-            "endpoint": format!("{}/push", push_base),
-            "keys": {
-                "p256dh": "BLMbF9ffKBiWQLCKvTHb6LO8Nb6dcUh6TItC455vu2kElga6PQvUmaFyCdykxY2nOSSL3yKgfbmFLRTUaGv4yV8",
-                "auth": "xS03Fi5ErfTNH_l9WHE9Ig"
-            }
-        },
         "title": "catnap",
         "body": "test",
         "url": "/settings"

@@ -64,12 +64,14 @@
 - Headers:
   - `Content-Type: application/json`
 - Body（JSON）:
-  - `subscription`: `WebPushSubscription`（必填；不保存）
-    - `endpoint`: `string`
-    - `keys`: `{ p256dh: string, auth: string }`
   - `title`: `string | null`（可选；默认 `catnap`）
   - `body`: `string | null`（可选；默认空）
   - `url`: `string | null`（可选；默认 `/`；用于 notification click 跳转）
+
+#### 重要语义（No endpoint in request）
+
+- 本 endpoint **不会**接收/信任请求体里的 `subscription.endpoint`（避免 SSRF）。
+- 服务端会使用该用户**最近一次已保存**的 subscription（由 `POST /api/notifications/web-push/subscriptions` 上传）。
 
 ### 响应（Response）
 
@@ -81,7 +83,7 @@
 
 ### 错误（Errors）
 
-- `400 / INVALID_ARGUMENT`: subscription 不完整（endpoint/keys 缺失等）（retryable: no）
+- `400 / INVALID_ARGUMENT`: 缺少已保存 subscription，或 subscription 不完整（retryable: no）
 - `5xx / INTERNAL`: push service 返回非 2xx、网络错误、或服务端缺少 VAPID private key/subject（retryable: yes/no 视具体错误）
 
 ### 示例（Examples）
@@ -89,7 +91,7 @@
 - Request:
   - `POST /api/notifications/web-push/test`
   - Body:
-    - `{"subscription":{"endpoint":"https://push.example.com/..","keys":{"p256dh":"..","auth":".."}},"title":"catnap","body":"test","url":"/settings"}`
+    - `{"title":"catnap","body":"test","url":"/settings"}`
 - Response（success）:
   - `{"ok":true}`
 

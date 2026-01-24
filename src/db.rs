@@ -558,6 +558,30 @@ pub async fn insert_web_push_subscription(
     Ok(id)
 }
 
+pub async fn get_latest_web_push_subscription(
+    db: &SqlitePool,
+    user_id: &str,
+) -> anyhow::Result<Option<WebPushSubscription>> {
+    let row = sqlx::query(
+        r#"SELECT endpoint, p256dh, auth
+           FROM web_push_subscriptions
+           WHERE user_id = ?
+           ORDER BY created_at DESC, id DESC
+           LIMIT 1"#,
+    )
+    .bind(user_id)
+    .fetch_optional(db)
+    .await?;
+
+    Ok(row.map(|row| WebPushSubscription {
+        endpoint: row.get::<String, _>(0),
+        keys: WebPushKeys {
+            p256dh: row.get::<String, _>(1),
+            auth: row.get::<String, _>(2),
+        },
+    }))
+}
+
 pub async fn cleanup_logs(
     db: &SqlitePool,
     retention_days: i64,
