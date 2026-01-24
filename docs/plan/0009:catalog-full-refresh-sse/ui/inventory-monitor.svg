@@ -1,0 +1,156 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1720" height="1240" viewBox="0 0 1720 1240">
+  <defs>
+    <style>
+      .bg { fill: #f6f7fb; }
+      .surface { fill: #ffffff; }
+      .surface2 { fill: #f1f3f8; }
+      .line { stroke: rgba(11, 18, 32, 0.14); stroke-width: 1; }
+
+      .title { fill: #0b1220; font: 22px Inter, Arial, sans-serif; font-weight: 800; }
+      .navTitle { fill: #0b1220; font: 16px Inter, Arial, sans-serif; font-weight: 800; }
+      .navLabel { fill: rgba(11, 18, 32, 0.86); font: 14px Inter, Arial, sans-serif; font-weight: 650; }
+      .navLabelActive { fill: #0b1220; font: 14px Inter, Arial, sans-serif; font-weight: 850; }
+      .navAccent { fill: #2a8a55; }
+
+      .panelTitle { fill: #0b1220; font: 16px Inter, Arial, sans-serif; font-weight: 800; }
+      .panelMeta { fill: rgba(11, 18, 32, 0.72); font: 14px Inter, Arial, sans-serif; }
+
+      .pill { fill: rgba(11, 18, 32, 0.04); stroke: rgba(11, 18, 32, 0.14); stroke-width: 1; }
+      .pillText { fill: #0b1220; font: 12px Inter, Arial, sans-serif; font-weight: 700; }
+
+      .cfgTitle { fill: #0b1220; font: 16px Inter, Arial, sans-serif; font-weight: 800; }
+      .specK { fill: rgba(11, 18, 32, 0.72); font: 12px Inter, Arial, sans-serif; font-weight: 800; }
+      .specV { fill: rgba(11, 18, 32, 0.72); font: 12px Inter, Arial, sans-serif; font-weight: 650; }
+      .price { fill: #0b1220; font: 14px Inter, Arial, sans-serif; font-weight: 800; }
+      .update { fill: rgba(11, 18, 32, 0.72); font: 12px Inter, Arial, sans-serif; font-weight: 650; }
+
+      .trendArea { fill: rgba(42, 138, 85, 0.14); }
+      .trendLine { fill: none; stroke: rgba(42, 138, 85, 0.46); stroke-width: 1.2; }
+      .trendOver { fill: none; stroke: rgba(138, 106, 42, 0.75); stroke-width: 1.6; stroke-dasharray: 2 2; }
+      .trendEmpty { fill: none; stroke: rgba(11, 18, 32, 0.12); stroke-width: 1; stroke-dasharray: 2 3; }
+      .monCap { fill: rgba(11, 18, 32, 0.46); opacity: 0.55; font: 56px Inter, Arial, sans-serif; font-weight: 900; letter-spacing: -1px; }
+    </style>
+
+    <!-- TrendBackground (mirrors current UI: viewBox 0 0 100 40, stepped H/V path, preserveAspectRatio=none) -->
+    <symbol id="trendStep" viewBox="0 0 100 40" preserveAspectRatio="none">
+      <path class="trendArea" d="M 0 40 L 0 20 H 20 V 28 H 45 V 16 H 70 V 32 H 100 V 12 L 100 40 Z"/>
+      <path class="trendLine" d="M 0 20 H 20 V 28 H 45 V 16 H 70 V 32 H 100 V 12"/>
+    </symbol>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1720" height="1240"/>
+
+  <!-- Topbar (measured) -->
+  <rect class="surface" x="44" y="24" width="1632" height="64" rx="14"/>
+  <text class="title" x="68" y="62">Catnap • 库存监控</text>
+
+  <!-- Topbar actions (measured) -->
+  <rect class="pill" x="1283.93" y="40" width="148.07" height="32" rx="10"/>
+  <text class="pillText" x="1358" y="56" text-anchor="middle" dominant-baseline="middle">最近刷新：27 小时前</text>
+  <rect class="pill" x="1444" y="40" width="106" height="32" rx="10"/>
+  <text class="pillText" x="1497" y="56" text-anchor="middle" dominant-baseline="middle">重新同步</text>
+  <rect class="pill" x="1562" y="40" width="90" height="32" rx="10"/>
+  <text class="pillText" x="1607" y="56" text-anchor="middle" dominant-baseline="middle">主题  亮色</text>
+
+  <!-- Sidebar (extended height; content not constrained by viewport) -->
+  <rect class="surface" x="44" y="112" width="240" height="1104" rx="14"/>
+  <text class="navTitle" x="68" y="154">导航</text>
+  <rect class="navAccent" x="60" y="178" width="4" height="24" rx="2"/>
+  <text class="navLabelActive" x="76" y="196">库存监控</text>
+  <text class="navLabel" x="76" y="236">全部产品</text>
+  <text class="navLabel" x="76" y="276">系统设置</text>
+  <text class="navLabel" x="76" y="316">日志</text>
+
+  <!-- Content container (extended height) -->
+  <rect class="surface2 line" x="308" y="112" width="1368" height="1104" rx="14"/>
+
+  <!-- Section: 最近 24 小时上架（new; must not be empty） -->
+  <rect class="surface line" x="333" y="125" width="1318" height="270" rx="14"/>
+  <text class="panelTitle" x="358" y="161">最近 24 小时上架</text>
+  <text class="panelMeta" x="358" y="186">（包含重新上架）</text>
+  <line class="line" x1="334" y1="220" x2="1650" y2="220"/>
+
+  <!-- Recent card A -->
+  <rect class="surface line" x="358" y="245" width="406.7" height="154.1" rx="14"/>
+  <use href="#trendStep" x="358" y="245" width="406.7" height="154.1"/>
+  <text class="monCap" x="740.7" y="263" text-anchor="end" dominant-baseline="hanging">2</text>
+  <text class="cfgTitle" x="383" y="287">新加坡 Lite 优化-4</text>
+  <text class="specK" x="383" y="310">CPU</text>
+  <text class="specV" x="416.9" y="310">1核心</text>
+  <text class="specK" x="523.3" y="310">内存</text>
+  <text class="specV" x="555.3" y="310">128M</text>
+  <text class="specK" x="383" y="330">磁盘</text>
+  <text class="specV" x="415" y="330">1GB</text>
+  <text class="specK" x="523.3" y="330">带宽</text>
+  <text class="specV" x="555.3" y="330">1Gbps</text>
+  <text class="price" x="383" y="356">¥3.50 / 月</text>
+  <text class="update" x="383" y="378">上架：3 小时前</text>
+
+  <!-- Recent card B -->
+  <rect class="surface line" x="788.7" y="245" width="406.7" height="154.1" rx="14"/>
+  <use href="#trendStep" x="788.7" y="245" width="406.7" height="154.1"/>
+  <text class="monCap" x="1170.3" y="263" text-anchor="end" dominant-baseline="hanging">0</text>
+  <text class="cfgTitle" x="813.7" y="287">香港 CN2 优化-2</text>
+  <text class="specK" x="813.7" y="310">CPU</text>
+  <text class="specV" x="847.6" y="310">1核心</text>
+  <text class="specK" x="954" y="310">内存</text>
+  <text class="specV" x="986" y="310">128M</text>
+  <text class="specK" x="813.7" y="330">磁盘</text>
+  <text class="specV" x="845.7" y="330">1GB</text>
+  <text class="specK" x="954" y="330">带宽</text>
+  <text class="specV" x="986" y="330">3Gbps</text>
+  <text class="price" x="813.7" y="356">¥9.90 / 月</text>
+  <text class="update" x="813.7" y="378">上架：20 小时前</text>
+
+  <!-- Group: 冰岛 / 冰岛 (measured offsets; shifted down) -->
+  <rect class="surface line" x="333" y="419" width="1318" height="299.1" rx="14"/>
+  <text class="panelTitle" x="358" y="447.5">冰岛 / 冰岛</text>
+  <text class="panelMeta" x="358" y="478">1 个配置 • 展开 • 补货 1 台 • 余 4 台（最近 28 小时前）</text>
+  <rect class="pill" x="1506" y="444" width="120" height="32" rx="10"/>
+  <text class="pillText" x="1566" y="460" text-anchor="middle" dominant-baseline="middle">折叠</text>
+  <line class="line" x1="334" y1="514" x2="1650" y2="514"/>
+
+  <rect class="surface line" x="358" y="539" width="406.7" height="154.1" rx="14"/>
+  <use href="#trendStep" x="358" y="539" width="406.7" height="154.1"/>
+  <text class="monCap" x="740.7" y="557" text-anchor="end" dominant-baseline="hanging">4</text>
+  <text class="cfgTitle" x="383" y="581">冰岛2号</text>
+  <text class="specK" x="383" y="604">CPU</text>
+  <text class="specV" x="416.9" y="604">1核心</text>
+  <text class="specK" x="523.3" y="604">内存</text>
+  <text class="specV" x="555.3" y="604">256M</text>
+  <text class="specK" x="383" y="624">磁盘</text>
+  <text class="specV" x="415" y="624">1GB</text>
+  <text class="specK" x="523.3" y="624">带宽</text>
+  <text class="specV" x="555.3" y="624">1Gbps</text>
+  <text class="price" x="383" y="650">¥3.50 / 月</text>
+  <text class="update" x="383" y="672">更新：28 小时前</text>
+
+  <!-- Group: 德国 / 德国特惠 (shifted down; shown fully) -->
+  <rect class="surface line" x="333" y="742.1" width="1318" height="299.1" rx="14"/>
+  <text class="panelTitle" x="358" y="770.6">德国 / 德国特惠</text>
+  <text class="panelMeta" x="358" y="801.1">1 个配置 • 展开 • 补货 0 台 • 余 0 台（最近 27 小时前）</text>
+  <rect class="pill" x="1506" y="767.1" width="120" height="32" rx="10"/>
+  <text class="pillText" x="1566" y="783.1" text-anchor="middle" dominant-baseline="middle">折叠</text>
+  <line class="line" x1="334" y1="837.1" x2="1650" y2="837.1"/>
+
+  <rect class="surface line" x="358" y="862.1" width="406.7" height="154.1" rx="14"/>
+  <use href="#trendStep" x="358" y="862.1" width="406.7" height="154.1"/>
+  <text class="monCap" x="740.7" y="880.1" text-anchor="end" dominant-baseline="hanging">0</text>
+  <text class="cfgTitle" x="383" y="904.1">德国特惠年付 Basic</text>
+  <text class="specK" x="383" y="927.1">CPU</text>
+  <text class="specV" x="416.9" y="927.1">1核心</text>
+  <text class="specK" x="523.3" y="927.1">内存</text>
+  <text class="specV" x="555.3" y="927.1">256M</text>
+  <text class="specK" x="383" y="947.1">磁盘</text>
+  <text class="specV" x="415" y="947.1">1GB</text>
+  <text class="specK" x="523.3" y="947.1">带宽</text>
+  <text class="specV" x="555.3" y="947.1">3Gbps</text>
+  <text class="price" x="383" y="973.1">¥9.99 / 月</text>
+  <text class="update" x="383" y="995.1">更新：27 小时前</text>
+
+  <!-- Tips (kept; matches current UI structure) -->
+  <rect class="surface line" x="333" y="1065.2" width="1318" height="120.5" rx="14"/>
+  <text class="panelTitle" x="358" y="1103.2">提示</text>
+  <text class="panelMeta" x="358" y="1127.2">在“全部产品”中开启监控后，配置会出现在对应可用区行的网格里。</text>
+  <text class="panelMeta" x="358" y="1151.2">轮询频率与抖动在“系统设置”中配置；日志可追溯每次变更与通知。</text>
+</svg>
