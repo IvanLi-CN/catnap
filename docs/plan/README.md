@@ -46,5 +46,5 @@
 | 0004 | 配置卡片：库存历史与近 1 日走势（minute bucket） | 已完成 | `0004:inventory-history-trend/PLAN.md` | 2026-01-21 | 实现：history API（batch）+ 卡片背景 sparkline + 30 天清理；API=sparse；>10=10+ |
 | 0005 | CI/CD：自动发版意图标签与版本号策略（防止 docs-only 发版） | 已完成 | `0005:release-intent-label-gating/PLAN.md` | 2026-01-21 | PR label gate：`type:docs|skip|patch|minor|major`；无关联 PR 的 `push main`=跳过；base=语义版本最大 tag（无 tag fallback `Cargo.toml`）；按标签 bump |
 | 0006 | CI/CD：GitHub Actions 构建提速（PR：跳过 arm64 + gating + cache） | 已完成 | `0006:github-actions-performance/PLAN.md` | 2026-01-22 | PR ≤ 10 分钟（baseline Actions run `21235535755`）；PR smoke job 输出 timings summary（key steps） |
-| 0007 | CI/CD：修复 Release job 失败（Determine release version/tag） | 部分完成（2/3） | `0007:release-job-unblock/PLAN.md` | 2026-01-24 | root cause：step 内运行 `compute-version.sh` 但变量未在同一 shell 可见（`set -u` unbound）；补齐：支持 `push tag` 路径；review：避免 bot tag push 重复 release + path-gate 误判；tag 校验收紧为 `v<semver>` |
+| 0007 | CI/CD：修复 Release job 失败（Determine release version/tag） | 已完成 | `0007:release-job-unblock/PLAN.md` | 2026-01-24 | M3 证据：run `21313516531`（main，tag `v0.1.9`）+ `21313516840`（tag `v0.1.8`）；`Determine release version/tag` step 成功 |
 | 0008 | 系统设置：通知测试按钮（Telegram + Web Push） | 待实现 | `0008:settings-notifications-test-button/PLAN.md` | 2026-01-23 | Telegram：可用已保存配置或临时覆盖（不保存）；Web Push：补齐发送链路（VAPID private/subject）用于测试 |

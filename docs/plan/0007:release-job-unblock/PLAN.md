@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 部分完成（2/3）
+- Status: 已完成
 - Created: 2026-01-21
 - Last: 2026-01-24
 
@@ -109,7 +109,9 @@
 
 - [x] M1: 为 `compute-version.sh` 增加 machine-readable 输出模式（契约先行）
 - [x] M2: 修复 `Determine release version/tag` step，确保同 step 内可读取版本号（不依赖 `$GITHUB_ENV`）
-- [ ] M3: 通过一次 `push main` 与一次 `push tag` 的 CI run 验证修复（日志可证）
+- [x] M3: 通过一次 `main` 与一次 `tag` 的 CI run 验证修复（日志可证）
+  - main（workflow_dispatch bump_level=patch）：run `21313516531`（Release job：`61353141381`；产生 tag：`v0.1.9`）
+  - tag（workflow_dispatch ref=`v0.1.8`）：run `21313516840`（Release job：`61353137900`）
 
 ## 风险 / 开放问题 / 假设（Risks, Open Questions, Assumptions）
 
@@ -125,6 +127,7 @@
 - 2026-01-22: Review 修复：避免 `github-actions[bot]` tag push 触发重复 release；tag create 的 path-gate 不再误判为“全量变更”。
 - 2026-01-23: 复核 CI 运行记录；近期 `push main` 的 Release job 多为 skipped，仍缺 `push tag` 路径的成功 run 证据，M3 待补。
 - 2026-01-24: `release-meta` 对 `push tag` 的 tag 格式校验收紧为 `v<semver>`（否则明确失败），避免 `vfoo` 之类的 tag 进入后续构建链路。
+- 2026-01-24: 完成 M3：通过 workflow_dispatch 在 main 与 tag ref 上触发 Release job，`Determine release version/tag` step 成功（证据：`21313516531`/`21313516840`）。
 
 ## 参考（References）
 
