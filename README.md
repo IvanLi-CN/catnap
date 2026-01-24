@@ -82,7 +82,10 @@ curl -sS \
 - `CATNAP_AUTH_USER_HEADER`：用户标识 header 名（由反向代理注入），默认空（不启用）
 - `CATNAP_DB_URL`：数据库连接串，默认 `sqlite:catnap.db`
 - `CATNAP_UPSTREAM_CART_URL`：上游页面，默认 `https://lazycats.vip/cart`
+- `CATNAP_TELEGRAM_API_BASE_URL`：Telegram Bot API base URL（默认 `https://api.telegram.org`；用于测试 stub）
 - `CATNAP_WEB_PUSH_VAPID_PUBLIC_KEY`：Web Push VAPID public key（base64url，可选）
+- `CATNAP_WEB_PUSH_VAPID_PRIVATE_KEY`：Web Push VAPID private key（base64url，可选；用于服务端发送测试 Push）
+- `CATNAP_WEB_PUSH_VAPID_SUBJECT`：Web Push VAPID subject（建议 `mailto:` 或站点 URL；用于服务端发送测试 Push）
 - `CATNAP_DEFAULT_POLL_INTERVAL_MINUTES`：默认轮询间隔（分钟，>= 1），默认 `1`
 - `CATNAP_DEFAULT_POLL_JITTER_PCT`：默认抖动比例（0..=1），默认 `0.1`
 - `CATNAP_LOG_RETENTION_DAYS`：日志保留天数（>= 0），默认 `7`
@@ -97,6 +100,8 @@ curl -sS \
 - `bot token`
 - `target`（chat id / 频道）
 
+保存后可点击「测试 Telegram」立即验证配置是否可用；测试请求不会在 API 响应或日志中泄漏 token 明文。
+
 ### Web Push（可选）
 
 服务端需要提供 VAPID public key（base64url）：
@@ -105,7 +110,14 @@ curl -sS \
 export CATNAP_WEB_PUSH_VAPID_PUBLIC_KEY='...'
 ```
 
-然后在 UI 的「系统设置」里勾选 Web Push，并点击「注册并上传订阅」。
+然后在 UI 的「系统设置」里勾选 Web Push，并点击「启用推送」（请求权限 → 注册 Service Worker → 上传 subscription）。
+
+若要使用「测试 Web Push」，服务端还需要：
+
+```bash
+export CATNAP_WEB_PUSH_VAPID_PRIVATE_KEY='...'
+export CATNAP_WEB_PUSH_VAPID_SUBJECT='mailto:you@example.com'
+```
 
 > 浏览器 Push 通常要求 HTTPS（或 localhost）。
 

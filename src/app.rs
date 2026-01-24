@@ -324,7 +324,7 @@ pub fn json_unauthorized() -> (StatusCode, axum::Json<ErrorResponse>) {
         axum::Json(ErrorResponse {
             error: crate::models::ErrorInfo {
                 code: "UNAUTHORIZED",
-                message: "Unauthorized",
+                message: "Unauthorized".to_string(),
             },
         }),
     )
@@ -336,7 +336,7 @@ pub fn json_forbidden() -> (StatusCode, axum::Json<ErrorResponse>) {
         axum::Json(ErrorResponse {
             error: crate::models::ErrorInfo {
                 code: "FORBIDDEN",
-                message: "Forbidden",
+                message: "Forbidden".to_string(),
             },
         }),
     )
@@ -348,7 +348,7 @@ pub fn json_invalid_argument() -> (StatusCode, axum::Json<ErrorResponse>) {
         axum::Json(ErrorResponse {
             error: crate::models::ErrorInfo {
                 code: "INVALID_ARGUMENT",
-                message: "Invalid argument",
+                message: "Invalid argument".to_string(),
             },
         }),
     )

@@ -7,6 +7,9 @@ pub struct RuntimeConfig {
 
     pub upstream_cart_url: String,
 
+    /// Base URL for Telegram Bot API. Used to allow local stubs in tests.
+    pub telegram_api_base_url: String,
+
     /// Name of the request header (provided by a trusted reverse proxy) used to identify the user.
     pub auth_user_header: Option<String>,
 
@@ -19,6 +22,11 @@ pub struct RuntimeConfig {
     pub db_url: String,
 
     pub web_push_vapid_public_key: Option<String>,
+    pub web_push_vapid_private_key: Option<String>,
+    pub web_push_vapid_subject: Option<String>,
+
+    /// Test-only escape hatch for integration tests (never enabled via env).
+    pub allow_insecure_local_web_push_endpoints: bool,
 }
 
 impl RuntimeConfig {
@@ -27,6 +35,12 @@ impl RuntimeConfig {
             .ok()
             .filter(|v| !v.trim().is_empty())
             .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
+
+        let telegram_api_base_url = env::var("CATNAP_TELEGRAM_API_BASE_URL")
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| "https://api.telegram.org".to_string());
 
         let auth_user_header = env::var("CATNAP_AUTH_USER_HEADER")
             .ok()
@@ -62,6 +76,7 @@ impl RuntimeConfig {
             effective_version,
             upstream_cart_url: env::var("CATNAP_UPSTREAM_CART_URL")
                 .unwrap_or_else(|_| "https://lazycats.vip/cart".to_string()),
+            telegram_api_base_url,
             auth_user_header,
             default_poll_interval_minutes,
             default_poll_jitter_pct,
@@ -72,6 +87,15 @@ impl RuntimeConfig {
                 .ok()
                 .map(|v| v.trim().to_string())
                 .filter(|v| !v.is_empty()),
+            web_push_vapid_private_key: env::var("CATNAP_WEB_PUSH_VAPID_PRIVATE_KEY")
+                .ok()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty()),
+            web_push_vapid_subject: env::var("CATNAP_WEB_PUSH_VAPID_SUBJECT")
+                .ok()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty()),
+            allow_insecure_local_web_push_endpoints: false,
         }
     }
 }

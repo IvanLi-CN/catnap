@@ -9,7 +9,7 @@ pub struct ErrorResponse {
 #[serde(rename_all = "camelCase")]
 pub struct ErrorInfo {
     pub code: &'static str,
-    pub message: &'static str,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -1388,10 +1388,14 @@ export function SettingsViewPanel({
     bootstrap.settings.notifications.telegram.target ?? "",
   );
   const [tgBotToken, setTgBotToken] = useState<string>("");
+  const [tgTestPending, setTgTestPending] = useState<boolean>(false);
+  const [tgTestStatus, setTgTestStatus] = useState<string | null>(null);
   const [wpEnabled, setWpEnabled] = useState<boolean>(
     bootstrap.settings.notifications.webPush.enabled,
   );
   const [wpStatus, setWpStatus] = useState<string | null>(null);
+  const [wpTestPending, setWpTestPending] = useState<boolean>(false);
+  const [wpTestStatus, setWpTestStatus] = useState<string | null>(null);
   const [saving, setSaving] = useState<boolean>(false);
 
   const wpKey = bootstrap.settings.notifications.webPush.vapidPublicKey;
@@ -1488,6 +1492,38 @@ export function SettingsViewPanel({
           </div>
         </div>
 
+        {tgTestStatus ? <div className="muted">{tgTestStatus}</div> : null}
+
+        <div className="settings-actions">
+          <button
+            type="button"
+            className="pill warn center btn"
+            disabled={saving || tgTestPending}
+            onClick={async () => {
+              setTgTestPending(true);
+              setTgTestStatus(null);
+              try {
+                await api<{ ok: true }>("/api/notifications/telegram/test", {
+                  method: "POST",
+                  headers: { "content-type": "application/json" },
+                  body: JSON.stringify({
+                    botToken: tgBotToken.trim() ? tgBotToken.trim() : null,
+                    target: tgTarget.trim() ? tgTarget.trim() : null,
+                    text: null,
+                  }),
+                });
+                setTgTestStatus("已发送。");
+              } catch (e) {
+                setTgTestStatus(e instanceof Error ? e.message : String(e));
+              } finally {
+                setTgTestPending(false);
+              }
+            }}
+          >
+            {tgTestPending ? "测试中…" : "测试 Telegram"}
+          </button>
+        </div>
+
         <div className="line-inner" />
 
         <div className="controls" style={{ marginTop: 0 }}>
@@ -1515,6 +1551,7 @@ export function SettingsViewPanel({
           </div>
         ) : null}
         {wpStatus ? <div className="muted">{wpStatus}</div> : null}
+        {wpTestStatus ? <div className="muted">{wpTestStatus}</div> : null}
 
         <div className="settings-actions">
           <button
@@ -1583,6 +1620,73 @@ export function SettingsViewPanel({
             }}
           >
             启用推送
+          </button>
+
+          <button
+            type="button"
+            className="pill warn center btn"
+            disabled={saving || wpTestPending}
+            onClick={async () => {
+              setWpTestPending(true);
+              setWpTestStatus(null);
+              try {
+                if (!wpSupported) throw new Error("当前浏览器不支持 Push");
+
+                const perm = await Notification.requestPermission();
+                if (perm !== "granted") {
+                  throw new Error("浏览器未授予通知权限");
+                }
+
+                await navigator.serviceWorker.register("/sw.js");
+                const ready = await navigator.serviceWorker.ready;
+
+                let sub = await ready.pushManager.getSubscription();
+                if (!sub) {
+                  if (!wpKey) throw new Error("缺少 VAPID public key");
+                  sub = await ready.pushManager.subscribe({
+                    userVisibleOnly: true,
+                    applicationServerKey: urlBase64ToUint8Array(wpKey) as unknown as BufferSource,
+                  });
+                }
+
+                const json = sub.toJSON() as {
+                  endpoint?: string;
+                  keys?: { p256dh?: string; auth?: string };
+                };
+                if (!json.endpoint || !json.keys?.p256dh || !json.keys?.auth) {
+                  throw new Error("订阅信息不完整");
+                }
+
+                await api("/api/notifications/web-push/subscriptions", {
+                  method: "POST",
+                  headers: { "content-type": "application/json" },
+                  body: JSON.stringify({
+                    subscription: {
+                      endpoint: json.endpoint,
+                      keys: { p256dh: json.keys.p256dh, auth: json.keys.auth },
+                    },
+                  }),
+                });
+
+                await api<{ ok: true }>("/api/notifications/web-push/test", {
+                  method: "POST",
+                  headers: { "content-type": "application/json" },
+                  body: JSON.stringify({
+                    title: "catnap",
+                    body: `测试通知 ${new Date().toISOString()}`,
+                    url: "/settings",
+                  }),
+                });
+
+                setWpTestStatus("已发送（如权限/订阅正常，应很快弹出通知）。");
+              } catch (e) {
+                setWpTestStatus(e instanceof Error ? e.message : String(e));
+              } finally {
+                setWpTestPending(false);
+              }
+            }}
+          >
+            {wpTestPending ? "测试中…" : "测试 Web Push"}
           </button>
 
           <button
