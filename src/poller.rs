@@ -141,7 +141,14 @@ async fn poll_once(
                         settings.telegram_bot_token.as_deref(),
                         settings.telegram_target.as_deref(),
                     ) {
-                        if let Err(err) = send_telegram(token, target, &msg).await {
+                        if let Err(err) = crate::notifications::send_telegram(
+                            &state.config.telegram_api_base_url,
+                            token,
+                            target,
+                            &msg,
+                        )
+                        .await
+                        {
                             warn!(user_id, error = %err, "telegram send failed");
                             db::insert_log(
                                 &state.db,
@@ -180,23 +187,5 @@ async fn poll_once(
         }
     }
 
-    Ok(())
-}
-
-async fn send_telegram(token: &str, chat_id: &str, text: &str) -> anyhow::Result<()> {
-    let url = format!("https://api.telegram.org/bot{token}/sendMessage");
-    let client = reqwest::Client::new();
-    let res = client
-        .post(url)
-        .json(&serde_json::json!({
-            "chat_id": chat_id,
-            "text": text,
-            "disable_web_page_preview": true,
-        }))
-        .send()
-        .await?;
-    if !res.status().is_success() {
-        anyhow::bail!("telegram http {}", res.status());
-    }
     Ok(())
 }

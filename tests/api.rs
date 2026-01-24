@@ -6,7 +6,13 @@ use catnap::{build_app, AppState, RuntimeConfig};
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::Row;
 use sqlx::SqlitePool;
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+};
 use time::OffsetDateTime;
 use tower::ServiceExt;
 
@@ -15,6 +21,7 @@ fn test_config() -> RuntimeConfig {
         bind_addr: "127.0.0.1:0".to_string(),
         effective_version: "test".to_string(),
         upstream_cart_url: "https://lazycats.vip/cart".to_string(),
+        telegram_api_base_url: "https://api.telegram.org".to_string(),
         auth_user_header: Some("x-user".to_string()),
         default_poll_interval_minutes: 1,
         default_poll_jitter_pct: 0.1,
@@ -22,6 +29,9 @@ fn test_config() -> RuntimeConfig {
         log_retention_max_rows: 10_000,
         db_url: "sqlite::memory:".to_string(),
         web_push_vapid_public_key: None,
+        web_push_vapid_private_key: None,
+        web_push_vapid_subject: None,
+        allow_insecure_local_web_push_endpoints: false,
     }
 }
 
@@ -31,7 +41,10 @@ struct TestApp {
 }
 
 async fn make_app() -> TestApp {
-    let cfg = test_config();
+    make_app_with_config(test_config()).await
+}
+
+async fn make_app_with_config(cfg: RuntimeConfig) -> TestApp {
     let db = SqlitePoolOptions::new()
         .max_connections(1)
         .connect(&cfg.db_url)
@@ -82,6 +95,15 @@ async fn make_app() -> TestApp {
         app: build_app(state),
         db,
     }
+}
+
+async fn spawn_stub_server(app: axum::Router) -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    format!("http://{}", addr)
 }
 
 #[tokio::test]
@@ -259,6 +281,180 @@ async fn monitoring_toggle_persists() {
         .iter()
         .any(|v| v.as_str() == Some("lc:7:40:128"));
     assert!(enabled);
+}
+
+#[tokio::test]
+async fn telegram_test_returns_400_when_missing_token_or_target() {
+    let t = make_app().await;
+    let bytes = serde_json::to_vec(&serde_json::json!({
+        "botToken": null,
+        "target": null,
+        "text": null,
+    }))
+    .unwrap();
+
+    let res = t
+        .app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/notifications/telegram/test")
+                .header("host", "example.com")
+                .header("x-user", "u_1")
+                .header("origin", "http://example.com")
+                .header("content-type", "application/json")
+                .body(Body::from(bytes))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let bytes = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(json["error"]["code"], "INVALID_ARGUMENT");
+}
+
+#[tokio::test]
+async fn telegram_test_returns_5xx_when_upstream_fails() {
+    let tg = axum::Router::new().route(
+        "/*path",
+        axum::routing::post(|| async { StatusCode::UNAUTHORIZED }),
+    );
+    let base = spawn_stub_server(tg).await;
+
+    let mut cfg = test_config();
+    cfg.telegram_api_base_url = base;
+    let t = make_app_with_config(cfg).await;
+
+    // Ensure user + default settings row exists.
+    let res = t
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/bootstrap")
+                .header("host", "example.com")
+                .header("x-user", "u_1")
+                .header("origin", "http://example.com")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    // Save settings so request body can omit botToken/target.
+    let bytes = serde_json::to_vec(&serde_json::json!({
+        "poll": { "intervalMinutes": 1, "jitterPct": 0.1 },
+        "siteBaseUrl": null,
+        "notifications": {
+            "telegram": { "enabled": true, "botToken": "t", "target": "@c" },
+            "webPush": { "enabled": false }
+        }
+    }))
+    .unwrap();
+    let res = t
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/settings")
+                .header("host", "example.com")
+                .header("x-user", "u_1")
+                .header("origin", "http://example.com")
+                .header("content-type", "application/json")
+                .body(Body::from(bytes))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let bytes =
+        serde_json::to_vec(&serde_json::json!({ "botToken": null, "target": null, "text": "hi" }))
+            .unwrap();
+    let res = t
+        .app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/notifications/telegram/test")
+                .header("host", "example.com")
+                .header("x-user", "u_1")
+                .header("origin", "http://example.com")
+                .header("content-type", "application/json")
+                .body(Body::from(bytes))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::INTERNAL_SERVER_ERROR);
+}
+
+#[tokio::test]
+async fn web_push_test_hits_subscription_endpoint() {
+    let hits = Arc::new(AtomicUsize::new(0));
+    let hits2 = hits.clone();
+    let push = axum::Router::new().route(
+        "/*path",
+        axum::routing::post(move || {
+            let hits = hits2.clone();
+            async move {
+                hits.fetch_add(1, Ordering::SeqCst);
+                StatusCode::CREATED
+            }
+        }),
+    );
+    let push_base = spawn_stub_server(push).await;
+
+    let mut cfg = test_config();
+    cfg.web_push_vapid_private_key =
+        Some("IQ9Ur0ykXoHS9gzfYX0aBjy9lvdrjx_PFUXmie9YRcY".to_string());
+    cfg.web_push_vapid_subject = Some("mailto:test@example.com".to_string());
+    cfg.allow_insecure_local_web_push_endpoints = true;
+    let t = make_app_with_config(cfg).await;
+
+    sqlx::query(
+        r#"INSERT INTO web_push_subscriptions (id, user_id, endpoint, p256dh, auth, created_at)
+           VALUES (?, ?, ?, ?, ?, ?)"#,
+    )
+    .bind("sub_1")
+    .bind("u_1")
+    .bind(format!("{}/push", push_base))
+    .bind("BLMbF9ffKBiWQLCKvTHb6LO8Nb6dcUh6TItC455vu2kElga6PQvUmaFyCdykxY2nOSSL3yKgfbmFLRTUaGv4yV8")
+    .bind("xS03Fi5ErfTNH_l9WHE9Ig")
+    .bind("2026-01-24T00:00:00Z")
+    .execute(&t.db)
+    .await
+    .unwrap();
+
+    let bytes = serde_json::to_vec(&serde_json::json!({
+        "title": "catnap",
+        "body": "test",
+        "url": "/settings"
+    }))
+    .unwrap();
+
+    let res = t
+        .app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/notifications/web-push/test")
+                .header("host", "example.com")
+                .header("x-user", "u_1")
+                .header("origin", "http://example.com")
+                .header("content-type", "application/json")
+                .body(Body::from(bytes))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]

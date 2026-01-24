@@ -12,7 +12,9 @@ use axum::{
 };
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
+use std::net::IpAddr;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
+use tracing::warn;
 
 type RefreshTask = ((String, Option<String>), Vec<String>);
 
@@ -31,10 +33,12 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/settings", get(get_settings).put(put_settings))
         .route("/logs", get(get_logs))
+        .route("/notifications/telegram/test", post(post_telegram_test))
         .route(
             "/notifications/web-push/subscriptions",
             post(post_web_push_subscription),
         )
+        .route("/notifications/web-push/test", post(post_web_push_test))
         .with_state(state.clone())
         .layer(axum::middleware::from_fn_with_state(
             state,
@@ -123,7 +127,7 @@ fn json_rate_limited() -> (StatusCode, Json<ErrorResponse>) {
         Json(ErrorResponse {
             error: ErrorInfo {
                 code: "RATE_LIMITED",
-                message: "刷新太频繁，请稍后再试",
+                message: "刷新太频繁，请稍后再试".to_string(),
             },
         }),
     )
@@ -135,7 +139,35 @@ fn json_internal_error() -> (StatusCode, Json<ErrorResponse>) {
         Json(ErrorResponse {
             error: ErrorInfo {
                 code: "INTERNAL",
-                message: "Internal error",
+                message: "Internal error".to_string(),
+            },
+        }),
+    )
+}
+
+fn json_invalid_argument_with_message(
+    message: impl Into<String>,
+) -> (StatusCode, Json<ErrorResponse>) {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(ErrorResponse {
+            error: ErrorInfo {
+                code: "INVALID_ARGUMENT",
+                message: message.into(),
+            },
+        }),
+    )
+}
+
+fn json_internal_error_with_message(
+    message: impl Into<String>,
+) -> (StatusCode, Json<ErrorResponse>) {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(ErrorResponse {
+            error: ErrorInfo {
+                code: "INTERNAL",
+                message: message.into(),
             },
         }),
     )
@@ -621,10 +653,361 @@ async fn post_web_push_subscription(
     user: axum::extract::Extension<UserView>,
     Json(req): Json<WebPushSubscribeRequest>,
 ) -> Result<Json<WebPushSubscribeResponse>, (StatusCode, Json<ErrorResponse>)> {
+    validate_web_push_endpoint(
+        req.subscription.endpoint.as_str(),
+        state.config.allow_insecure_local_web_push_endpoints,
+    )
+    .await?;
     let id = db::insert_web_push_subscription(&state.db, &user.0.id, req)
         .await
         .map_err(|_| json_invalid_argument())?;
     Ok(Json(WebPushSubscribeResponse {
         subscription_id: id,
     }))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TelegramTestRequest {
+    bot_token: Option<String>,
+    target: Option<String>,
+    text: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WebPushTestRequest {
+    title: Option<String>,
+    body: Option<String>,
+    url: Option<String>,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct OkResponse {
+    ok: bool,
+}
+
+async fn post_telegram_test(
+    State(state): State<AppState>,
+    user: axum::extract::Extension<UserView>,
+    Json(req): Json<TelegramTestRequest>,
+) -> Result<Json<OkResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = user.0.id.clone();
+    let settings = db::ensure_user(&state.db, &state.config, &user_id)
+        .await
+        .map_err(|_| json_invalid_argument())?;
+
+    let req_bot_token = req
+        .bot_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty());
+    let req_target = req
+        .target
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty());
+    let saved_bot_token = settings
+        .telegram_bot_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty());
+    let saved_target = settings
+        .telegram_target
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty());
+
+    let bot_token = req_bot_token.or(saved_bot_token).ok_or_else(|| {
+        json_invalid_argument_with_message("缺少 bot token（可在本次请求提供或先在设置中保存）")
+    })?;
+    let target = req_target.or(saved_target).ok_or_else(|| {
+        json_invalid_argument_with_message("缺少 target（可在本次请求提供或先在设置中保存）")
+    })?;
+
+    let text = req
+        .text
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            format!(
+                "catnap 测试消息\nuser={}\n{}",
+                user_id,
+                OffsetDateTime::now_utc()
+                    .format(&Rfc3339)
+                    .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string())
+            )
+        });
+
+    match crate::notifications::send_telegram(
+        &state.config.telegram_api_base_url,
+        bot_token,
+        target,
+        &text,
+    )
+    .await
+    {
+        Ok(()) => {
+            db::insert_log(
+                &state.db,
+                Some(&user_id),
+                "info",
+                "notify.telegram.test",
+                "telegram test sent",
+                None,
+            )
+            .await
+            .map_err(|_| json_internal_error())?;
+            Ok(Json(OkResponse { ok: true }))
+        }
+        Err(err) => {
+            warn!(user_id, error = %err, "telegram test failed");
+            let _ = db::insert_log(
+                &state.db,
+                Some(&user_id),
+                "warn",
+                "notify.telegram.test",
+                "telegram test failed",
+                Some(serde_json::json!({ "error": err.to_string() })),
+            )
+            .await;
+            Err(json_internal_error_with_message(format!(
+                "Telegram: {}",
+                err
+            )))
+        }
+    }
+}
+
+async fn post_web_push_test(
+    State(state): State<AppState>,
+    user: axum::extract::Extension<UserView>,
+    Json(req): Json<WebPushTestRequest>,
+) -> Result<Json<OkResponse>, (StatusCode, Json<ErrorResponse>)> {
+    use web_push::{
+        ContentEncoding, HyperWebPushClient, SubscriptionInfo, VapidSignatureBuilder,
+        WebPushClient, WebPushMessageBuilder,
+    };
+
+    let user_id = user.0.id.clone();
+
+    let subscription = db::get_latest_web_push_subscription(&state.db, &user_id)
+        .await
+        .map_err(|_| json_internal_error())?
+        .ok_or_else(|| {
+            json_invalid_argument_with_message(
+                "缺少已保存的 Web Push subscription（请先“启用推送”并上传订阅）",
+            )
+        })?;
+
+    validate_web_push_endpoint(
+        subscription.endpoint.as_str(),
+        state.config.allow_insecure_local_web_push_endpoints,
+    )
+    .await?;
+
+    let Some(vapid_private_key) = state.config.web_push_vapid_private_key.as_deref() else {
+        return Err(json_internal_error_with_message(
+            "缺少 CATNAP_WEB_PUSH_VAPID_PRIVATE_KEY（服务端未配置，无法发送测试 Push）",
+        ));
+    };
+    let Some(vapid_subject) = state.config.web_push_vapid_subject.as_deref() else {
+        return Err(json_internal_error_with_message(
+            "缺少 CATNAP_WEB_PUSH_VAPID_SUBJECT（服务端未配置，无法发送测试 Push）",
+        ));
+    };
+
+    let endpoint = subscription.endpoint.trim();
+    let p256dh = subscription.keys.p256dh.trim();
+    let auth = subscription.keys.auth.trim();
+    if endpoint.is_empty() || p256dh.is_empty() || auth.is_empty() {
+        return Err(json_invalid_argument_with_message(
+            "Web Push subscription 不完整（请重新上传订阅）",
+        ));
+    }
+
+    let subscription_info = SubscriptionInfo::new(endpoint, p256dh, auth);
+
+    let mut sig_builder = VapidSignatureBuilder::from_base64(vapid_private_key, &subscription_info)
+        .map_err(|_| json_internal_error_with_message("Web Push: VAPID private key 无效"))?;
+    sig_builder.add_claim("sub", vapid_subject);
+    let signature = sig_builder
+        .build()
+        .map_err(|_| json_internal_error_with_message("Web Push: VAPID 签名生成失败"))?;
+
+    let title = req
+        .title
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .unwrap_or("catnap");
+    let body = req.body.as_deref().unwrap_or("").to_string();
+    let url = req
+        .url
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .unwrap_or("/");
+
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "title": title,
+        "body": body,
+        "url": url,
+    }))
+    .map_err(|_| json_internal_error())?;
+
+    let mut builder = WebPushMessageBuilder::new(&subscription_info);
+    builder.set_payload(ContentEncoding::Aes128Gcm, &payload);
+    builder.set_ttl(60);
+    builder.set_vapid_signature(signature);
+
+    let message = builder
+        .build()
+        .map_err(|_| json_internal_error_with_message("Web Push: message build failed"))?;
+
+    let client = HyperWebPushClient::new();
+
+    match tokio::time::timeout(std::time::Duration::from_secs(10), client.send(message)).await {
+        Ok(Ok(())) => {
+            db::insert_log(
+                &state.db,
+                Some(&user_id),
+                "info",
+                "notify.web_push.test",
+                "web push test sent",
+                None,
+            )
+            .await
+            .map_err(|_| json_internal_error())?;
+            Ok(Json(OkResponse { ok: true }))
+        }
+        Ok(Err(err)) => {
+            warn!(user_id, error = %err, "web push test failed");
+            let _ = db::insert_log(
+                &state.db,
+                Some(&user_id),
+                "warn",
+                "notify.web_push.test",
+                "web push test failed",
+                Some(serde_json::json!({ "error": err.to_string(), "kind": err.short_description() })),
+            )
+            .await;
+            Err(json_internal_error_with_message(format!(
+                "Web Push: {}",
+                err.short_description()
+            )))
+        }
+        Err(_) => {
+            warn!(user_id, "web push test timeout");
+            let _ = db::insert_log(
+                &state.db,
+                Some(&user_id),
+                "warn",
+                "notify.web_push.test",
+                "web push test timeout",
+                None,
+            )
+            .await;
+            Err(json_internal_error_with_message("Web Push: timeout"))
+        }
+    }
+}
+
+async fn validate_web_push_endpoint(
+    endpoint: &str,
+    allow_insecure_local: bool,
+) -> Result<(), (StatusCode, Json<ErrorResponse>)> {
+    let endpoint = endpoint.trim();
+    if endpoint.is_empty() {
+        return Err(json_invalid_argument_with_message(
+            "subscription.endpoint 不能为空",
+        ));
+    }
+
+    let uri: axum::http::Uri = endpoint
+        .parse()
+        .map_err(|_| json_invalid_argument_with_message("subscription.endpoint 不是合法 URL"))?;
+
+    let scheme = uri
+        .scheme_str()
+        .ok_or_else(|| json_invalid_argument_with_message("subscription.endpoint 缺少 scheme"))?;
+
+    if allow_insecure_local {
+        if scheme != "http" && scheme != "https" {
+            return Err(json_invalid_argument_with_message(
+                "subscription.endpoint scheme 仅支持 http/https",
+            ));
+        }
+        return Ok(());
+    }
+
+    if scheme != "https" {
+        return Err(json_invalid_argument_with_message(
+            "subscription.endpoint 必须为 https",
+        ));
+    }
+
+    let authority = uri
+        .authority()
+        .ok_or_else(|| json_invalid_argument_with_message("subscription.endpoint 缺少 host"))?;
+    let host = authority.host().trim().to_ascii_lowercase();
+
+    if host == "localhost" || host.ends_with(".localhost") {
+        return Err(json_invalid_argument_with_message(
+            "subscription.endpoint host 不允许为 localhost",
+        ));
+    }
+
+    if let Some(port) = authority.port_u16() {
+        if port != 443 {
+            return Err(json_invalid_argument_with_message(
+                "subscription.endpoint 仅允许 443 端口",
+            ));
+        }
+    }
+
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        if !is_public_ip(ip) {
+            return Err(json_invalid_argument_with_message(
+                "subscription.endpoint 不允许指向私网/本机地址",
+            ));
+        }
+        return Ok(());
+    }
+
+    let Ok(addrs) = tokio::net::lookup_host((host.as_str(), 443)).await else {
+        return Err(json_invalid_argument_with_message(
+            "subscription.endpoint host 无法解析",
+        ));
+    };
+
+    if addrs.map(|a| a.ip()).any(|ip| !is_public_ip(ip)) {
+        return Err(json_invalid_argument_with_message(
+            "subscription.endpoint 不允许指向私网/本机地址",
+        ));
+    }
+
+    Ok(())
+}
+
+fn is_public_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            !(v4.is_private()
+                || v4.is_loopback()
+                || v4.is_link_local()
+                || v4.is_multicast()
+                || v4.is_unspecified()
+                || v4.octets()[0] == 0)
+        }
+        IpAddr::V6(v6) => {
+            !(v6.is_loopback()
+                || v6.is_unspecified()
+                || v6.is_multicast()
+                || v6.is_unique_local()
+                || v6.is_unicast_link_local())
+        }
+    }
 }
