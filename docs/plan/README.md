@@ -48,3 +48,4 @@
 | 0006 | CI/CD：GitHub Actions 构建提速（PR：跳过 arm64 + gating + cache） | 已完成 | `0006:github-actions-performance/PLAN.md` | 2026-01-22 | PR ≤ 10 分钟（baseline Actions run `21235535755`）；PR smoke job 输出 timings summary（key steps） |
 | 0007 | CI/CD：修复 Release job 失败（Determine release version/tag） | 部分完成（2/3） | `0007:release-job-unblock/PLAN.md` | 2026-01-24 | root cause：step 内运行 `compute-version.sh` 但变量未在同一 shell 可见（`set -u` unbound）；补齐：支持 `push tag` 路径；review：避免 bot tag push 重复 release + path-gate 误判；tag 校验收紧为 `v<semver>` |
 | 0008 | 系统设置：通知测试按钮（Telegram + Web Push） | 待实现 | `0008:settings-notifications-test-button/PLAN.md` | 2026-01-23 | Telegram：可用已保存配置或临时覆盖（不保存）；Web Push：补齐发送链路（VAPID private/subject）用于测试 |
+| 0009 | 全量刷新：SSE 进度 + 缓存复用 + 配置上下架 | 待实现 | `0009:catalog-full-refresh-sse/PLAN.md` | 2026-01-24 | 全局调度=最小间隔；缺失一次即下架；监控页展示最近 24h 上架（含重新上架） |

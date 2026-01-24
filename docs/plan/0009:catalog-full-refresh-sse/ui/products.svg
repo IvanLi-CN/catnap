@@ -1,0 +1,150 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1720" height="980" viewBox="0 0 1720 980">
+  <defs>
+    <style>
+      .bg { fill: #f6f7fb; }
+      .surface { fill: #ffffff; }
+      .surface2 { fill: #f1f3f8; }
+      .line { stroke: rgba(11, 18, 32, 0.14); stroke-width: 1; }
+
+      .title { fill: #0b1220; font: 22px Inter, Arial, sans-serif; font-weight: 800; }
+      .subtitle { fill: rgba(11, 18, 32, 0.72); font: 14px Inter, Arial, sans-serif; }
+      .navTitle { fill: #0b1220; font: 16px Inter, Arial, sans-serif; font-weight: 800; }
+      .navLabel { fill: rgba(11, 18, 32, 0.86); font: 14px Inter, Arial, sans-serif; font-weight: 650; }
+      .navLabelActive { fill: #0b1220; font: 14px Inter, Arial, sans-serif; font-weight: 850; }
+      .navAccent { fill: #2a8a55; }
+
+      .panelTitle { fill: #0b1220; font: 16px Inter, Arial, sans-serif; font-weight: 800; }
+      .panelSubtitle { fill: rgba(11, 18, 32, 0.72); font: 14px Inter, Arial, sans-serif; }
+
+      .pill { fill: rgba(11, 18, 32, 0.04); stroke: rgba(11, 18, 32, 0.14); stroke-width: 1; }
+      .pillText { fill: #0b1220; font: 12px Inter, Arial, sans-serif; font-weight: 700; }
+      .pillBadge { fill: rgba(11, 18, 32, 0.06); stroke: rgba(11, 18, 32, 0.18); stroke-width: 1; }
+      .pillDisabled { fill: rgba(11, 18, 32, 0.05); stroke: rgba(11, 18, 32, 0.18); stroke-width: 1; opacity: 0.65; }
+
+      .cfgTitle { fill: #0b1220; font: 16px Inter, Arial, sans-serif; font-weight: 800; }
+      .specK { fill: rgba(11, 18, 32, 0.72); font: 12px Inter, Arial, sans-serif; font-weight: 800; }
+      .specV { fill: rgba(11, 18, 32, 0.72); font: 12px Inter, Arial, sans-serif; font-weight: 650; }
+      .price { fill: #0b1220; font: 14px Inter, Arial, sans-serif; font-weight: 800; }
+
+      .trendArea { fill: rgba(42, 138, 85, 0.14); }
+      .trendLine { fill: none; stroke: rgba(42, 138, 85, 0.46); stroke-width: 1.2; }
+      .trendOver { fill: none; stroke: rgba(138, 106, 42, 0.75); stroke-width: 1.6; stroke-dasharray: 2 2; }
+      .trendEmpty { fill: none; stroke: rgba(11, 18, 32, 0.12); stroke-width: 1; stroke-dasharray: 2 3; }
+      .cfgCap { fill: rgba(11, 18, 32, 0.46); opacity: 0.55; font: 72px Inter, Arial, sans-serif; font-weight: 900; letter-spacing: -1px; }
+    </style>
+
+    <!-- TrendBackground (mirrors current UI: viewBox 0 0 100 40, stepped H/V path, preserveAspectRatio=none) -->
+    <symbol id="trendStep" viewBox="0 0 100 40" preserveAspectRatio="none">
+      <path class="trendArea" d="M 0 40 L 0 20 H 20 V 28 H 45 V 16 H 70 V 32 H 100 V 12 L 100 40 Z"/>
+      <path class="trendLine" d="M 0 20 H 20 V 28 H 45 V 16 H 70 V 32 H 100 V 12"/>
+    </symbol>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1720" height="980"/>
+
+  <!-- Topbar (measured from current UI) -->
+  <rect class="surface" x="44" y="24" width="1632" height="75" rx="14"/>
+  <text class="title" x="68" y="60">Catnap • 全部产品</text>
+  <text class="subtitle" x="68" y="82">分组：国家地区 → 可用区域 → 配置 • 点击切换监控（用户隔离）</text>
+
+  <!-- Topbar actions (measured) -->
+  <rect class="pill" x="1468" y="45.5" width="82" height="32" rx="10"/>
+  <text class="pillText" x="1509" y="61.5" text-anchor="middle" dominant-baseline="middle">立即刷新</text>
+  <rect class="pill" x="1562" y="45.5" width="90" height="32" rx="10"/>
+  <text class="pillText" x="1607" y="61.5" text-anchor="middle" dominant-baseline="middle">主题  亮色</text>
+
+  <!-- Sidebar -->
+  <rect class="surface" x="44" y="123" width="240" height="833" rx="14"/>
+  <text class="navTitle" x="68" y="165">导航</text>
+  <text class="navLabel" x="76" y="215">库存监控</text>
+  <rect class="navAccent" x="60" y="238" width="4" height="24" rx="2"/>
+  <text class="navLabelActive" x="76" y="256">全部产品</text>
+  <text class="navLabel" x="76" y="296">系统设置</text>
+  <text class="navLabel" x="76" y="336">日志</text>
+
+  <!-- Content container -->
+  <rect class="surface2 line" x="308" y="123" width="1368" height="833" rx="14"/>
+
+  <!-- Filters section (measured pills) -->
+  <rect class="surface line" x="333" y="136" width="1318" height="120.5" rx="14"/>
+  <text class="panelTitle" x="358" y="177">筛选与分组</text>
+
+  <rect class="pill" x="358" y="199.5" width="200" height="32" rx="10"/>
+  <text class="pillText" x="374" y="215.5" dominant-baseline="middle">国家地区：  全部</text>
+  <rect class="pill" x="582" y="199.5" width="200" height="32" rx="10"/>
+  <text class="pillText" x="598" y="215.5" dominant-baseline="middle">可用区域：  全部</text>
+  <rect class="pill" x="806" y="199.5" width="312" height="32" rx="10"/>
+  <text class="pillText" x="822" y="215.5" dominant-baseline="middle" fill="rgba(11, 18, 32, 0.52)">搜索：  配置名 / 规格关键字…</text>
+  <rect class="pill" x="1142" y="199.5" width="248" height="32" rx="10"/>
+  <text class="pillText" x="1266" y="215.5" text-anchor="middle" dominant-baseline="middle">仅看已监控</text>
+
+  <!-- Group: 南极洲 / 南极洲 -->
+  <rect class="surface line" x="333" y="280.5" width="1318" height="311.2" rx="14"/>
+  <text class="panelTitle" x="358" y="322.5">南极洲 / 南极洲</text>
+  <text class="panelSubtitle" x="358" y="350.5">配置卡片：规格 / 价格 / 库存 / 监控开关</text>
+  <line class="line" x1="334" y1="372" x2="1650" y2="372"/>
+
+  <!-- Card: 南极洲特惠探针 (measured) -->
+  <rect class="surface line" x="358" y="397" width="406.7" height="169.7" rx="14"/>
+  <use href="#trendStep" x="358" y="397" width="406.7" height="169.7"/>
+  <text class="cfgCap" x="740.7" y="415" text-anchor="end" dominant-baseline="hanging">2</text>
+
+  <text class="cfgTitle" x="383" y="439">南极洲特惠探针</text>
+  <!-- Specs (measured offsets) -->
+  <text class="specK" x="383" y="462">CPU</text>
+  <text class="specV" x="416.9" y="462">1核心</text>
+  <text class="specK" x="517.3" y="462">内存</text>
+  <text class="specV" x="549.3" y="462">128M</text>
+
+  <text class="specK" x="383" y="482">磁盘</text>
+  <text class="specV" x="415" y="482">1GB</text>
+  <text class="specK" x="517.3" y="482">带宽</text>
+  <text class="specV" x="549.3" y="482">200M</text>
+
+  <text class="price" x="383" y="508">¥0.50 / 月</text>
+  <rect class="pillBadge" x="665.7" y="511.7" width="74" height="32" rx="10"/>
+  <text class="pillText" x="702.7" y="527.7" text-anchor="middle" dominant-baseline="middle">监控：关</text>
+
+  <!-- Group: 德国 / 德国特惠 -->
+  <rect class="surface line" x="333" y="615.7" width="1318" height="311.2" rx="14"/>
+  <text class="panelTitle" x="358" y="657.7">德国 / 德国特惠</text>
+  <text class="panelSubtitle" x="358" y="685.7">配置卡片：规格 / 价格 / 库存 / 监控开关</text>
+  <line class="line" x1="334" y1="707.2" x2="1650" y2="707.2"/>
+
+  <!-- Card: 德国特惠年付 Mini -->
+  <rect class="surface line" x="358" y="732.2" width="406.7" height="169.7" rx="14"/>
+  <use href="#trendStep" x="358" y="732.2" width="406.7" height="169.7"/>
+  <text class="cfgCap" x="740.7" y="750.2" text-anchor="end" dominant-baseline="hanging">0</text>
+  <text class="cfgTitle" x="383" y="774.2">德国特惠年付 Mini</text>
+  <text class="specK" x="383" y="797.2">CPU</text>
+  <text class="specV" x="416.9" y="797.2">1核心</text>
+  <text class="specK" x="517.3" y="797.2">内存</text>
+  <text class="specV" x="549.3" y="797.2">128M</text>
+  <text class="specK" x="383" y="817.2">磁盘</text>
+  <text class="specV" x="415" y="817.2">1GB</text>
+  <text class="specK" x="517.3" y="817.2">带宽</text>
+  <text class="specV" x="549.3" y="817.2">3Gbps</text>
+  <text class="price" x="383" y="843.2">¥9.99 / 月</text>
+  <!-- 下架标记（本计划新增；位置对齐卡片右上角） -->
+  <rect class="pillBadge" x="692.7" y="748.2" width="56" height="24" rx="10"/>
+  <text class="pillText" x="720.7" y="760.2" text-anchor="middle" dominant-baseline="middle">下架</text>
+  <rect class="pillDisabled" x="653.7" y="846.9" width="86" height="32" rx="10"/>
+  <text class="pillText" x="696.7" y="862.9" text-anchor="middle" dominant-baseline="middle">监控：禁用</text>
+
+  <!-- Card: 德国特惠年付 Basic -->
+  <rect class="surface line" x="788.7" y="732.2" width="406.7" height="169.7" rx="14"/>
+  <use href="#trendStep" x="788.7" y="732.2" width="406.7" height="169.7"/>
+  <text class="cfgCap" x="1170.3" y="750.2" text-anchor="end" dominant-baseline="hanging">0</text>
+  <text class="cfgTitle" x="813.7" y="774.2">德国特惠年付 Basic</text>
+  <text class="specK" x="813.7" y="797.2">CPU</text>
+  <text class="specV" x="847.6" y="797.2">1核心</text>
+  <text class="specK" x="948" y="797.2">内存</text>
+  <text class="specV" x="980" y="797.2">256M</text>
+  <text class="specK" x="813.7" y="817.2">磁盘</text>
+  <text class="specV" x="845.7" y="817.2">1GB</text>
+  <text class="specK" x="948" y="817.2">带宽</text>
+  <text class="specV" x="980" y="817.2">3Gbps</text>
+  <text class="price" x="813.7" y="843.2">¥9.99 / 月</text>
+  <rect class="pillBadge" x="1096.3" y="846.9" width="74" height="32" rx="10"/>
+  <text class="pillText" x="1133.3" y="862.9" text-anchor="middle" dominant-baseline="middle">监控：开</text>
+</svg>
