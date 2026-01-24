@@ -500,8 +500,8 @@ jobs:
 
           if [[ "${ref}" == refs/tags/* ]]; then
             tag="${ref_name}"
-            if [[ "${tag}" != v* ]]; then
-              echo "tag must start with 'v': ${tag}" >&2
+            if [[ ! "${tag}" =~ ^v[0-9]+\\.[0-9]+\\.[0-9]+$ ]]; then
+              echo "tag must be semver and start with 'v' (e.g. v1.2.3): ${tag}" >&2
               exit 1
             fi
             version="${tag#v}"

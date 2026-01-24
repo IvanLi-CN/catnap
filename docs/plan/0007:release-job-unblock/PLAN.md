@@ -4,7 +4,7 @@
 
 - Status: 部分完成（2/3）
 - Created: 2026-01-21
-- Last: 2026-01-22
+- Last: 2026-01-24
 
 ## 背景 / 问题陈述
 
@@ -124,6 +124,7 @@
 - 2026-01-22: 补齐 tag 路径：CI 支持 `push tag` 触发；`release-intent.sh` 支持 tag push（由 `release-meta` 校验 tag 合法性，非法 tag 明确失败）。
 - 2026-01-22: Review 修复：避免 `github-actions[bot]` tag push 触发重复 release；tag create 的 path-gate 不再误判为“全量变更”。
 - 2026-01-23: 复核 CI 运行记录；近期 `push main` 的 Release job 多为 skipped，仍缺 `push tag` 路径的成功 run 证据，M3 待补。
+- 2026-01-24: `release-meta` 对 `push tag` 的 tag 格式校验收紧为 `v<semver>`（否则明确失败），避免 `vfoo` 之类的 tag 进入后续构建链路。
 
 ## 参考（References）
 
