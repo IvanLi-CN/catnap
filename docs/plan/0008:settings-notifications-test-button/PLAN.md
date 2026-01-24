@@ -2,9 +2,9 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 已完成
 - Created: 2026-01-23
-- Last: 2026-01-23
+- Last: 2026-01-24
 
 ## 背景 / 问题陈述
 
@@ -139,10 +139,10 @@
 
 ## 实现里程碑（Milestones）
 
-- [ ] M1: 后端新增 Telegram 测试 endpoint + 集成测试（stub Telegram）
-- [ ] M2: 后端补齐 Web Push 测试 endpoint（含 VAPID 配置）+ 集成测试（stub push service）
-- [ ] M3: 前端 `SettingsViewPanel` 增加 Telegram/Web Push 测试按钮与状态提示
-- [ ] M4: Storybook 与 `README.md` 同步更新
+- [x] M1: 后端新增 Telegram 测试 endpoint + 集成测试（stub Telegram）
+- [x] M2: 后端补齐 Web Push 测试 endpoint（含 VAPID 配置）+ 集成测试（stub push service）
+- [x] M3: 前端 `SettingsViewPanel` 增加 Telegram/Web Push 测试按钮与状态提示
+- [x] M4: Storybook 与 `README.md` 同步更新
 
 ## 方案概述（Approach, high-level）
 
@@ -160,3 +160,4 @@
 ## 变更记录（Change log）
 
 - 2026-01-23: 创建计划 #0008（待设计）。
+- 2026-01-24: 完成实现：新增 2 个测试 endpoints；补齐 Web Push 发送链路（VAPID private/subject）；UI 增加测试按钮与状态提示；补齐集成测试与 README。
