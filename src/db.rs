@@ -226,15 +226,6 @@ SET
     )
     .execute(db)
     .await?;
-    sqlx::query(
-        r#"
-UPDATE settings
-SET catalog_refresh_auto_interval_hours = 6
-WHERE catalog_refresh_auto_interval_hours IS NULL
-"#,
-    )
-    .execute(db)
-    .await?;
     Ok(())
 }
 
@@ -753,6 +744,16 @@ WHERE source_fid = ?
         let rows = q.fetch_all(&mut *tx).await?;
         rows.into_iter().map(|r| r.get::<String, _>(0)).collect()
     };
+
+    // A parse that yields an empty list is ambiguous: it could mean the upstream cart truly has no
+    // items, or it could be an upstream HTML change/error page that our parser didn't catch.
+    // Treat it as a failure when we have previously active IDs to avoid incorrect mass-delisting.
+    if configs.is_empty() && !prev_ids.is_empty() {
+        anyhow::bail!(
+            "refusing to apply empty catalog config list for {url_key} (would delist {} ids)",
+            prev_ids.len()
+        );
+    }
 
     let fetched_ids: std::collections::HashSet<String> =
         configs.iter().map(|c| c.id.clone()).collect();
