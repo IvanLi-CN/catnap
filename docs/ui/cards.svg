@@ -1,0 +1,241 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="980" viewBox="0 0 1440 980">
+  <!-- UI 组件设计图（SVG，高保真）：ProductCard + MonitoringCard + 国旗水印（Iconify/flagpack） -->
+  <!-- Copied from `docs/plan/0010:card-country-flag-watermark/ui/cards.svg`. -->
+  <defs>
+    <style>
+      /* Tokens (from web/src/app.css) */
+      .bgL { fill: #f1f3f8; }
+      .cardL { fill: #ffffff; }
+      .lineL { stroke: rgba(11, 18, 32, 0.14); stroke-width: 1; }
+      .textL { fill: #0b1220; }
+      .mutedL { fill: rgba(11, 18, 32, 0.72); }
+      .specKL { fill: rgba(11, 18, 32, 0.62); }
+      .trendCapL { fill: rgba(11, 18, 32, 0.46); }
+
+      .bgD { fill: #0c172e; }
+      .cardD { fill: #0f1b33; }
+      .lineD { stroke: rgba(27, 42, 74, 0.55); stroke-width: 1; }
+      .textD { fill: #e6eefc; }
+      .mutedD { fill: #9bb0d0; }
+      .specKD { fill: rgba(230, 238, 252, 0.66); }
+      .trendCapD { fill: rgba(230, 238, 252, 0.6); }
+
+      /* Typography */
+      .title { font: 16px Inter, Arial, sans-serif; font-weight: 800; }
+      .specV { font: 13px Inter, Arial, sans-serif; font-weight: 400; }
+      .price { font: 14px Inter, Arial, sans-serif; font-weight: 700; }
+      .foot { font: 14px Inter, Arial, sans-serif; font-weight: 400; }
+      .update { font: 12px Inter, Arial, sans-serif; font-weight: 400; }
+      .capCfg { font: 72px Inter, Arial, sans-serif; font-weight: 900; letter-spacing: -1px; opacity: 0.55; }
+      .capMon { font: 56px Inter, Arial, sans-serif; font-weight: 900; letter-spacing: -1px; opacity: 0.55; }
+      .capWarn { opacity: 0.38; }
+
+      /* Badge pill (cfg-card bottom button) */
+      .badgeOnL { fill: rgba(42, 138, 85, 0.18); stroke: rgba(42, 138, 85, 0.55); stroke-width: 1; }
+      .badgeOnD { fill: rgba(23, 52, 40, 0.72); stroke: rgba(42, 138, 85, 0.85); stroke-width: 1; }
+      .badgeText { font: 12px Inter, Arial, sans-serif; font-weight: 700; text-anchor: middle; dominant-baseline: middle; }
+
+      /* Trend background (simplified) */
+      .trendAreaL { fill: rgba(42, 138, 85, 0.14); }
+      .trendLineL { fill: none; stroke: rgba(42, 138, 85, 0.46); stroke-width: 1.4; }
+      .trendAreaD { fill: rgba(42, 138, 85, 0.18); }
+      .trendLineD { fill: none; stroke: rgba(154, 255, 209, 0.22); stroke-width: 1.4; }
+    </style>
+
+    <!-- Iconify: flagpack:de (rect flag, viewBox 0 0 32 24) -->
+    <symbol id="flagpack-de" viewBox="0 0 32 24">
+      <g fill="none" fill-rule="evenodd" clip-rule="evenodd">
+        <path fill="#ffd018" d="M0 16h32v8H0z"/>
+        <path fill="#e31d1c" d="M0 8h32v8H0z"/>
+        <path fill="#272727" d="M0 0h32v8H0z"/>
+      </g>
+    </symbol>
+
+    <!-- Watermark alpha (final): top-left 0.4 -> bottom-right 0 -->
+    <!-- Size is intentionally small (not full card) to keep it decorative. -->
+    <linearGradient id="wmAlpha" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="144" y2="108">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.4"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+
+    <clipPath id="clipCfg">
+      <rect x="0" y="0" width="624" height="208" rx="14"/>
+    </clipPath>
+    <clipPath id="clipMon">
+      <rect x="0" y="0" width="624" height="168" rx="14"/>
+    </clipPath>
+  </defs>
+
+  <!-- Light theme -->
+  <rect class="bgL" x="0" y="0" width="1440" height="480"/>
+
+  <!-- ProductCard (cfg-card) -->
+  <g transform="translate(84,72)">
+    <rect class="cardL" x="0" y="0" width="624" height="208" rx="14"/>
+    <rect x="0" y="0" width="624" height="208" rx="14" fill="none" class="lineL"/>
+
+    <g clip-path="url(#clipCfg)">
+      <path class="trendAreaL" d="M0 208H120V198H200V206H320V176H420V190H540V160H624V208H0Z"/>
+      <path class="trendLineL" d="M0 208H120V198H200V206H320V176H420V190H540V160H624"/>
+    </g>
+
+    <mask id="wmCfgL" maskUnits="userSpaceOnUse" x="0" y="0" width="144" height="108" style="mask-type:alpha">
+      <rect x="0" y="0" width="144" height="108" fill="url(#wmAlpha)"/>
+    </mask>
+    <g mask="url(#wmCfgL)">
+      <use href="#flagpack-de" x="0" y="0" width="144" height="108"/>
+    </g>
+
+    <text class="capCfg trendCapL" x="600" y="18" text-anchor="end" dominant-baseline="text-before-edge">4</text>
+    <text class="title textL" x="24" y="24" dominant-baseline="text-before-edge">弗里蒙特 1号</text>
+
+    <text x="24" y="49" dominant-baseline="text-before-edge">
+      <tspan class="specKL" font="13px Inter, Arial, sans-serif" font-weight="650">CPU</tspan>
+      <tspan class="specV mutedL" dx="6">1核</tspan>
+    </text>
+    <text x="268" y="49" dominant-baseline="text-before-edge">
+      <tspan class="specKL" font="13px Inter, Arial, sans-serif" font-weight="650">内存</tspan>
+      <tspan class="specV mutedL" dx="6">256M</tspan>
+    </text>
+    <text x="24" y="69" dominant-baseline="text-before-edge">
+      <tspan class="specKL" font="13px Inter, Arial, sans-serif" font-weight="650">磁盘</tspan>
+      <tspan class="specV mutedL" dx="6">1GB</tspan>
+    </text>
+    <text x="268" y="69" dominant-baseline="text-before-edge">
+      <tspan class="specKL" font="13px Inter, Arial, sans-serif" font-weight="650">带宽</tspan>
+      <tspan class="specV mutedL" dx="6">3Gbps</tspan>
+    </text>
+
+    <text class="price textL" x="24" y="92" dominant-baseline="text-before-edge">¥ 1.00 / 月</text>
+    <text class="foot mutedL" x="24" y="116" dominant-baseline="text-before-edge">变化检测：补货 / 价格 / 配置</text>
+
+    <rect class="badgeOnL" x="480" y="152" width="120" height="32" rx="10"/>
+    <text class="badgeText textL" x="540" y="168">监控：开</text>
+  </g>
+
+  <!-- MonitoringCard (mon-card) -->
+  <g transform="translate(732,72)">
+    <rect class="cardL" x="0" y="0" width="624" height="168" rx="14"/>
+    <rect x="0" y="0" width="624" height="168" rx="14" fill="none" class="lineL"/>
+
+    <g clip-path="url(#clipMon)">
+      <path class="trendAreaL" d="M0 168H120V160H220V164H320V140H420V156H520V132H624V168H0Z"/>
+      <path class="trendLineL" d="M0 168H120V160H220V164H320V140H420V156H520V132H624"/>
+    </g>
+
+    <mask id="wmMonL" maskUnits="userSpaceOnUse" x="0" y="0" width="144" height="108" style="mask-type:alpha">
+      <rect x="0" y="0" width="144" height="108" fill="url(#wmAlpha)"/>
+    </mask>
+    <g mask="url(#wmMonL)">
+      <use href="#flagpack-de" x="0" y="0" width="144" height="108"/>
+    </g>
+
+    <text class="capMon trendCapL capWarn" x="600" y="18" text-anchor="end" dominant-baseline="text-before-edge">0</text>
+    <text class="title textL" x="24" y="24" dominant-baseline="text-before-edge">德国特惠年付 Basic</text>
+
+    <text x="24" y="49" dominant-baseline="text-before-edge">
+      <tspan class="specKL" font="13px Inter, Arial, sans-serif" font-weight="650">CPU</tspan>
+      <tspan class="specV mutedL" dx="6">1核心</tspan>
+    </text>
+    <text x="274" y="49" dominant-baseline="text-before-edge">
+      <tspan class="specKL" font="13px Inter, Arial, sans-serif" font-weight="650">内存</tspan>
+      <tspan class="specV mutedL" dx="6">256M</tspan>
+    </text>
+    <text x="24" y="69" dominant-baseline="text-before-edge">
+      <tspan class="specKL" font="13px Inter, Arial, sans-serif" font-weight="650">磁盘</tspan>
+      <tspan class="specV mutedL" dx="6">1GB</tspan>
+    </text>
+    <text x="274" y="69" dominant-baseline="text-before-edge">
+      <tspan class="specKL" font="13px Inter, Arial, sans-serif" font-weight="650">带宽</tspan>
+      <tspan class="specV mutedL" dx="6">3Gbps</tspan>
+    </text>
+
+    <text class="price textL" x="24" y="92" dominant-baseline="text-before-edge">¥ 9.99 / 月</text>
+    <text class="update mutedL" x="24" y="132" dominant-baseline="text-before-edge">更新：36 秒前</text>
+  </g>
+
+  <!-- Dark theme -->
+  <rect class="bgD" x="0" y="480" width="1440" height="500"/>
+
+  <g transform="translate(84,552)">
+    <rect class="cardD" x="0" y="0" width="624" height="208" rx="14"/>
+    <rect x="0" y="0" width="624" height="208" rx="14" fill="none" class="lineD"/>
+
+    <g clip-path="url(#clipCfg)">
+      <path class="trendAreaD" d="M0 208H120V198H200V206H320V176H420V190H540V160H624V208H0Z"/>
+      <path class="trendLineD" d="M0 208H120V198H200V206H320V176H420V190H540V160H624"/>
+    </g>
+
+    <mask id="wmCfgD" maskUnits="userSpaceOnUse" x="0" y="0" width="144" height="108" style="mask-type:alpha">
+      <rect x="0" y="0" width="144" height="108" fill="url(#wmAlpha)"/>
+    </mask>
+    <g mask="url(#wmCfgD)">
+      <use href="#flagpack-de" x="0" y="0" width="144" height="108"/>
+    </g>
+
+    <text class="capCfg trendCapD" x="600" y="18" text-anchor="end" dominant-baseline="text-before-edge">4</text>
+    <text class="title textD" x="24" y="24" dominant-baseline="text-before-edge">弗里蒙特 1号</text>
+
+    <text x="24" y="49" dominant-baseline="text-before-edge">
+      <tspan class="specKD" font="13px Inter, Arial, sans-serif" font-weight="650">CPU</tspan>
+      <tspan class="specV mutedD" dx="6">1核</tspan>
+    </text>
+    <text x="268" y="49" dominant-baseline="text-before-edge">
+      <tspan class="specKD" font="13px Inter, Arial, sans-serif" font-weight="650">内存</tspan>
+      <tspan class="specV mutedD" dx="6">256M</tspan>
+    </text>
+    <text x="24" y="69" dominant-baseline="text-before-edge">
+      <tspan class="specKD" font="13px Inter, Arial, sans-serif" font-weight="650">磁盘</tspan>
+      <tspan class="specV mutedD" dx="6">1GB</tspan>
+    </text>
+    <text x="268" y="69" dominant-baseline="text-before-edge">
+      <tspan class="specKD" font="13px Inter, Arial, sans-serif" font-weight="650">带宽</tspan>
+      <tspan class="specV mutedD" dx="6">3Gbps</tspan>
+    </text>
+
+    <text class="price textD" x="24" y="92" dominant-baseline="text-before-edge">¥ 1.00 / 月</text>
+    <text class="foot mutedD" x="24" y="116" dominant-baseline="text-before-edge">变化检测：补货 / 价格 / 配置</text>
+
+    <rect class="badgeOnD" x="480" y="152" width="120" height="32" rx="10"/>
+    <text class="badgeText textD" x="540" y="168">监控：开</text>
+  </g>
+
+  <g transform="translate(732,552)">
+    <rect class="cardD" x="0" y="0" width="624" height="168" rx="14"/>
+    <rect x="0" y="0" width="624" height="168" rx="14" fill="none" class="lineD"/>
+
+    <g clip-path="url(#clipMon)">
+      <path class="trendAreaD" d="M0 168H120V160H220V164H320V140H420V156H520V132H624V168H0Z"/>
+      <path class="trendLineD" d="M0 168H120V160H220V164H320V140H420V156H520V132H624"/>
+    </g>
+
+    <mask id="wmMonD" maskUnits="userSpaceOnUse" x="0" y="0" width="144" height="108" style="mask-type:alpha">
+      <rect x="0" y="0" width="144" height="108" fill="url(#wmAlpha)"/>
+    </mask>
+    <g mask="url(#wmMonD)">
+      <use href="#flagpack-de" x="0" y="0" width="144" height="108"/>
+    </g>
+
+    <text class="capMon trendCapD capWarn" x="600" y="18" text-anchor="end" dominant-baseline="text-before-edge">0</text>
+    <text class="title textD" x="24" y="24" dominant-baseline="text-before-edge">德国特惠年付 Basic</text>
+    <text x="24" y="49" dominant-baseline="text-before-edge">
+      <tspan class="specKD" font="13px Inter, Arial, sans-serif" font-weight="650">CPU</tspan>
+      <tspan class="specV mutedD" dx="6">1核心</tspan>
+    </text>
+    <text x="274" y="49" dominant-baseline="text-before-edge">
+      <tspan class="specKD" font="13px Inter, Arial, sans-serif" font-weight="650">内存</tspan>
+      <tspan class="specV mutedD" dx="6">256M</tspan>
+    </text>
+    <text x="24" y="69" dominant-baseline="text-before-edge">
+      <tspan class="specKD" font="13px Inter, Arial, sans-serif" font-weight="650">磁盘</tspan>
+      <tspan class="specV mutedD" dx="6">1GB</tspan>
+    </text>
+    <text x="274" y="69" dominant-baseline="text-before-edge">
+      <tspan class="specKD" font="13px Inter, Arial, sans-serif" font-weight="650">带宽</tspan>
+      <tspan class="specV mutedD" dx="6">3Gbps</tspan>
+    </text>
+
+    <text class="price textD" x="24" y="92" dominant-baseline="text-before-edge">¥ 9.99 / 月</text>
+    <text class="update mutedD" x="24" y="132" dominant-baseline="text-before-edge">更新：36 秒前</text>
+  </g>
+</svg>

@@ -6,6 +6,7 @@
 
 - `inventory-monitor.svg`：库存监控（来源：`#0004`）
 - `products.svg`：全部产品（来源：`#0004`）
+- `cards.svg`：卡片组件（ProductCard / MonitoringCard，含国旗水印）（来源：`#0010`）
 - `settings.svg`：系统设置（来源：`#0001`）
 - `logs.svg`：日志（来源：`#0001`）
 - `unauthorized-401.svg`：401 未授权页（来源：`#0001`）
@@ -14,7 +15,7 @@
 
 - `inventory-monitor.svg` ← `docs/plan/0004:inventory-history-trend/ui/inventory-monitor-with-trend.svg`
 - `products.svg` ← `docs/plan/0004:inventory-history-trend/ui/products-with-trend.svg`
+- `cards.svg` ← `docs/plan/0010:card-country-flag-watermark/ui/cards.svg`
 - `settings.svg` ← `docs/plan/0001:lazycats-cart-inventory-monitor/ui/settings.svg`
 - `logs.svg` ← `docs/plan/0001:lazycats-cart-inventory-monitor/ui/logs.svg`
 - `unauthorized-401.svg` ← `docs/plan/0001:lazycats-cart-inventory-monitor/ui/unauthorized-401.svg`
-
