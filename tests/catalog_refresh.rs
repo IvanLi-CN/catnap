@@ -6,6 +6,8 @@ use catnap::{build_app, AppState, RuntimeConfig};
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::Row;
 use sqlx::SqlitePool;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use tower::ServiceExt;
 
 fn base_test_config() -> RuntimeConfig {
@@ -107,10 +109,13 @@ async fn catalog_refresh_job_runs_and_persists_url_cache() {
         gid: Option<String>,
     }
 
+    let hits = Arc::new(AtomicUsize::new(0));
+    let hits_for_handler = hits.clone();
     let upstream = axum::Router::new().route(
         "/cart",
         axum::routing::get(
             move |axum::extract::Query(q): axum::extract::Query<CartQuery>| async move {
+                hits_for_handler.fetch_add(1, Ordering::SeqCst);
                 match (q.fid.as_deref(), q.gid.as_deref()) {
                     (None, None) => (StatusCode::OK, cart_root_only_fid2),
                     (Some("2"), None) => (StatusCode::OK, cart_fid_2),
@@ -125,58 +130,73 @@ async fn catalog_refresh_job_runs_and_persists_url_cache() {
     let mut cfg = base_test_config();
     cfg.upstream_cart_url = format!("{base}/cart");
 
-    let t = make_app_with_config(cfg).await;
-
-    let res = t
-        .app
-        .clone()
-        .oneshot(
+    async fn post_refresh(app: axum::Router, user: &str) -> StatusCode {
+        app.oneshot(
             Request::builder()
                 .method("POST")
                 .uri("/api/catalog/refresh")
                 .header("host", "example.com")
-                .header("x-user", "u_1")
                 .header("origin", "http://example.com")
+                .header("x-user", user)
                 .body(Body::empty())
                 .unwrap(),
         )
         .await
-        .unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
-
-    // Wait for the background job to finish.
-    let mut state = "idle".to_string();
-    for _ in 0..80 {
-        let res = t
-            .app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri("/api/refresh/status")
-                    .header("host", "example.com")
-                    .header("x-user", "u_1")
-                    .header("origin", "http://example.com")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(res.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        state = json["state"].as_str().unwrap_or("").to_string();
-        if state == "success" || state == "error" {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        .unwrap()
+        .status()
     }
-    assert_eq!(state, "success");
+
+    async fn wait_refresh_done(app: axum::Router) -> String {
+        let mut state = "idle".to_string();
+        for _ in 0..80 {
+            let res = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/api/refresh/status")
+                        .header("host", "example.com")
+                        .header("x-user", "u_1")
+                        .header("origin", "http://example.com")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(res.status(), StatusCode::OK);
+            let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            state = json["state"].as_str().unwrap_or("").to_string();
+            if state == "success" || state == "error" {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        state
+    }
+
+    // Baseline: single trigger.
+    hits.store(0, Ordering::SeqCst);
+    let t1 = make_app_with_config(cfg.clone()).await;
+    assert_eq!(post_refresh(t1.app.clone(), "u_1").await, StatusCode::OK);
+    assert_eq!(wait_refresh_done(t1.app.clone()).await, "success");
+    let baseline_hits = hits.load(Ordering::SeqCst);
+
+    // Concurrency: two near-simultaneous triggers must not start two jobs.
+    hits.store(0, Ordering::SeqCst);
+    let t2 = make_app_with_config(cfg).await;
+    let (s1, s2) = tokio::join!(
+        post_refresh(t2.app.clone(), "u_1"),
+        post_refresh(t2.app.clone(), "u_2"),
+    );
+    assert_eq!(s1, StatusCode::OK);
+    assert_eq!(s2, StatusCode::OK);
+    assert_eq!(wait_refresh_done(t2.app.clone()).await, "success");
 
     // URL cache persists last-good results.
     let rows = sqlx::query("SELECT url_key FROM catalog_url_cache")
-        .fetch_all(&t.db)
+        .fetch_all(&t2.db)
         .await
         .unwrap();
     let keys = rows
@@ -187,10 +207,12 @@ async fn catalog_refresh_job_runs_and_persists_url_cache() {
 
     // Fetched configs are marked as active.
     let row = sqlx::query("SELECT lifecycle_state FROM catalog_configs LIMIT 1")
-        .fetch_one(&t.db)
+        .fetch_one(&t2.db)
         .await
         .unwrap();
     assert_eq!(row.get::<String, _>(0), "active");
+
+    assert_eq!(hits.load(Ordering::SeqCst), baseline_hits);
 }
 
 #[tokio::test]

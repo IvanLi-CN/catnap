@@ -2,6 +2,7 @@ use crate::app::AppState;
 use crate::db;
 use crate::models::{CatalogRefreshCurrent, CatalogRefreshStatus};
 use crate::upstream::UpstreamClient;
+use futures_util::future::{BoxFuture, FutureExt, Shared};
 use sqlx::Row;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -12,6 +13,8 @@ use uuid::Uuid;
 
 const MANUAL_MIN_INTERVAL_SECONDS: i64 = 30;
 const FULL_REFRESH_CACHE_HIT_SECONDS: i64 = 5 * 60;
+
+type UrlTask = Shared<BoxFuture<'static, Result<UrlTaskResult, String>>>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RefreshTrigger {
@@ -43,7 +46,7 @@ struct Inner {
     status: Mutex<CatalogRefreshStatus>,
     tx: broadcast::Sender<CatalogRefreshStatus>,
     manual_gate: Mutex<HashMap<String, OffsetDateTime>>,
-    url_tasks: Mutex<HashMap<String, broadcast::Sender<Result<UrlTaskResult, String>>>>,
+    url_tasks: Mutex<HashMap<String, UrlTask>>,
 }
 
 #[derive(Debug, Clone)]
@@ -95,13 +98,6 @@ impl CatalogRefreshManager {
         trigger: RefreshTrigger,
         user_id_for_rate_limit: Option<&str>,
     ) -> Result<CatalogRefreshStatus, TriggerError> {
-        {
-            let st = self.inner.status.lock().await.clone();
-            if st.state == "running" {
-                return Ok(st);
-            }
-        }
-
         if trigger == RefreshTrigger::Manual {
             if let Some(user_id) = user_id_for_rate_limit {
                 let now = OffsetDateTime::now_utc();
@@ -115,10 +111,14 @@ impl CatalogRefreshManager {
             }
         }
 
-        let job_id = Uuid::new_v4().to_string();
-        let started_at = now_rfc3339();
-        {
+        let (job_id, st_snapshot) = {
             let mut st = self.inner.status.lock().await;
+            if st.state == "running" {
+                return Ok(st.clone());
+            }
+
+            let job_id = Uuid::new_v4().to_string();
+            let started_at = now_rfc3339();
             st.job_id = job_id.clone();
             st.state = "running".to_string();
             st.trigger = trigger.as_str().to_string();
@@ -128,8 +128,10 @@ impl CatalogRefreshManager {
             st.started_at = started_at.clone();
             st.updated_at = started_at.clone();
             st.current = None;
-            let _ = self.inner.tx.send(st.clone());
-        }
+            let snapshot = st.clone();
+            let _ = self.inner.tx.send(snapshot.clone());
+            (job_id, snapshot)
+        };
 
         let this = self.clone();
         tokio::spawn(async move {
@@ -139,7 +141,7 @@ impl CatalogRefreshManager {
             }
         });
 
-        Ok(self.inner.status.lock().await.clone())
+        Ok(st_snapshot)
     }
 
     async fn finish_error(&self, message: String) {
@@ -187,19 +189,20 @@ impl CatalogRefreshManager {
             format!("{}?fid={fid}", app.config.upstream_cart_url)
         };
 
-        let mut rx = {
+        let task = {
             let mut tasks = self.inner.url_tasks.lock().await;
-            if let Some(sender) = tasks.get(&url_key) {
-                sender.subscribe()
+            if let Some(task) = tasks.get(&url_key) {
+                task.clone()
             } else {
-                let (sender, rx) = broadcast::channel(4);
-                tasks.insert(url_key.clone(), sender.clone());
                 let app = app.clone();
                 let this = self.clone();
                 let upstream = upstream.clone();
                 let fid = fid.to_string();
                 let gid = gid.map(str::to_string);
-                tokio::spawn(async move {
+                let url_key_for_cleanup = url_key.clone();
+                let url_for_fetch = url.clone();
+
+                let task: UrlTask = async move {
                     let res: Result<UrlTaskResult, String> = async {
                         let parsed = upstream
                             .fetch_region_configs(&fid, gid.as_deref())
@@ -210,8 +213,8 @@ impl CatalogRefreshManager {
                             &app.db,
                             &fid,
                             gid.as_deref(),
-                            &url_key,
-                            &url,
+                            &url_key_for_cleanup,
+                            &url_for_fetch,
                             parsed,
                         )
                         .await
@@ -234,17 +237,26 @@ impl CatalogRefreshManager {
                     }
                     .await;
 
-                    let _ = sender.send(res);
-                    this.inner.url_tasks.lock().await.remove(&url_key);
-                });
-                rx
+                    // Remove the task before completing, so late joiners don't subscribe to a
+                    // finished sender and observe a spurious "closed" error.
+                    this.inner
+                        .url_tasks
+                        .lock()
+                        .await
+                        .remove(&url_key_for_cleanup);
+                    res
+                }
+                .boxed()
+                .shared();
+
+                tasks.insert(url_key.clone(), task.clone());
+                task
             }
         };
 
-        match rx.recv().await {
-            Ok(Ok(v)) => Ok(v),
-            Ok(Err(msg)) => anyhow::bail!(msg),
-            Err(err) => anyhow::bail!(err.to_string()),
+        match task.await {
+            Ok(v) => Ok(v),
+            Err(msg) => anyhow::bail!(msg),
         }
     }
 }
