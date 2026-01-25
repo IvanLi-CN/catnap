@@ -49,3 +49,4 @@
 | 0007 | CI/CD：修复 Release job 失败（Determine release version/tag） | 部分完成（2/3） | `0007:release-job-unblock/PLAN.md` | 2026-01-24 | root cause：step 内运行 `compute-version.sh` 但变量未在同一 shell 可见（`set -u` unbound）；补齐：支持 `push tag` 路径；review：避免 bot tag push 重复 release + path-gate 误判；tag 校验收紧为 `v<semver>` |
 | 0008 | 系统设置：通知测试按钮（Telegram + Web Push） | 待实现 | `0008:settings-notifications-test-button/PLAN.md` | 2026-01-23 | Telegram：可用已保存配置或临时覆盖（不保存）；Web Push：补齐发送链路（VAPID private/subject）用于测试 |
 | 0009 | 全量刷新：SSE 进度 + 缓存复用 + 配置上下架 | 待实现 | `0009:catalog-full-refresh-sse/PLAN.md` | 2026-01-24 | 全局调度=最小间隔；缺失一次即下架；监控页展示最近 24h 上架（含重新上架） |
+| 0010 | 配置卡片：国家国旗水印背景 | 待实现 | `0010:card-country-flag-watermark/PLAN.md` | 2026-01-25 | 组件设计图已确认（`docs/ui/cards.svg`） |

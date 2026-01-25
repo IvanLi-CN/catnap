@@ -1,0 +1,155 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900">
+  <!-- Plan-only: derived from `docs/ui/inventory-monitor.svg`, with watermark overlays inserted -->
+  <defs>
+    <linearGradient id="sparkFill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="rgba(73, 194, 255, 0.45)"/>
+      <stop offset="1" stop-color="rgba(73, 194, 255, 0.00)"/>
+    </linearGradient>
+
+    <style>
+      .bg { fill: #0b1220; }
+      .surface { fill: #0f1b33; stroke: none; }
+      .surface2 { fill: #0c172e; stroke: none; }
+      .line { stroke: rgba(27, 42, 74, 0.55); stroke-width: 1; }
+      .title { fill: #ffffff; font: 22px Inter, Arial, sans-serif; font-weight: 800; }
+      .h2 { fill: #e6eefc; font: 16px Inter, Arial, sans-serif; font-weight: 800; }
+      .text { fill: #e6eefc; font: 14px Inter, Arial, sans-serif; }
+      .muted { fill: #9bb0d0; font: 14px Inter, Arial, sans-serif; }
+
+      .navLabel { fill: #cfe0ff; font: 14px Inter, Arial, sans-serif; font-weight: 650; }
+      .navLabelActive { fill: #ffffff; font: 14px Inter, Arial, sans-serif; font-weight: 850; }
+      .navAccent { fill: #2a8a55; }
+
+      .pill { fill: rgba(16, 31, 58, 0.62); stroke: rgba(27, 42, 74, 0.45); stroke-width: 1; }
+      .pillOn { fill: rgba(23, 52, 40, 0.62); stroke: rgba(42, 138, 85, 0.75); stroke-width: 1; }
+      .badgeText { fill: #e6eefc; font: 12px Inter, Arial, sans-serif; font-weight: 700; }
+
+      /* Trend background (no extra layout space; clipped to card) */
+      .trendGrid { stroke: rgba(27, 42, 74, 0.22); stroke-width: 1; }
+      .sparkArea { fill: url(#sparkFill); }
+      .sparkLine { stroke: rgba(73, 194, 255, 0.75); stroke-width: 2.5; fill: none; }
+
+      /* Plan-only legend */
+      .legend { fill: #9bb0d0; font: 12px Inter, Arial, sans-serif; }
+    </style>
+
+    <clipPath id="clipCardA">
+      <rect x="336" y="240" width="504" height="160" rx="14"/>
+    </clipPath>
+    <clipPath id="clipCardB">
+      <rect x="864" y="240" width="504" height="160" rx="14"/>
+    </clipPath>
+
+    <!-- Iconify: flagpack:us (viewBox 0 0 32 24) -->
+    <symbol id="flagpack-us" viewBox="0 0 32 24">
+      <g fill="none">
+        <path fill="#f7fcff" fill-rule="evenodd" d="M0 0h32v24H0z" clip-rule="evenodd"/>
+        <path fill="#e31d1c" fill-rule="evenodd" d="M0 14.667v2h32v-2zm0 3.666v2h32v-2zm0-11v2h32v-2zM0 22v2h32v-2zm0-11v2h32v-2zM0 0v2h32V0zm0 3.667v2h32v-2z" clip-rule="evenodd"/>
+        <path fill="#2e42a5" d="M0 0h20v13H0z"/>
+        <path fill="#f7fcff" fill-rule="evenodd" d="m1.722 2.939l-.726.509l.245-.906l-.645-.574h.843l.282-.74l.331.74h.718l-.564.574l.218.906zm4 0l-.726.509l.245-.906l-.644-.574h.842l.282-.74l.331.74h.718l-.564.574l.218.906zm3.274.509l.726-.51l.702.51l-.218-.906l.564-.574h-.718l-.331-.74l-.282.74h-.842l.644.574zm4.726-.51l-.726.51l.245-.906l-.644-.574h.842l.282-.74l.331.74h.718l-.564.574l.218.906zM.996 7.449l.726-.51l.702.51l-.218-.906l.564-.574h-.718l-.331-.74l-.282.74H.596l.645.574zm4.726-.51l-.726.51l.245-.906l-.644-.574h.842l.282-.74l.331.74h.718l-.564.574l.218.906zm3.274.51l.726-.51l.702.51l-.218-.906l.564-.574h-.718l-.331-.74l-.282.74h-.842l.644.574zm4.726-.51l-.726.51l.245-.906l-.644-.574h.842l.282-.74l.331.74h.718l-.564.574l.218.906zM.996 11.449l.726-.51l.702.51l-.218-.906l.564-.574h-.718l-.331-.74l-.282.74H.596l.645.574zm4.726-.51l-.726.51l.245-.906l-.644-.574h.842l.282-.74l.331.74h.718l-.564.574l.218.906zm3.274.51l.726-.51l.702.51l-.218-.906l.564-.574h-.718l-.331-.74l-.282.74h-.842l.644.574zm4.726-.51l-.726.51l.245-.906l-.644-.574h.842l.282-.74l.331.74h.718l-.564.574l.218.906zm3.274-7.49l.726-.51l.702.51l-.218-.906l.564-.574h-.718l-.331-.74l-.282.74h-.843l.645.574zm.726 3.49l-.726.51l.245-.906l-.645-.574h.843l.282-.74l.331.74h.718l-.564.574l.218.906zm-.726 4.51l.726-.51l.702.51l-.218-.906l.564-.574h-.718l-.331-.74l-.282.74h-.843l.645.574zM3.722 4.938l-.726.51l.245-.906l-.645-.574h.843l.282-.74l.331.74h.718l-.564.574l.218.906zm3.274.51l.726-.51l.702.51l-.218-.906l.564-.574h-.718l-.331-.74l-.282.74h-.843l.645.574zm4.726-.51l-.726.51l.245-.906l-.644-.574h.842l.282-.74l.331.74h.718l-.564.574l.218.906zm-8.726 4.51l.726-.51l.702.51l-.218-.906l.564-.574h-.718l-.331-.74l-.282.74h-.843l.645.574zm4.726-.51l-.726.51l.245-.906l-.644-.574h.842l.282-.74l.331.74h.718l-.564.574l.218.906zm3.274.51l.726-.51l.702.51l-.218-.906l.564-.574h-.718l-.331-.74l-.282.74h-.842l.644.574zm4.726-4.51l-.726.51l.245-.906l-.644-.574h.842l.282-.74l.331.74h.718l-.564.574l.218.906zm-.726 4.51l.726-.51l.702.51l-.218-.906l.564-.574h-.718l-.331-.74l-.282.74h-.842l.644.574z" clip-rule="evenodd"/>
+      </g>
+    </symbol>
+
+    <!-- Watermark mask: final alpha top-left 0.4 -> bottom-right 0 (applied over the icon region only) -->
+    <linearGradient id="wmMonA" gradientUnits="userSpaceOnUse" x1="336" y1="240" x2="528" y2="384">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.4"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <mask id="maskMonA" maskUnits="userSpaceOnUse" x="336" y="240" width="192" height="144" style="mask-type:alpha">
+      <rect x="336" y="240" width="192" height="144" fill="url(#wmMonA)"/>
+    </mask>
+
+    <linearGradient id="wmMonB" gradientUnits="userSpaceOnUse" x1="864" y1="240" x2="1056" y2="384">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.4"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <mask id="maskMonB" maskUnits="userSpaceOnUse" x="864" y="240" width="192" height="144" style="mask-type:alpha">
+      <rect x="864" y="240" width="192" height="144" fill="url(#wmMonB)"/>
+    </mask>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1440" height="900"/>
+
+  <!-- Top bar -->
+  <rect class="surface" x="24" y="24" width="1392" height="64" rx="14"/>
+  <text class="title" x="48" y="58">Catnap • 库存监控</text>
+  <rect class="pill" x="1056" y="40" width="168" height="32" rx="10"/>
+  <text class="badgeText" x="1140" y="61" text-anchor="middle">最近刷新：刚刚</text>
+  <rect class="pill" x="1264" y="40" width="96" height="32" rx="10"/>
+  <text class="badgeText" x="1312" y="61" text-anchor="middle">重新同步</text>
+
+  <!-- Left nav -->
+  <rect class="surface" x="24" y="112" width="240" height="764" rx="14"/>
+  <text class="h2" x="48" y="148">导航</text>
+  <rect class="navAccent" x="40" y="176" width="4" height="24" rx="2"/>
+  <text class="navLabelActive" x="56" y="194">库存监控</text>
+  <text class="navLabel" x="56" y="234">全部产品</text>
+  <text class="navLabel" x="56" y="274">系统设置</text>
+  <text class="navLabel" x="56" y="314">日志</text>
+
+  <!-- Main -->
+  <rect class="surface" x="288" y="112" width="1128" height="764" rx="14"/>
+
+  <!-- Block A: region expanded -->
+  <rect class="surface2" x="312" y="136" width="1080" height="288" rx="14"/>
+  <text class="h2" x="336" y="172">美国 / 弗里蒙特</text>
+  <text class="muted" x="336" y="196">2 个配置 • 展开 • 补货 2 台 • 余 5 台（最近 1 小时前）</text>
+  <rect class="pill" x="1264" y="160" width="72" height="32" rx="10"/>
+  <text class="badgeText" x="1300" y="181" text-anchor="middle">折叠</text>
+  <line class="line" x1="312" y1="216" x2="1392" y2="216"/>
+
+  <!-- Cards -->
+  <rect class="surface" x="336" y="240" width="504" height="160" rx="14"/>
+  <!-- Watermark (US flag) -->
+  <g clip-path="url(#clipCardA)">
+    <g mask="url(#maskMonA)">
+      <use href="#flagpack-us" x="336" y="240" width="192" height="144"/>
+    </g>
+  </g>
+  <!-- Trend background -->
+  <g clip-path="url(#clipCardA)" opacity="0.18">
+    <path class="trendGrid" d="M336 272H840"/>
+    <path class="trendGrid" d="M336 304H840"/>
+    <path class="trendGrid" d="M336 336H840"/>
+    <path class="trendGrid" d="M336 368H840"/>
+    <path class="sparkArea" d="M348 388H420V380H520V388H640V356H720V372H828V392H348Z"/>
+    <path class="sparkLine" d="M348 388H420V380H520V388H640V356H720V372H828"/>
+  </g>
+  <text class="h2" x="360" y="272">弗里蒙特 1号</text>
+  <text class="muted" x="360" y="296">CPU 1核 • RAM 256M</text>
+  <text class="text" x="360" y="320">¥ 1.00 / 月</text>
+  <rect class="pillOn" x="360" y="352" width="96" height="32" rx="10"/>
+  <text class="badgeText" x="408" y="373" text-anchor="middle">库存 4</text>
+  <rect class="pill" x="472" y="352" width="128" height="32" rx="10"/>
+  <text class="badgeText" x="536" y="373" text-anchor="middle">更新：刚刚</text>
+
+  <rect class="surface" x="864" y="240" width="504" height="160" rx="14"/>
+  <!-- Watermark (US flag) -->
+  <g clip-path="url(#clipCardB)">
+    <g mask="url(#maskMonB)">
+      <use href="#flagpack-us" x="864" y="240" width="192" height="144"/>
+    </g>
+  </g>
+  <!-- Trend background -->
+  <g clip-path="url(#clipCardB)" opacity="0.18">
+    <path class="trendGrid" d="M864 272H1368"/>
+    <path class="trendGrid" d="M864 304H1368"/>
+    <path class="trendGrid" d="M864 336H1368"/>
+    <path class="trendGrid" d="M864 368H1368"/>
+    <path class="sparkArea" d="M876 388H980V388H1120V372H1240V388H1356V392H876Z"/>
+    <path class="sparkLine" d="M876 388H980V388H1120V372H1240V388H1356"/>
+  </g>
+  <text class="h2" x="888" y="272">弗里蒙特 2号</text>
+  <text class="muted" x="888" y="296">CPU 1核 • RAM 512M</text>
+  <text class="text" x="888" y="320">¥ 1.50 / 月</text>
+  <rect class="pillOn" x="888" y="352" width="96" height="32" rx="10"/>
+  <text class="badgeText" x="936" y="373" text-anchor="middle">库存 1</text>
+  <rect class="pill" x="1000" y="352" width="144" height="32" rx="10"/>
+  <text class="badgeText" x="1072" y="373" text-anchor="middle">更新：1 分钟前</text>
+
+  <!-- Legend (plan-only quant) -->
+  <text class="legend" x="336" y="612">国旗水印：top-left alpha=0.4 → bottom-right alpha=0（仅在 icon 区域渐变；贴边 offset=0）</text>
+  <rect x="336" y="624" width="220" height="10" fill="url(#wmMonA)"/>
+  <text class="legend" x="336" y="648">0.4</text>
+  <text class="legend" x="548" y="648" text-anchor="end">0</text>
+</svg>
