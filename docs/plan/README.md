@@ -50,3 +50,4 @@
 | 0008 | 系统设置：通知测试按钮（Telegram + Web Push） | 待实现 | `0008:settings-notifications-test-button/PLAN.md` | 2026-01-23 | Telegram：可用已保存配置或临时覆盖（不保存）；Web Push：补齐发送链路（VAPID private/subject）用于测试 |
 | 0009 | 全量刷新：SSE 进度 + 缓存复用 + 配置上下架 | 待实现 | `0009:catalog-full-refresh-sse/PLAN.md` | 2026-01-24 | 全局调度=最小间隔；缺失一次即下架；监控页展示最近 24h 上架（含重新上架） |
 | 0010 | 配置卡片：国家国旗水印背景 | 待实现 | `0010:card-country-flag-watermark/PLAN.md` | 2026-01-25 | 组件设计图已确认（`docs/ui/cards.svg`） |
+| 0011 | 采集观测台：全局采集队列 + SSE 日志订阅 | 待实现 | `0011:ops-collection-dashboard/PLAN.md` | 2026-01-25 | SSE 断线续传（1h）+ 7d 留存 + range=24h/7d/30d |
