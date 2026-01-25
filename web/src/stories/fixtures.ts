@@ -27,6 +27,18 @@ function inv(quantity: number, checkedAtIso: string, status?: Config["inventory"
 
 const fetchedAt = new Date(demoNowMs - 1000 * 35).toISOString();
 
+function life(
+  state: Config["lifecycle"]["state"] = "active",
+  listedAtIso: string = fetchedAt,
+  delistedAtIso?: string | null,
+): Config["lifecycle"] {
+  return {
+    state,
+    listedAt: listedAtIso,
+    delistedAt: delistedAtIso ?? null,
+  };
+}
+
 export const demoConfigs: Config[] = [
   {
     id: "cfg-cloud-1",
@@ -41,6 +53,7 @@ export const demoConfigs: Config[] = [
     price: money(9.9, "USD"),
     inventory: inv(999, fetchedAt),
     digest: "demo",
+    lifecycle: life("active"),
     monitorSupported: false,
     monitorEnabled: false,
   },
@@ -58,6 +71,7 @@ export const demoConfigs: Config[] = [
     price: money(19.9, "USD"),
     inventory: inv(3, new Date(demoNowMs - 1000 * 60 * 2).toISOString()),
     digest: "demo",
+    lifecycle: life("active"),
     monitorSupported: true,
     monitorEnabled: true,
   },
@@ -75,6 +89,7 @@ export const demoConfigs: Config[] = [
     price: money(14.9, "USD"),
     inventory: inv(12, new Date(demoNowMs - 1000 * 60 * 4).toISOString()),
     digest: "demo",
+    lifecycle: life("active"),
     monitorSupported: true,
     monitorEnabled: false,
   },
@@ -92,6 +107,7 @@ export const demoConfigs: Config[] = [
     price: money(29.9, "USD"),
     inventory: inv(0, new Date(demoNowMs - 1000 * 60 * 8).toISOString()),
     digest: "demo",
+    lifecycle: life("delisted", fetchedAt, new Date(demoNowMs - 1000 * 60 * 30).toISOString()),
     monitorSupported: true,
     monitorEnabled: false,
   },
@@ -108,6 +124,7 @@ export const demoConfigs: Config[] = [
     price: money(39.9, "USD"),
     inventory: inv(0, new Date(demoNowMs - 1000 * 60 * 6).toISOString()),
     digest: "demo",
+    lifecycle: life("active"),
     monitorSupported: true,
     monitorEnabled: false,
   },
@@ -125,6 +142,7 @@ export const demoConfigs: Config[] = [
     price: money(17.9, "USD"),
     inventory: inv(5, new Date(demoNowMs - 1000 * 60 * 3).toISOString()),
     digest: "demo",
+    lifecycle: life("active"),
     monitorSupported: true,
     monitorEnabled: false,
   },
@@ -142,6 +160,7 @@ export const demoConfigs: Config[] = [
     price: money(24.9, "USD"),
     inventory: inv(0, new Date(demoNowMs - 1000 * 60 * 11).toISOString()),
     digest: "demo",
+    lifecycle: life("active"),
     monitorSupported: true,
     monitorEnabled: false,
   },
@@ -158,6 +177,7 @@ export const demoConfigs: Config[] = [
     price: money(79.0, "USD"),
     inventory: inv(0, new Date(demoNowMs - 1000 * 60 * 25).toISOString(), "unknown"),
     digest: "demo",
+    lifecycle: life("active"),
     monitorSupported: true,
     monitorEnabled: true,
   },
@@ -179,6 +199,8 @@ export const demoBootstrap: BootstrapResponse = {
   settings: {
     poll: { intervalMinutes: 1, jitterPct: 0.2 },
     siteBaseUrl: "https://lazycats.vip",
+    catalogRefresh: { autoIntervalHours: 6 },
+    monitoringEvents: { listedEnabled: true, delistedEnabled: true },
     notifications: {
       telegram: { enabled: true, configured: true, target: "@catnap" },
       webPush: { enabled: false, vapidPublicKey: "demo-vapid-public-key" },

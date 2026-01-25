@@ -597,6 +597,15 @@ select {
   opacity: 0.95;
 }
 
+.pill.num {
+  padding-right: 8px;
+}
+
+.pill.num input[type="number"] {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
 .pill select,
 .pill input {
   width: 100%;
@@ -755,6 +764,16 @@ select {
 .mon-title {
   font-size: 16px;
   font-weight: 800;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cfg-title .title-text,
+.mon-title .title-text {
+  min-width: 0;
+  flex: 1 1 auto;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

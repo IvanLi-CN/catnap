@@ -4,17 +4,16 @@
 
 ## 界面清单（无重复，最新）
 
-- `inventory-monitor.svg`：库存监控（来源：`#0004`）
-- `products.svg`：全部产品（来源：`#0004`）
-- `settings.svg`：系统设置（来源：`#0001`）
+- `inventory-monitor.svg`：库存监控（来源：`#0009`）
+- `products.svg`：全部产品（来源：`#0009`）
+- `settings.svg`：系统设置（来源：`#0009`）
 - `logs.svg`：日志（来源：`#0001`）
 - `unauthorized-401.svg`：401 未授权页（来源：`#0001`）
 
 ## 来源映射（仅用于追溯）
 
-- `inventory-monitor.svg` ← `docs/plan/0004:inventory-history-trend/ui/inventory-monitor-with-trend.svg`
-- `products.svg` ← `docs/plan/0004:inventory-history-trend/ui/products-with-trend.svg`
-- `settings.svg` ← `docs/plan/0001:lazycats-cart-inventory-monitor/ui/settings.svg`
+- `inventory-monitor.svg` ← `docs/plan/0009:catalog-full-refresh-sse/ui/inventory-monitor.svg`
+- `products.svg` ← `docs/plan/0009:catalog-full-refresh-sse/ui/products.svg`
+- `settings.svg` ← `docs/plan/0009:catalog-full-refresh-sse/ui/settings.svg`
 - `logs.svg` ← `docs/plan/0001:lazycats-cart-inventory-monitor/ui/logs.svg`
 - `unauthorized-401.svg` ← `docs/plan/0001:lazycats-cart-inventory-monitor/ui/unauthorized-401.svg`
-
