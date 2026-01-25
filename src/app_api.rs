@@ -6,17 +6,21 @@ use axum::{
     extract::{Path, Query, State},
     http::{header, Request, StatusCode},
     middleware::Next,
+    response::sse::{Event, KeepAlive, Sse},
     response::{IntoResponse, Response},
     routing::{get, patch, post},
     Json, Router,
 };
+use futures_util::stream;
+use futures_util::StreamExt;
 use serde::Deserialize;
+use sqlx::Row;
 use std::collections::{HashMap, HashSet};
+use std::convert::Infallible;
 use std::net::IpAddr;
+use std::time::Duration;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use tracing::warn;
-
-type RefreshTask = ((String, Option<String>), Vec<String>);
 
 pub fn router(state: AppState) -> Router {
     Router::new()
@@ -24,6 +28,8 @@ pub fn router(state: AppState) -> Router {
         .route("/bootstrap", get(get_bootstrap))
         .route("/products", get(get_products))
         .route("/inventory/history", post(post_inventory_history))
+        .route("/catalog/refresh", post(post_catalog_refresh))
+        .route("/catalog/refresh/events", get(get_catalog_refresh_events))
         .route("/refresh", post(post_refresh))
         .route("/refresh/status", get(get_refresh_status))
         .route("/monitoring", get(get_monitoring))
@@ -173,218 +179,102 @@ fn json_internal_error_with_message(
     )
 }
 
-fn parse_lc_region(id: &str) -> Option<(String, Option<String>)> {
-    let mut it = id.split(':');
-    if it.next()? != "lc" {
-        return None;
-    }
-    let fid = it.next()?.to_string();
-    let gid = it.next()?;
-    let gid = if gid == "0" {
-        None
-    } else {
-        Some(gid.to_string())
+fn legacy_refresh_status_from_catalog(st: &CatalogRefreshStatus) -> RefreshStatusResponse {
+    let state = match st.state.as_str() {
+        "running" => "syncing",
+        "success" => "success",
+        "error" => "error",
+        _ => "idle",
     };
-    Some((fid, gid))
+    RefreshStatusResponse {
+        state: state.to_string(),
+        done: st.done,
+        total: st.total,
+        message: st.message.clone(),
+    }
 }
 
-fn refresh_status_idle() -> RefreshStatusResponse {
-    RefreshStatusResponse {
-        state: "idle".to_string(),
-        done: 0,
-        total: 0,
-        message: None,
+async fn post_catalog_refresh(
+    State(state): State<AppState>,
+    user: axum::extract::Extension<UserView>,
+) -> Result<Json<CatalogRefreshStatus>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = user.0.id.clone();
+    match state
+        .catalog_refresh
+        .trigger(
+            state.clone(),
+            crate::catalog_refresh::RefreshTrigger::Manual,
+            Some(&user_id),
+        )
+        .await
+    {
+        Ok(st) => Ok(Json(st)),
+        Err(crate::catalog_refresh::TriggerError::RateLimited) => Err(json_rate_limited()),
+        Err(crate::catalog_refresh::TriggerError::Internal(_)) => Err(json_internal_error()),
     }
+}
+
+async fn get_catalog_refresh_events(
+    State(state): State<AppState>,
+    _user: axum::extract::Extension<UserView>,
+) -> Sse<impl futures_util::stream::Stream<Item = Result<Event, Infallible>>> {
+    let initial = state.catalog_refresh.status().await;
+    let rx = state.catalog_refresh.subscribe();
+
+    let initial_stream = stream::once(async move {
+        let data = serde_json::to_string(&initial).unwrap_or_else(|_| "{}".to_string());
+        Ok::<_, Infallible>(Event::default().event("catalog.refresh").data(data))
+    });
+
+    let updates_stream = stream::unfold(rx, |mut rx| async {
+        loop {
+            match rx.recv().await {
+                Ok(st) => {
+                    let data = serde_json::to_string(&st).unwrap_or_else(|_| "{}".to_string());
+                    return Some((Ok(Event::default().event("catalog.refresh").data(data)), rx));
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
+            }
+        }
+    });
+
+    Sse::new(initial_stream.chain(updates_stream)).keep_alive(
+        KeepAlive::new()
+            .interval(Duration::from_secs(15))
+            .text("keep-alive"),
+    )
 }
 
 async fn get_refresh_status(
     State(state): State<AppState>,
-    user: axum::extract::Extension<UserView>,
+    _user: axum::extract::Extension<UserView>,
 ) -> Result<Json<RefreshStatusResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = user.0.id.clone();
-    let status = state
-        .manual_refresh_status
-        .lock()
-        .await
-        .get(&user_id)
-        .cloned()
-        .unwrap_or_else(refresh_status_idle);
-    Ok(Json(status))
+    Ok(Json(legacy_refresh_status_from_catalog(
+        &state.catalog_refresh.status().await,
+    )))
 }
 
 async fn post_refresh(
     State(state): State<AppState>,
     user: axum::extract::Extension<UserView>,
 ) -> Result<Json<RefreshStatusResponse>, (StatusCode, Json<ErrorResponse>)> {
-    const MIN_INTERVAL_SECONDS: i64 = 30;
-
     let user_id = user.0.id.clone();
-    let now = OffsetDateTime::now_utc();
-
+    let st = match state
+        .catalog_refresh
+        .trigger(
+            state.clone(),
+            crate::catalog_refresh::RefreshTrigger::Manual,
+            Some(&user_id),
+        )
+        .await
     {
-        let existing = state
-            .manual_refresh_status
-            .lock()
-            .await
-            .get(&user_id)
-            .cloned();
-        if let Some(st) = existing {
-            if st.state == "syncing" {
-                return Ok(Json(st));
-            }
-        }
-    }
-
-    {
-        let mut gate = state.manual_refresh_gate.lock().await;
-        if let Some(last) = gate.get(&user_id) {
-            if now - *last < time::Duration::seconds(MIN_INTERVAL_SECONDS) {
-                return Err(json_rate_limited());
-            }
-        }
-        gate.insert(user_id.clone(), now);
-    }
-
-    let enabled = db::list_enabled_monitoring_config_ids(&state.db, &user_id)
-        .await
-        .map_err(|_| json_invalid_argument())?;
-
-    let mut full_catalog = enabled.is_empty();
-    let mut tasks: Vec<RefreshTask> = Vec::new();
-    if !enabled.is_empty() {
-        let mut by_region: HashMap<(String, Option<String>), Vec<String>> = HashMap::new();
-        for id in enabled.iter() {
-            let Some((fid, gid)) = parse_lc_region(id) else {
-                continue;
-            };
-            by_region.entry((fid, gid)).or_default().push(id.clone());
-        }
-        tasks = by_region.into_iter().collect::<Vec<_>>();
-        tasks.sort_by(|a, b| {
-            let (a_fid, a_gid) = &a.0;
-            let (b_fid, b_gid) = &b.0;
-            (a_fid, a_gid.as_deref().unwrap_or("")).cmp(&(b_fid, b_gid.as_deref().unwrap_or("")))
-        });
-        if tasks.is_empty() {
-            full_catalog = true;
-        }
-    }
-
-    let total = if full_catalog {
-        1
-    } else {
-        tasks.len().max(1) as i64
-    };
-    let syncing = RefreshStatusResponse {
-        state: "syncing".to_string(),
-        done: 0,
-        total,
-        message: None,
+        Ok(st) => st,
+        Err(crate::catalog_refresh::TriggerError::RateLimited) => return Err(json_rate_limited()),
+        Err(crate::catalog_refresh::TriggerError::Internal(_)) => return Err(json_internal_error()),
     };
 
-    state
-        .manual_refresh_status
-        .lock()
-        .await
-        .insert(user_id.clone(), syncing.clone());
-
-    tokio::spawn({
-        let state = state.clone();
-        let user_id = user_id.clone();
-        let enabled = enabled.clone();
-        async move {
-            run_refresh_job(state, &user_id, &enabled, full_catalog, tasks).await;
-        }
-    });
-
-    Ok(Json(syncing))
-}
-
-async fn run_refresh_job(
-    state: AppState,
-    user_id: &str,
-    _enabled: &[String],
-    full_catalog: bool,
-    tasks: Vec<RefreshTask>,
-) {
-    let total = if full_catalog {
-        1
-    } else {
-        tasks.len().max(1) as i64
-    };
-    let mut done: i64 = 0;
-
-    let res: anyhow::Result<()> = async {
-        let upstream =
-            crate::upstream::UpstreamClient::new(state.config.upstream_cart_url.clone())?;
-
-        if full_catalog {
-            let catalog = upstream.fetch_catalog().await?;
-            db::upsert_catalog_configs(&state.db, &catalog.configs).await?;
-            *state.catalog.write().await = catalog;
-            done = 1;
-            return Ok(());
-        }
-
-        for ((fid, gid), _ids) in tasks.iter() {
-            let parsed = upstream.fetch_region_configs(fid, gid.as_deref()).await?;
-
-            let parsed_map = parsed
-                .into_iter()
-                .map(|c| (c.id.clone(), c))
-                .collect::<HashMap<_, _>>();
-
-            if !parsed_map.is_empty() {
-                let changed = parsed_map.values().cloned().collect::<Vec<_>>();
-                db::upsert_catalog_configs(&state.db, &changed).await?;
-
-                let mut lock = state.catalog.write().await;
-                for c in lock.configs.iter_mut() {
-                    if let Some(new_cfg) = parsed_map.get(&c.id) {
-                        *c = new_cfg.clone();
-                    }
-                }
-                lock.fetched_at = OffsetDateTime::now_utc()
-                    .format(&Rfc3339)
-                    .unwrap_or_else(|_| lock.fetched_at.clone());
-            }
-
-            done += 1;
-            state.manual_refresh_status.lock().await.insert(
-                user_id.to_string(),
-                RefreshStatusResponse {
-                    state: "syncing".to_string(),
-                    done,
-                    total,
-                    message: None,
-                },
-            );
-        }
-
-        Ok(())
-    }
-    .await;
-
-    let next = match res {
-        Ok(()) => RefreshStatusResponse {
-            state: "success".to_string(),
-            done,
-            total,
-            message: None,
-        },
-        Err(_) => RefreshStatusResponse {
-            state: "error".to_string(),
-            done,
-            total,
-            message: Some("上游抓取失败".to_string()),
-        },
-    };
-
-    state
-        .manual_refresh_status
-        .lock()
-        .await
-        .insert(user_id.to_string(), next);
+    Ok(Json(legacy_refresh_status_from_catalog(&st)))
 }
 
 async fn get_bootstrap(
@@ -399,12 +289,11 @@ async fn get_bootstrap(
         .await
         .map_err(|_| json_invalid_argument())?;
 
+    let configs = db::list_catalog_configs_view(&state.db, &user_id, None, None)
+        .await
+        .map_err(|_| json_internal_error())?;
+
     let snapshot = state.catalog.read().await.clone();
-    let configs = snapshot
-        .configs
-        .iter()
-        .map(|c| snapshot.to_view(c, enabled_config_ids.iter().any(|id| id == &c.id)))
-        .collect::<Vec<_>>();
 
     let poll_interval_seconds = settings.poll_interval_minutes * 60;
     let monitoring = MonitoringView {
@@ -448,24 +337,16 @@ async fn get_products(
     user: axum::extract::Extension<UserView>,
     Query(q): Query<ProductsQuery>,
 ) -> Result<Json<ProductsResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let enabled_config_ids = db::list_enabled_monitoring_config_ids(&state.db, &user.0.id)
-        .await
-        .map_err(|_| json_invalid_argument())?;
-    let snapshot = state.catalog.read().await.clone();
+    let configs = db::list_catalog_configs_view(
+        &state.db,
+        &user.0.id,
+        q.country_id.as_deref(),
+        q.region_id.as_deref(),
+    )
+    .await
+    .map_err(|_| json_internal_error())?;
 
-    let configs = snapshot
-        .configs
-        .iter()
-        .filter(|c| {
-            (q.country_id.as_ref().is_none()
-                || q.country_id.as_ref().is_some_and(|id| &c.country_id == id))
-                && (q.region_id.as_ref().is_none()
-                    || q.region_id
-                        .as_ref()
-                        .is_some_and(|id| c.region_id.as_ref() == Some(id)))
-        })
-        .map(|c| snapshot.to_view(c, enabled_config_ids.iter().any(|id| id == &c.id)))
-        .collect::<Vec<_>>();
+    let snapshot = state.catalog.read().await.clone();
 
     Ok(Json(ProductsResponse {
         configs,
@@ -549,22 +430,18 @@ async fn get_monitoring(
     State(state): State<AppState>,
     user: axum::extract::Extension<UserView>,
 ) -> Result<Json<MonitoringListResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let enabled = db::list_enabled_monitoring_config_ids(&state.db, &user.0.id)
+    let items = db::list_monitoring_configs_view(&state.db, &user.0.id)
         .await
-        .map_err(|_| json_invalid_argument())?;
-    let enabled_set: std::collections::HashSet<_> = enabled.into_iter().collect();
+        .map_err(|_| json_internal_error())?;
+    let recent_listed24h = db::list_recent_listed_24h_view(&state.db, &user.0.id)
+        .await
+        .map_err(|_| json_internal_error())?;
 
     let snapshot = state.catalog.read().await.clone();
-    let items = snapshot
-        .configs
-        .iter()
-        .filter(|c| enabled_set.contains(&c.id))
-        .map(|c| snapshot.to_view(c, true))
-        .collect::<Vec<_>>();
-
     Ok(Json(MonitoringListResponse {
         items,
         fetched_at: snapshot.fetched_at,
+        recent_listed24h,
     }))
 }
 
@@ -574,14 +451,18 @@ async fn patch_monitoring_config(
     Path(config_id): Path<String>,
     Json(req): Json<MonitoringToggleRequest>,
 ) -> Result<Json<MonitoringToggleResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let snapshot = state.catalog.read().await;
-    let Some(config) = snapshot.configs.iter().find(|c| c.id == config_id) else {
+    let row = sqlx::query("SELECT country_id FROM catalog_configs WHERE id = ?")
+        .bind(&config_id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|_| json_internal_error())?;
+    let Some(row) = row else {
         return Err(json_invalid_argument());
     };
-    if !config.monitor_supported {
+    let country_id = row.get::<String, _>(0);
+    if country_id.trim() == "2" {
         return Err(json_invalid_argument());
     }
-    drop(snapshot);
 
     db::set_monitoring_config_enabled(&state.db, &user.0.id, &config_id, req.enabled)
         .await
@@ -612,6 +493,15 @@ async fn put_settings(
 ) -> Result<Json<SettingsView>, (StatusCode, Json<ErrorResponse>)> {
     if req.poll.interval_minutes < 1 || !(0.0..=1.0).contains(&req.poll.jitter_pct) {
         return Err(json_invalid_argument());
+    }
+    if let Some(ref cr) = req.catalog_refresh {
+        if let Some(hours) = cr.auto_interval_hours {
+            if !(1..=24 * 30).contains(&hours) {
+                return Err(json_invalid_argument_with_message(
+                    "自动全量刷新间隔（小时）必须在 1..=720，或设为 null 关闭",
+                ));
+            }
+        }
     }
 
     let settings = db::update_settings(&state.db, &user.0.id, req)

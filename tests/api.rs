@@ -6,12 +6,9 @@ use catnap::{build_app, AppState, RuntimeConfig};
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::Row;
 use sqlx::SqlitePool;
-use std::{
-    collections::HashMap,
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
 };
 use time::OffsetDateTime;
 use tower::ServiceExt;
@@ -82,13 +79,7 @@ async fn make_app_with_config(cfg: RuntimeConfig) -> TestApp {
         config: cfg,
         db: db.clone(),
         catalog: std::sync::Arc::new(tokio::sync::RwLock::new(snapshot)),
-        manual_refresh_gate: Arc::new(tokio::sync::Mutex::new(
-            HashMap::<String, OffsetDateTime>::new(),
-        )),
-        manual_refresh_status: Arc::new(tokio::sync::Mutex::new(HashMap::<
-            String,
-            catnap::models::RefreshStatusResponse,
-        >::new())),
+        catalog_refresh: catnap::catalog_refresh::CatalogRefreshManager::new(),
     };
 
     TestApp {

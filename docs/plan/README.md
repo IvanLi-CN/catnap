@@ -48,5 +48,5 @@
 | 0006 | CI/CD：GitHub Actions 构建提速（PR：跳过 arm64 + gating + cache） | 已完成 | `0006:github-actions-performance/PLAN.md` | 2026-01-22 | PR ≤ 10 分钟（baseline Actions run `21235535755`）；PR smoke job 输出 timings summary（key steps） |
 | 0007 | CI/CD：修复 Release job 失败（Determine release version/tag） | 已完成 | `0007:release-job-unblock/PLAN.md` | 2026-01-24 | M3 证据：run `21313516531`（main，tag `v0.1.9`）+ `21313516840`（tag `v0.1.8`）；`Determine release version/tag` step 成功 |
 | 0008 | 系统设置：通知测试按钮（Telegram + Web Push） | 已完成 | `0008:settings-notifications-test-button/PLAN.md` | 2026-01-24 | Telegram：可用已保存配置或临时覆盖（不保存）；Web Push：补齐发送链路（VAPID private/subject）用于测试 |
-| 0009 | 全量刷新：SSE 进度 + 缓存复用 + 配置上下架 | 待实现 | `0009:catalog-full-refresh-sse/PLAN.md` | 2026-01-24 | 全局调度=最小间隔；缺失一次即下架；监控页展示最近 24h 上架（含重新上架） |
+| 0009 | 全量刷新：SSE 进度 + 缓存复用 + 配置上下架 | 已完成 | `0009:catalog-full-refresh-sse/PLAN.md` | 2026-01-25 | 全局调度=最小间隔；缺失一次即下架；监控页展示最近 24h 上架（含重新上架） |
 | 0010 | 配置卡片：国家国旗水印背景 | 待实现 | `0010:card-country-flag-watermark/PLAN.md` | 2026-01-25 | 组件设计图已确认（`docs/ui/cards.svg`） |

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "./ui/layout/AppShell";
 import { ThemeMenu } from "./ui/nav/ThemeMenu";
 import "./app.css";
@@ -36,6 +36,12 @@ export type Inventory = {
   checkedAt: string;
 };
 
+export type ConfigLifecycle = {
+  state: "active" | "delisted";
+  listedAt: string;
+  delistedAt?: string | null;
+};
+
 export type Config = {
   id: string;
   countryId: string;
@@ -45,6 +51,7 @@ export type Config = {
   price: Money;
   inventory: Inventory;
   digest: string;
+  lifecycle: ConfigLifecycle;
   monitorSupported: boolean;
   monitorEnabled: boolean;
 };
@@ -52,6 +59,8 @@ export type Config = {
 export type SettingsView = {
   poll: { intervalMinutes: number; jitterPct: number };
   siteBaseUrl: string | null;
+  catalogRefresh: { autoIntervalHours: number | null };
+  monitoringEvents: { listedEnabled: boolean; delistedEnabled: boolean };
   notifications: {
     telegram: { enabled: boolean; configured: boolean; target?: string };
     webPush: { enabled: boolean; vapidPublicKey?: string };
@@ -96,6 +105,29 @@ export type RefreshStatusResponse = {
   done: number;
   total: number;
   message?: string;
+};
+
+export type CatalogRefreshStatus = {
+  jobId: string;
+  state: "idle" | "running" | "success" | "error";
+  trigger: "manual" | "auto";
+  done: number;
+  total: number;
+  message?: string | null;
+  startedAt: string;
+  updatedAt: string;
+  current?: {
+    urlKey: string;
+    url: string;
+    action: "fetch" | "cache";
+    note?: string | null;
+  } | null;
+};
+
+export type MonitoringResponse = {
+  items: Config[];
+  fetchedAt: string;
+  recentListed24h: Config[];
 };
 
 export type LogsResponse = {
@@ -355,11 +387,11 @@ export function App() {
   const [bootstrap, setBootstrap] = useState<BootstrapResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
-  const [syncState, setSyncState] = useState<RefreshStatusResponse["state"]>("idle");
-  const [syncDone, setSyncDone] = useState<number>(0);
-  const [syncTotal, setSyncTotal] = useState<number>(0);
   const [syncAlert, setSyncAlert] = useState<string | null>(null);
+  const [catalogRefresh, setCatalogRefresh] = useState<CatalogRefreshStatus | null>(null);
+  const [recentListed24h, setRecentListed24h] = useState<Config[]>([]);
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
+  const lastTerminalJobIdRef = useRef<string | null>(null);
 
   const applyProductsResponse = useCallback((res: ProductsResponse) => {
     setBootstrap((prev) =>
@@ -439,6 +471,54 @@ export function App() {
       setError(e instanceof Error ? e.message : String(e));
     }
   }, []);
+
+  const refreshMonitoringSilently = useCallback(async () => {
+    try {
+      const res = await api<MonitoringResponse>("/api/monitoring");
+      setRecentListed24h(res.recentListed24h);
+    } catch {
+      // Ignore monitoring refresh errors.
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!hasBootstrap) return;
+    if (route !== "monitoring") return;
+    void refreshMonitoringSilently();
+  }, [hasBootstrap, refreshMonitoringSilently, route]);
+
+  useEffect(() => {
+    if (!hasBootstrap) return;
+
+    const es = new EventSource("/api/catalog/refresh/events");
+    const onEvent = (ev: MessageEvent) => {
+      try {
+        const st = JSON.parse(ev.data) as CatalogRefreshStatus;
+        setCatalogRefresh(st);
+        if (st.state === "running") setSyncAlert(null);
+
+        if (st.state === "success" || st.state === "error") {
+          if (lastTerminalJobIdRef.current !== st.jobId) {
+            lastTerminalJobIdRef.current = st.jobId;
+            if (st.state === "success") {
+              void refreshBootstrapSilently();
+              void refreshMonitoringSilently();
+            } else if (st.state === "error") {
+              setSyncAlert(st.message ?? "刷新失败");
+            }
+          }
+        }
+      } catch {
+        // Ignore parse errors.
+      }
+    };
+
+    es.addEventListener("catalog.refresh", onEvent as EventListener);
+    return () => {
+      es.removeEventListener("catalog.refresh", onEvent as EventListener);
+      es.close();
+    };
+  }, [hasBootstrap, refreshBootstrapSilently, refreshMonitoringSilently]);
 
   const catalogCountriesLen = bootstrap?.catalog.countries.length ?? 0;
   const catalogRegionsLen = bootstrap?.catalog.regions.length ?? 0;
@@ -583,84 +663,20 @@ export function App() {
     };
   }, [applyProductsResponse, bootstrap?.monitoring.poll.intervalSeconds]);
 
-  async function reloadBootstrap() {
-    setLoading(true);
-    setError(null);
-    try {
-      const json = await api<BootstrapResponse>("/api/bootstrap");
-      setBootstrap(json);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function startSync() {
-    if (syncState === "syncing") return;
-
+  async function startCatalogRefresh() {
+    if (catalogRefresh?.state === "running") return;
     setSyncAlert(null);
-    setSyncDone(0);
-    setSyncTotal(0);
-    setSyncState("syncing");
-
     try {
-      const st = await api<RefreshStatusResponse>("/api/refresh", {
-        method: "POST",
-      });
-      setSyncDone(st.done);
-      setSyncTotal(st.total);
-      setSyncState(st.state);
-      if (st.state === "error") {
-        setSyncAlert(st.message ?? "同步失败");
-      }
+      const st = await api<CatalogRefreshStatus>("/api/catalog/refresh", { method: "POST" });
+      setCatalogRefresh(st);
     } catch (e) {
-      setSyncState("error");
-      if (e instanceof ApiHttpError && e.status === 405) {
-        setSyncAlert("后端未启用“重新同步”接口（/api/refresh）。请重启后端到最新版本后再试。");
+      if (e instanceof ApiHttpError && e.status === 429) {
+        setSyncAlert("刷新太频繁，请稍后再试。");
       } else {
         setSyncAlert(e instanceof Error ? e.message : String(e));
       }
     }
   }
-
-  useEffect(() => {
-    if (syncState !== "syncing") return;
-
-    let cancelled = false;
-    async function poll() {
-      try {
-        const st = await api<RefreshStatusResponse>("/api/refresh/status");
-        if (cancelled) return;
-        if (st.state === "idle") return;
-
-        setSyncDone(st.done);
-        setSyncTotal(st.total);
-        setSyncState(st.state);
-
-        if (st.state === "success") {
-          await refreshBootstrapSilently();
-        } else if (st.state === "error") {
-          setSyncAlert(st.message ?? "同步失败");
-        }
-      } catch {
-        // Ignore poll errors.
-      }
-    }
-
-    const id = window.setInterval(() => void poll(), 800);
-    void poll();
-    return () => {
-      cancelled = true;
-      window.clearInterval(id);
-    };
-  }, [refreshBootstrapSilently, syncState]);
-
-  useEffect(() => {
-    if (syncState !== "success") return;
-    const id = window.setTimeout(() => setSyncState("idle"), 2000);
-    return () => window.clearTimeout(id);
-  }, [syncState]);
 
   async function toggleMonitoring(configId: string, enabled: boolean) {
     if (!bootstrap) return;
@@ -694,6 +710,8 @@ export function App() {
       body: JSON.stringify({
         poll: next.poll,
         siteBaseUrl: next.siteBaseUrl,
+        catalogRefresh: next.catalogRefresh,
+        monitoringEvents: next.monitoringEvents,
         notifications: {
           telegram: {
             enabled: next.notifications.telegram.enabled,
@@ -737,11 +755,36 @@ export function App() {
     </>
   );
 
+  const isRefreshing = catalogRefresh?.state === "running";
+  const refreshIconClass = isRefreshing
+    ? "sync-icon spin"
+    : catalogRefresh?.state === "error"
+      ? "sync-icon err"
+      : catalogRefresh?.state === "success"
+        ? "sync-icon ok"
+        : "sync-icon";
+  const refreshButtonText = isRefreshing
+    ? `刷新中（${catalogRefresh?.done ?? 0}/${catalogRefresh?.total || "?"}）`
+    : catalogRefresh?.state === "success"
+      ? "已刷新"
+      : catalogRefresh?.state === "error"
+        ? "刷新失败"
+        : "立即刷新";
+
   const actions = (
     <>
+      {isRefreshing ? (
+        <span className="pill">{`全量刷新中（${catalogRefresh?.done ?? 0}/${catalogRefresh?.total || "?"}）`}</span>
+      ) : null}
       {route === "products" ? (
-        <button type="button" className="pill" disabled={loading} onClick={reloadBootstrap}>
-          刷新：手动
+        <button
+          type="button"
+          className="pill"
+          disabled={loading || isRefreshing}
+          title="强制抓取上游并全量刷新（30s 限流）"
+          onClick={() => void startCatalogRefresh()}
+        >
+          {refreshButtonText}
         </button>
       ) : route === "monitoring" ? (
         bootstrap ? (
@@ -752,34 +795,23 @@ export function App() {
             <button
               type="button"
               className="pill"
-              disabled={syncState === "syncing"}
-              title="强制抓取上游并刷新（30s 限流）"
-              onClick={() => void startSync()}
+              disabled={isRefreshing}
+              title="强制抓取上游并全量刷新（30s 限流）"
+              onClick={() => void startCatalogRefresh()}
             >
-              <span
-                className={
-                  syncState === "syncing"
-                    ? "sync-icon spin"
-                    : syncState === "error"
-                      ? "sync-icon err"
-                      : syncState === "success"
-                        ? "sync-icon ok"
-                        : "sync-icon"
-                }
-                aria-hidden="true"
-              >
-                {syncState === "syncing" ? (
+              <span className={refreshIconClass} aria-hidden="true">
+                {isRefreshing ? (
                   <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                     <path
                       fill="currentColor"
                       d="M12 4a8 8 0 0 1 7.9 6.7a1 1 0 1 1-2 .3A6 6 0 1 0 18 12a1 1 0 1 1 2 0a8 8 0 1 1-8-8"
                     />
                   </svg>
-                ) : syncState === "error" ? (
+                ) : catalogRefresh?.state === "error" ? (
                   <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                     <path fill="currentColor" d="M1 21h22L12 2zm12-3h-2v-2h2zm0-4h-2v-4h2z" />
                   </svg>
-                ) : syncState === "success" ? (
+                ) : catalogRefresh?.state === "success" ? (
                   <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                     <path
                       fill="currentColor"
@@ -792,11 +824,7 @@ export function App() {
                   </svg>
                 )}
               </span>
-              {syncState === "syncing"
-                ? `同步中（${syncDone}/${syncTotal || "?"}）`
-                : syncState === "success"
-                  ? "同步完成"
-                  : "重新同步"}
+              {refreshButtonText}
             </button>
           </>
         ) : null
@@ -829,12 +857,8 @@ export function App() {
             regionsById={regionsById}
             nowMs={nowMs}
             syncAlert={syncAlert}
-            onDismissSyncAlert={() => {
-              setSyncAlert(null);
-              setSyncDone(0);
-              setSyncTotal(0);
-              setSyncState("idle");
-            }}
+            recentListed24h={recentListed24h}
+            onDismissSyncAlert={() => setSyncAlert(null)}
           />
         )
       ) : null}
@@ -959,7 +983,10 @@ export function ProductCard({
       <TrendBackground points={historyPoints} window={historyWindow} />
       {capText ? <div className={`cfg-cap ${capTone}`}>{capText}</div> : null}
       <div className="card-content">
-        <div className="cfg-title">{cfg.name}</div>
+        <div className="cfg-title">
+          <span className="title-text">{cfg.name}</span>
+          {cfg.lifecycle.state === "delisted" ? <span className="pill sm err">下架</span> : null}
+        </div>
         {isCloud ? null : (
           <div className="cfg-specs" aria-label="规格">
             {specCells.map((c) =>
@@ -1022,7 +1049,10 @@ export function MonitoringCard({
       <TrendBackground points={historyPoints} window={historyWindow} />
       <div className={`mon-cap ${capTone}`}>{capText}</div>
       <div className="card-content">
-        <div className="mon-title">{cfg.name}</div>
+        <div className="mon-title">
+          <span className="title-text">{cfg.name}</span>
+          {cfg.lifecycle.state === "delisted" ? <span className="pill sm err">下架</span> : null}
+        </div>
         <div className="mon-specs" aria-label="规格">
           {specCells.map((c) =>
             "empty" in c ? (
@@ -1212,6 +1242,7 @@ export function MonitoringView({
   regionsById,
   nowMs,
   syncAlert,
+  recentListed24h,
   onDismissSyncAlert,
 }: {
   bootstrap: BootstrapResponse;
@@ -1219,6 +1250,7 @@ export function MonitoringView({
   regionsById: Map<string, Region>;
   nowMs: number;
   syncAlert: string | null;
+  recentListed24h: Config[];
   onDismissSyncAlert: () => void;
 }) {
   const enabled = useMemo(
@@ -1256,6 +1288,18 @@ export function MonitoringView({
           <button type="button" className="btn btn-ghost btn-sm" onClick={onDismissSyncAlert}>
             ✕
           </button>
+        </div>
+      ) : null}
+      {recentListed24h.length > 0 ? (
+        <div className="panel-section">
+          <div className="panel-title">最近 24 小时上架</div>
+          <div className="panel-subtitle">listed（含重新上架）</div>
+          <div className="divider-bleed" />
+          <div className="grid">
+            {recentListed24h.slice(0, 12).map((cfg) => (
+              <MonitoringCard cfg={cfg} key={cfg.id} nowMs={nowMs} />
+            ))}
+          </div>
         </div>
       ) : null}
       {enabled.length === 0 ? (
@@ -1381,6 +1425,18 @@ export function SettingsViewPanel({
   );
   const [jitterPct, setJitterPct] = useState<number>(bootstrap.settings.poll.jitterPct);
   const [siteBaseUrl, setSiteBaseUrl] = useState<string>(bootstrap.settings.siteBaseUrl ?? "");
+  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState<boolean>(
+    bootstrap.settings.catalogRefresh.autoIntervalHours !== null,
+  );
+  const [autoIntervalHours, setAutoIntervalHours] = useState<number>(
+    bootstrap.settings.catalogRefresh.autoIntervalHours ?? 6,
+  );
+  const [listedEnabled, setListedEnabled] = useState<boolean>(
+    bootstrap.settings.monitoringEvents.listedEnabled,
+  );
+  const [delistedEnabled, setDelistedEnabled] = useState<boolean>(
+    bootstrap.settings.monitoringEvents.delistedEnabled,
+  );
   const [tgEnabled, setTgEnabled] = useState<boolean>(
     bootstrap.settings.notifications.telegram.enabled,
   );
@@ -1407,7 +1463,7 @@ export function SettingsViewPanel({
         <div className="panel-title">轮询（Polling）</div>
         <div className="settings-grid">
           <div>查询频率（分钟）</div>
-          <div className="pill" style={{ width: "120px" }}>
+          <div className="pill num" style={{ width: "120px" }}>
             <input
               type="number"
               min={1}
@@ -1418,7 +1474,7 @@ export function SettingsViewPanel({
           <div className="hint">默认 1；最小 1</div>
 
           <div>抖动比例（0..1）</div>
-          <div className="pill" style={{ width: "120px" }}>
+          <div className="pill num" style={{ width: "120px" }}>
             <input
               type="number"
               min={0}
@@ -1451,6 +1507,58 @@ export function SettingsViewPanel({
           >
             自动填充
           </button>
+        </div>
+      </div>
+
+      <div className="panel-section">
+        <div className="panel-title">全量刷新（Catalog refresh）</div>
+        <div className="panel-subtitle">手动“立即刷新”与系统自动刷新共用</div>
+        <div className="settings-grid">
+          <div>自动全量刷新</div>
+          <button
+            type="button"
+            className={`pill sm center ${autoRefreshEnabled ? "on" : ""}`}
+            style={{ width: "92px" }}
+            onClick={() => setAutoRefreshEnabled((v) => !v)}
+          >
+            {autoRefreshEnabled ? "启用" : "关闭"}
+          </button>
+          <div className="hint">全局间隔取“所有用户启用值”的最小值</div>
+
+          <div>间隔（小时）</div>
+          <div className="pill num" style={{ width: "92px" }}>
+            <input
+              type="number"
+              min={1}
+              max={720}
+              disabled={!autoRefreshEnabled}
+              value={autoIntervalHours}
+              onChange={(e) => setAutoIntervalHours(Number(e.target.value))}
+            />
+          </div>
+          <div className="hint">默认 6；范围 1..720；关闭=设为 null</div>
+
+          <div>上架监控</div>
+          <button
+            type="button"
+            className={`pill sm center ${listedEnabled ? "on" : ""}`}
+            style={{ width: "92px" }}
+            onClick={() => setListedEnabled((v) => !v)}
+          >
+            {listedEnabled ? "启用" : "关闭"}
+          </button>
+          <div className="hint">启用后：上架/重新上架会通知所有启用者</div>
+
+          <div>下架监控</div>
+          <button
+            type="button"
+            className={`pill sm center ${delistedEnabled ? "on" : ""}`}
+            style={{ width: "92px" }}
+            onClick={() => setDelistedEnabled((v) => !v)}
+          >
+            {delistedEnabled ? "启用" : "关闭"}
+          </button>
+          <div className="hint">启用后：下架会通知所有启用者</div>
         </div>
       </div>
 
@@ -1566,6 +1674,10 @@ export function SettingsViewPanel({
                 await onSave({
                   poll: { intervalMinutes, jitterPct },
                   siteBaseUrl: siteBaseUrl.trim() ? siteBaseUrl.trim() : null,
+                  catalogRefresh: {
+                    autoIntervalHours: autoRefreshEnabled ? autoIntervalHours : null,
+                  },
+                  monitoringEvents: { listedEnabled, delistedEnabled },
                   notifications: {
                     telegram: {
                       enabled: tgEnabled,
@@ -1699,6 +1811,10 @@ export function SettingsViewPanel({
                 await onSave({
                   poll: { intervalMinutes, jitterPct },
                   siteBaseUrl: siteBaseUrl.trim() ? siteBaseUrl.trim() : null,
+                  catalogRefresh: {
+                    autoIntervalHours: autoRefreshEnabled ? autoIntervalHours : null,
+                  },
+                  monitoringEvents: { listedEnabled, delistedEnabled },
                   notifications: {
                     telegram: {
                       enabled: tgEnabled,
@@ -1840,7 +1956,7 @@ export function LogsView({ fetchLogs }: LogsViewProps = {}) {
             />
           </div>
 
-          <div className="pill w-144">
+          <div className="pill w-144 num">
             <span className="pill-prefix">limit：</span>
             <input
               type="number"
