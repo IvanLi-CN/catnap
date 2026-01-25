@@ -3,6 +3,7 @@ import type { BootstrapResponse, Config, Country, LogsResponse, Region } from ".
 export const demoNowMs = Date.now();
 
 export const demoCountries: Country[] = [
+  { id: "cloud", name: "云服务器" },
   { id: "jp", name: "日本" },
   { id: "us", name: "美国" },
 ];
@@ -42,8 +43,8 @@ function life(
 export const demoConfigs: Config[] = [
   {
     id: "cfg-cloud-1",
-    countryId: "jp",
-    regionId: "jp-tokyo",
+    countryId: "cloud",
+    regionId: null,
     name: "懒猫云 • 1C/2G",
     specs: [
       { key: "CPU", value: "1C" },

@@ -1,3 +1,25 @@
+import flagAq from "@iconify-icons/flagpack/aq";
+import flagAt from "@iconify-icons/flagpack/at";
+import flagCa from "@iconify-icons/flagpack/ca";
+import flagCh from "@iconify-icons/flagpack/ch";
+import flagDe from "@iconify-icons/flagpack/de";
+import flagFi from "@iconify-icons/flagpack/fi";
+import flagGb from "@iconify-icons/flagpack/gb";
+import flagGl from "@iconify-icons/flagpack/gl";
+import flagHk from "@iconify-icons/flagpack/hk";
+import flagIe from "@iconify-icons/flagpack/ie";
+import flagIn from "@iconify-icons/flagpack/in";
+import flagIs from "@iconify-icons/flagpack/is";
+import flagJp from "@iconify-icons/flagpack/jp";
+import flagKp from "@iconify-icons/flagpack/kp";
+import flagRu from "@iconify-icons/flagpack/ru";
+import flagSg from "@iconify-icons/flagpack/sg";
+import flagTr from "@iconify-icons/flagpack/tr";
+import flagTw from "@iconify-icons/flagpack/tw";
+import flagUa from "@iconify-icons/flagpack/ua";
+import flagUs from "@iconify-icons/flagpack/us";
+import flagVn from "@iconify-icons/flagpack/vn";
+import { Icon } from "@iconify/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "./ui/layout/AppShell";
 import { ThemeMenu } from "./ui/nav/ThemeMenu";
@@ -946,18 +968,80 @@ function buildSpecCells(specs: Spec[], maxCells: number): SpecCell[] {
   return out;
 }
 
+const FLAGPACK_BY_ISO2 = {
+  aq: flagAq,
+  at: flagAt,
+  ca: flagCa,
+  ch: flagCh,
+  de: flagDe,
+  fi: flagFi,
+  gb: flagGb,
+  gl: flagGl,
+  hk: flagHk,
+  ie: flagIe,
+  in: flagIn,
+  is: flagIs,
+  jp: flagJp,
+  kp: flagKp,
+  ru: flagRu,
+  sg: flagSg,
+  tr: flagTr,
+  tw: flagTw,
+  ua: flagUa,
+  us: flagUs,
+  vn: flagVn,
+} as const;
+
+type FlagpackIso2 = keyof typeof FLAGPACK_BY_ISO2;
+
+const COUNTRY_NAME_TO_ISO2: Partial<Record<string, FlagpackIso2>> = {
+  南极洲: "aq",
+  朝鲜: "kp",
+  格陵兰: "gl",
+  新加坡: "sg",
+  日本: "jp",
+  中国台湾: "tw",
+  中国香港: "hk",
+  美国: "us",
+  冰岛: "is",
+  加拿大: "ca",
+  爱尔兰: "ie",
+  奥地利: "at",
+  俄罗斯: "ru",
+  乌克兰: "ua",
+  瑞士: "ch",
+  英国: "gb",
+  德国: "de",
+  芬兰: "fi",
+  印度: "in",
+  土耳其: "tr",
+  越南: "vn",
+};
+
+function resolveCountryFlagWatermarkIcon(countryName: string | null) {
+  if (!countryName) return null;
+  if (countryName.includes("云服务器")) return null;
+
+  const iso2 = COUNTRY_NAME_TO_ISO2[countryName];
+  if (!iso2) return null;
+  return FLAGPACK_BY_ISO2[iso2] ?? null;
+}
+
 export function ProductCard({
   cfg,
+  countriesById,
   onToggle,
   historyWindow = null,
   historyPoints,
 }: {
   cfg: Config;
+  countriesById: Map<string, Country>;
   onToggle: (configId: string, enabled: boolean) => void;
   historyWindow?: InventoryHistoryResponse["window"] | null;
   historyPoints?: InventoryHistoryPoint[];
 }) {
   const isCloud = !cfg.monitorSupported;
+  const flagIcon = resolveCountryFlagWatermarkIcon(countriesById.get(cfg.countryId)?.name ?? null);
   const capTone =
     isCloud || (cfg.inventory.status !== "unknown" && cfg.inventory.quantity > 0) ? "" : "warn";
   const capText = isCloud
@@ -980,6 +1064,11 @@ export function ProductCard({
 
   return (
     <div className={`cfg-card ${isCloud ? "cloud" : "product"}`}>
+      {flagIcon ? (
+        <span className="card-flag-watermark" aria-hidden="true">
+          <Icon className="card-flag-icon" icon={flagIcon} />
+        </span>
+      ) : null}
       <TrendBackground points={historyPoints} window={historyWindow} />
       {capText ? <div className={`cfg-cap ${capTone}`}>{capText}</div> : null}
       <div className="card-content">
@@ -1023,15 +1112,18 @@ export function ProductCard({
 
 export function MonitoringCard({
   cfg,
+  countriesById,
   nowMs,
   historyWindow = null,
   historyPoints,
 }: {
   cfg: Config;
+  countriesById: Map<string, Country>;
   nowMs: number;
   historyWindow?: InventoryHistoryResponse["window"] | null;
   historyPoints?: InventoryHistoryPoint[];
 }) {
+  const flagIcon = resolveCountryFlagWatermarkIcon(countriesById.get(cfg.countryId)?.name ?? null);
   const capTone = cfg.inventory.status === "unknown" || cfg.inventory.quantity === 0 ? "warn" : "";
   const capText =
     cfg.inventory.status === "unknown"
@@ -1046,6 +1138,11 @@ export function MonitoringCard({
   });
   return (
     <div className="mon-card">
+      {flagIcon ? (
+        <span className="card-flag-watermark" aria-hidden="true">
+          <Icon className="card-flag-icon" icon={flagIcon} />
+        </span>
+      ) : null}
       <TrendBackground points={historyPoints} window={historyWindow} />
       <div className={`mon-cap ${capTone}`}>{capText}</div>
       <div className="card-content">
@@ -1222,6 +1319,7 @@ export function ProductsView({
               {items.map((cfg) => (
                 <ProductCard
                   cfg={cfg}
+                  countriesById={countriesById}
                   key={cfg.id}
                   onToggle={onToggle}
                   historyWindow={historyWindow}
@@ -1297,7 +1395,7 @@ export function MonitoringView({
           <div className="divider-bleed" />
           <div className="grid">
             {recentListed24h.slice(0, 12).map((cfg) => (
-              <MonitoringCard cfg={cfg} key={cfg.id} nowMs={nowMs} />
+              <MonitoringCard cfg={cfg} countriesById={countriesById} key={cfg.id} nowMs={nowMs} />
             ))}
           </div>
         </div>
@@ -1317,6 +1415,7 @@ export function MonitoringView({
             collapseKey={`catnap:collapse:${k}`}
             title={`${country} / ${region}`}
             items={items}
+            countriesById={countriesById}
             nowMs={nowMs}
             historyWindow={historyWindow}
             historyById={historyById}
@@ -1338,6 +1437,7 @@ export function MonitoringSection({
   collapseKey,
   title,
   items,
+  countriesById,
   nowMs,
   historyWindow = null,
   historyById = EMPTY_HISTORY_BY_ID,
@@ -1345,6 +1445,7 @@ export function MonitoringSection({
   collapseKey: string;
   title: string;
   items: Config[];
+  countriesById: Map<string, Country>;
   nowMs: number;
   historyWindow?: InventoryHistoryResponse["window"] | null;
   historyById?: Map<string, InventoryHistoryPoint[]>;
@@ -1400,6 +1501,7 @@ export function MonitoringSection({
             {items.map((cfg) => (
               <MonitoringCard
                 cfg={cfg}
+                countriesById={countriesById}
                 key={cfg.id}
                 nowMs={nowMs}
                 historyWindow={historyWindow}

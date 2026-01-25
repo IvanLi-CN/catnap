@@ -1,6 +1,8 @@
 import type { Meta, StoryObj } from "@storybook/react";
 import { MonitoringSection } from "../../App";
-import { demoConfigs, demoNowMs } from "../fixtures";
+import { countriesById, demoConfigs, demoNowMs } from "../fixtures";
+
+const demoCountriesById = countriesById();
 
 const meta = {
   title: "Components/MonitoringSection",
@@ -22,6 +24,7 @@ export const Default: Story = {
     collapseKey: "catnap:storybook:collapse:demo",
     title: "日本 / 东京",
     items: demoConfigs.filter((c) => c.countryId === "jp").slice(0, 3),
+    countriesById: demoCountriesById,
     nowMs: demoNowMs,
   },
 };
