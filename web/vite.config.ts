@@ -20,6 +20,9 @@ const appVersion =
   readRootCargoVersion() ??
   "0.0.0";
 
+const apiProxyUserHeader = process.env.API_PROXY_USER_HEADER ?? "x-user";
+const apiProxyUser = process.env.API_PROXY_USER;
+
 export default defineConfig({
   plugins: [react()],
   define: {
@@ -30,6 +33,13 @@ export default defineConfig({
       "/api": {
         target: process.env.API_PROXY_TARGET ?? "http://localhost:18080",
         changeOrigin: true,
+        ...(apiProxyUser
+          ? {
+              headers: {
+                [apiProxyUserHeader]: apiProxyUser,
+              },
+            }
+          : {}),
       },
     },
   },
