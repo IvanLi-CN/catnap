@@ -16,6 +16,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@iconify-icons/flagpack": "^1.2.7",
+    "@iconify/react": "^6.0.2",
     "react": "^18.0.0",
     "react-dom": "^18.0.0"
   },
