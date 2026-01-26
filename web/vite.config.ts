@@ -29,6 +29,8 @@ export default defineConfig({
     "import.meta.env.VITE_APP_VERSION": JSON.stringify(appVersion),
   },
   server: {
+    port: 18182,
+    strictPort: true,
     proxy: {
       "/api": {
         target: process.env.API_PROXY_TARGET ?? "http://localhost:18080",
@@ -42,5 +44,9 @@ export default defineConfig({
           : {}),
       },
     },
+  },
+  preview: {
+    port: 18183,
+    strictPort: true,
   },
 });
