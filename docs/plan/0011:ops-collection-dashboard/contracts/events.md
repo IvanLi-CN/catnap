@@ -21,6 +21,24 @@
   - `range`: `24h|7d|30d`
   - `replayWindowSeconds`: number（固定 3600）
 
+## ops.metrics
+
+按连接的 `range` 口径推送统计数据（可周期性推送；用于 UI 实时刷新 KPI）。
+
+- 范围（Scope）: internal
+- 变更（Change）: New
+- 生产者（Producer）: backend
+- 消费者（Consumers）: web
+
+### 载荷（Payload）
+
+- Schema:
+  - `serverTime`: RFC3339 string
+  - `range`: `24h|7d|30d`
+  - `stats`（与 `/api/ops/state` 的 `stats` 字段一致）:
+    - `collection`: `{ total: number, success: number, failure: number, successRatePct: number }`
+    - `notify`: `{ telegram?: {...}, webPush?: {...} }`（每渠道同样结构）
+
 ## ops.reset
 
 用于告知客户端“无法进行续传回放”，客户端应执行：重新拉取 `/api/ops/state` 并以 `Last-Event-ID` 为空重连。
@@ -124,4 +142,3 @@ worker 状态更新（可以是增量或快照）。
   - `scope`: string
   - `message`: string
   - `meta`: object | null
-

@@ -25,6 +25,7 @@ pub struct AppState {
     pub db: SqlitePool,
     pub catalog: Arc<RwLock<crate::upstream::CatalogSnapshot>>,
     pub catalog_refresh: crate::catalog_refresh::CatalogRefreshManager,
+    pub ops: crate::ops::OpsManager,
 }
 
 fn unauthorized_html() -> &'static str {
@@ -305,15 +306,20 @@ async fn require_user_global(
 }
 
 pub fn user_id_from_headers(state: &AppState, headers: &HeaderMap) -> Option<String> {
-    let header_name = state.config.auth_user_header.as_deref()?;
-    let header_name = header::HeaderName::from_bytes(header_name.as_bytes()).ok()?;
-    let value = headers.get(header_name)?;
-    let value = value.to_str().ok()?.trim();
-    if value.is_empty() {
-        None
-    } else {
-        Some(value.to_string())
+    if let Some(header_name) = state.config.auth_user_header.as_deref() {
+        if let Ok(header_name) = header::HeaderName::from_bytes(header_name.as_bytes()) {
+            if let Some(value) = headers.get(header_name) {
+                if let Ok(value) = value.to_str() {
+                    let value = value.trim();
+                    if !value.is_empty() {
+                        return Some(value.to_string());
+                    }
+                }
+            }
+        }
     }
+
+    state.config.dev_user_id.clone()
 }
 
 pub fn json_unauthorized() -> (StatusCode, axum::Json<ErrorResponse>) {

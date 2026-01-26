@@ -72,6 +72,16 @@ pub struct UpstreamClient {
     cart_url: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct RegionFetchDetailed {
+    pub url: String,
+    pub http_status: u16,
+    pub bytes: i64,
+    pub elapsed_ms: i64,
+    pub parse_elapsed_ms: i64,
+    pub configs: Vec<ConfigBase>,
+}
+
 impl UpstreamClient {
     pub fn new(cart_url: String) -> anyhow::Result<Self> {
         let client = reqwest::Client::builder()
@@ -144,6 +154,48 @@ impl UpstreamClient {
         };
         let html = self.fetch_html(&url).await?;
         Ok(parse_configs(fid, gid, &html))
+    }
+
+    pub async fn fetch_region_configs_detailed(
+        &self,
+        fid: &str,
+        gid: Option<&str>,
+    ) -> anyhow::Result<RegionFetchDetailed> {
+        use std::time::Instant;
+
+        let url = if let Some(gid) = gid {
+            format!("{}?fid={fid}&gid={gid}", self.cart_url)
+        } else {
+            format!("{}?fid={fid}", self.cart_url)
+        };
+
+        let start = Instant::now();
+        let res = self.client.get(&url).send().await?;
+        let status = res.status();
+        let http_status = status.as_u16();
+        if !status.is_success() {
+            anyhow::bail!("upstream http {status} for {url}");
+        }
+        let html = res.text().await?;
+        let elapsed_ms = start.elapsed().as_millis() as i64;
+        let bytes = html.len() as i64;
+
+        let parse_start = Instant::now();
+        let configs = parse_configs(fid, gid, &html);
+        let parse_elapsed_ms = parse_start.elapsed().as_millis() as i64;
+
+        if configs.is_empty() {
+            anyhow::bail!("upstream parse produced 0 configs for {url}");
+        }
+
+        Ok(RegionFetchDetailed {
+            url,
+            http_status,
+            bytes,
+            elapsed_ms,
+            parse_elapsed_ms,
+            configs,
+        })
     }
 
     async fn fetch_html(&self, url: &str) -> anyhow::Result<String> {

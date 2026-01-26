@@ -153,10 +153,48 @@ CREATE TABLE IF NOT EXISTS event_logs (
   meta_json TEXT NULL
 );
 
+CREATE TABLE IF NOT EXISTS ops_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT NOT NULL,
+  event TEXT NOT NULL,
+  data_json TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ops_task_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  fid TEXT NOT NULL,
+  gid TEXT NULL,
+  started_at TEXT NOT NULL,
+  ended_at TEXT NULL,
+  ok INTEGER NOT NULL,
+  fetch_http_status INTEGER NULL,
+  fetch_bytes INTEGER NULL,
+  fetch_elapsed_ms INTEGER NULL,
+  parse_produced_configs INTEGER NULL,
+  parse_elapsed_ms INTEGER NULL,
+  error_code TEXT NULL,
+  error_message TEXT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ops_notify_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_run_id INTEGER NOT NULL,
+  ts TEXT NOT NULL,
+  channel TEXT NOT NULL,
+  result TEXT NOT NULL,
+  error_message TEXT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_event_logs_user_ts ON event_logs (user_id, ts DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_event_logs_ts ON event_logs (ts DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_inventory_samples_1m_ts ON inventory_samples_1m (ts_minute);
 CREATE INDEX IF NOT EXISTS idx_catalog_url_cache_last_success_at ON catalog_url_cache (last_success_at DESC, url_key);
+
+CREATE INDEX IF NOT EXISTS idx_ops_events_ts ON ops_events (ts DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_ops_task_runs_ended_at ON ops_task_runs (ended_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_ops_task_runs_key ON ops_task_runs (fid, gid, ended_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ops_notify_runs_task_run_id ON ops_notify_runs (task_run_id);
+CREATE INDEX IF NOT EXISTS idx_ops_notify_runs_channel_ts ON ops_notify_runs (channel, ts DESC);
 "#,
     )
     .execute(db)
@@ -1188,6 +1226,42 @@ WHERE id IN (
         .execute(db)
         .await?;
     }
+    Ok(())
+}
+
+pub async fn cleanup_ops(db: &SqlitePool, retention_days: i64) -> anyhow::Result<()> {
+    if retention_days <= 0 {
+        return Ok(());
+    }
+
+    let cutoff = OffsetDateTime::now_utc()
+        .saturating_sub(time::Duration::days(retention_days))
+        .format(&Rfc3339)
+        .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string());
+
+    sqlx::query("DELETE FROM ops_events WHERE ts < ?")
+        .bind(&cutoff)
+        .execute(db)
+        .await?;
+    sqlx::query("DELETE FROM ops_notify_runs WHERE ts < ?")
+        .bind(&cutoff)
+        .execute(db)
+        .await?;
+    sqlx::query(
+        r#"
+DELETE FROM ops_task_runs
+WHERE (
+  ended_at IS NOT NULL AND ended_at < ?
+) OR (
+  ended_at IS NULL AND started_at < ?
+)
+"#,
+    )
+    .bind(&cutoff)
+    .bind(&cutoff)
+    .execute(db)
+    .await?;
+
     Ok(())
 }
 

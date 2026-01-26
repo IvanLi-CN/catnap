@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="260" viewBox="0 0 720 260">
+  <defs>
+    <style>
+      .bg { fill: #0b1220; }
+      .surface { fill: #0f1b33; stroke: none; }
+      .line { stroke: rgba(27, 42, 74, 0.55); stroke-width: 1; }
+      .title { fill: #ffffff; font: 18px Inter, Arial, sans-serif; font-weight: 850; }
+      .muted { fill: #9bb0d0; font: 13px Inter, Arial, sans-serif; font-weight: 650; }
+      .mono { fill: #b9c7e6; font: 12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
+
+      .pill { fill: #101f3a; stroke: rgba(27, 42, 74, 0.55); stroke-width: 1; }
+      .pillOn { fill: #173428; stroke: rgba(42, 138, 85, 0.85); stroke-width: 1; }
+      .pillWarn { fill: #3b2f18; stroke: rgba(138, 106, 42, 0.9); stroke-width: 1; }
+      .pillErr { fill: #3b1a1a; stroke: rgba(138, 42, 42, 0.9); stroke-width: 1; }
+      .badgeText { fill: #e6eefc; font: 12px Inter, Arial, sans-serif; font-weight: 750; }
+
+      .tip { fill: #0b1428; stroke: rgba(36, 58, 96, 0.95); stroke-width: 1; }
+      .tipTitle { fill: #e6eefc; font: 12px Inter, Arial, sans-serif; font-weight: 850; }
+      .tipText { fill: #9bb0d0; font: 12px Inter, Arial, sans-serif; font-weight: 650; }
+      .tipKey { fill: #cfe0ff; font: 12px Inter, Arial, sans-serif; font-weight: 800; }
+
+      .dotRing { fill: #101f3a; stroke: rgba(36, 58, 96, 0.95); stroke-width: 1; }
+      .dotOk { fill: #2a8a55; }
+      .dotWarn { fill: #f59e0b; }
+      .dotErr { fill: #ef4444; }
+    </style>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="720" height="260"/>
+
+  <!-- Top bar excerpt -->
+  <rect class="surface" x="24" y="24" width="672" height="64" rx="14"/>
+  <text class="title" x="48" y="62">SSE 连接状态：悬浮气泡</text>
+
+  <!-- Indicator (hover target) -->
+  <g id="indicator" transform="translate(560,0)">
+    <circle class="dotRing" cx="40" cy="56" r="12"/>
+    <circle class="dotOk" cx="40" cy="56" r="5"/>
+    <text class="muted" x="60" y="61">SSE</text>
+  </g>
+
+  <!-- Tooltip (shown on hover) -->
+  <g id="tooltip">
+    <!-- Arrow points upward to the indicator -->
+    <path class="tip" d="M468 96 L592 96 L600 86 L608 96 L684 96 Q696 96 696 108 L696 228 Q696 240 684 240 L468 240 Q456 240 456 228 L456 108 Q456 96 468 96 Z" rx="12"/>
+    <text class="tipTitle" x="476" y="122">SSE 连接状态</text>
+
+    <circle class="dotRing" cx="484" cy="142" r="9"/>
+    <circle class="dotOk" cx="484" cy="142" r="4"/>
+    <text class="tipKey" x="502" y="146">状态：已连接</text>
+
+    <text class="tipText" x="476" y="168">回放窗口：1小时</text>
+    <text class="tipText" x="476" y="194">Last-Event-ID：<tspan class="mono">184233</tspan></text>
+    <text class="tipText" x="476" y="218">最近 reset：无</text>
+  </g>
+
+  <!-- Simplified variants (legend) -->
+  <text class="muted" x="48" y="132">状态点颜色约定（简化示意）：</text>
+  <circle class="dotRing" cx="64" cy="156" r="10"/>
+  <circle class="dotOk" cx="64" cy="156" r="4"/>
+  <text class="muted" x="84" y="160">已连接</text>
+
+  <circle class="dotRing" cx="64" cy="186" r="10"/>
+  <circle class="dotWarn" cx="64" cy="186" r="4"/>
+  <text class="muted" x="84" y="190">重连中（Reconnecting）</text>
+
+  <circle class="dotRing" cx="64" cy="216" r="10"/>
+  <circle class="dotErr" cx="64" cy="216" r="4"/>
+  <text class="muted" x="84" y="220">已重置（Reset）</text>
+</svg>
