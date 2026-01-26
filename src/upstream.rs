@@ -49,6 +49,11 @@ impl CatalogSnapshot {
             price: c.price.clone(),
             inventory: c.inventory.clone(),
             digest: c.digest.clone(),
+            lifecycle: crate::models::ConfigLifecycleView {
+                state: "active".to_string(),
+                listed_at: c.inventory.checked_at.clone(),
+                delisted_at: None,
+            },
             monitor_supported: c.monitor_supported,
             monitor_enabled,
         }
@@ -73,6 +78,10 @@ impl UpstreamClient {
             .user_agent("catnap/0.1 (+https://example.invalid)")
             .build()?;
         Ok(Self { client, cart_url })
+    }
+
+    pub async fn fetch_html_raw(&self, url: &str) -> anyhow::Result<String> {
+        self.fetch_html(url).await
     }
 
     pub async fn fetch_catalog(&self) -> anyhow::Result<CatalogSnapshot> {

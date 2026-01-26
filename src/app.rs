@@ -1,5 +1,5 @@
 use crate::config::RuntimeConfig;
-use crate::models::{ErrorResponse, RefreshStatusResponse};
+use crate::models::ErrorResponse;
 use axum::{
     body::Body,
     extract::{OriginalUri, State},
@@ -12,9 +12,8 @@ use bytes::Bytes;
 use include_dir::{include_dir, Dir};
 use mime_guess::MimeGuess;
 use sqlx::SqlitePool;
-use std::{collections::HashMap, net::SocketAddr, sync::Arc};
-use time::OffsetDateTime;
-use tokio::sync::{Mutex, RwLock};
+use std::{net::SocketAddr, sync::Arc};
+use tokio::sync::RwLock;
 use tower_http::trace::TraceLayer;
 
 const WEB_DIST_BUILD_ID: &str = env!("CATNAP_WEB_DIST_BUILD_ID");
@@ -25,8 +24,7 @@ pub struct AppState {
     pub config: RuntimeConfig,
     pub db: SqlitePool,
     pub catalog: Arc<RwLock<crate::upstream::CatalogSnapshot>>,
-    pub manual_refresh_gate: Arc<Mutex<HashMap<String, OffsetDateTime>>>,
-    pub manual_refresh_status: Arc<Mutex<HashMap<String, RefreshStatusResponse>>>,
+    pub catalog_refresh: crate::catalog_refresh::CatalogRefreshManager,
 }
 
 fn unauthorized_html() -> &'static str {
@@ -324,7 +322,7 @@ pub fn json_unauthorized() -> (StatusCode, axum::Json<ErrorResponse>) {
         axum::Json(ErrorResponse {
             error: crate::models::ErrorInfo {
                 code: "UNAUTHORIZED",
-                message: "Unauthorized",
+                message: "Unauthorized".to_string(),
             },
         }),
     )
@@ -336,7 +334,7 @@ pub fn json_forbidden() -> (StatusCode, axum::Json<ErrorResponse>) {
         axum::Json(ErrorResponse {
             error: crate::models::ErrorInfo {
                 code: "FORBIDDEN",
-                message: "Forbidden",
+                message: "Forbidden".to_string(),
             },
         }),
     )
@@ -348,7 +346,7 @@ pub fn json_invalid_argument() -> (StatusCode, axum::Json<ErrorResponse>) {
         axum::Json(ErrorResponse {
             error: crate::models::ErrorInfo {
                 code: "INVALID_ARGUMENT",
-                message: "Invalid argument",
+                message: "Invalid argument".to_string(),
             },
         }),
     )

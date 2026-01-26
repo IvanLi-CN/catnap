@@ -1,7 +1,16 @@
 import type { Meta, StoryObj } from "@storybook/react";
 import { useState } from "react";
 import { type Config, ProductCard } from "../../App";
-import { demoConfigs } from "../fixtures";
+import { countriesById, demoConfigs } from "../fixtures";
+
+const demoCountriesById = countriesById();
+
+const unmappedCountryConfig: Config = {
+  ...demoConfigs[1],
+  id: "cfg-unmapped-country",
+  countryId: "unmapped",
+  regionId: null,
+};
 
 function ProductCardDemo({ initial }: { initial: Config }) {
   const [cfg, setCfg] = useState<Config>(initial);
@@ -9,6 +18,7 @@ function ProductCardDemo({ initial }: { initial: Config }) {
     <div style={{ padding: 24 }}>
       <ProductCard
         cfg={cfg}
+        countriesById={demoCountriesById}
         onToggle={(configId, enabled) => {
           setCfg((prev) => (prev.id === configId ? { ...prev, monitorEnabled: enabled } : prev));
         }}
@@ -35,4 +45,8 @@ export const MonitorOn: Story = {
 
 export const MonitorOff: Story = {
   args: { initial: demoConfigs[2] },
+};
+
+export const UnmappedCountry: Story = {
+  args: { initial: unmappedCountryConfig },
 };

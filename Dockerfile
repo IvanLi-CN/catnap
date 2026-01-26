@@ -21,9 +21,11 @@ COPY --from=web-builder /app/web/dist ./web/dist
 RUN cargo build --release --locked
 
 FROM debian:13-slim AS runtime
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates \
-  && rm -rf /var/lib/apt/lists/*
+RUN set -eux; \
+  apt-get update; \
+  apt-get install -y --no-install-recommends ca-certificates; \
+  (apt-get install -y --no-install-recommends libssl3 || apt-get install -y --no-install-recommends libssl3t64); \
+  rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY --from=rust-builder /app/target/release/catnap /app/catnap

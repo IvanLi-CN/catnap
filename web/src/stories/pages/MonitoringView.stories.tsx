@@ -11,6 +11,7 @@ const meta = {
     regionsById: regionsById(),
     nowMs: demoNowMs,
     syncAlert: null,
+    recentListed24h: demoBootstrap.catalog.configs.slice(0, 3),
     onDismissSyncAlert: () => {},
   },
   argTypes: {

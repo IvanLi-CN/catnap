@@ -7,8 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "storybook": "storybook dev --port 18181",
-    "storybook:ci": "storybook dev --ci --no-open --port 18181",
+    "storybook": "storybook dev --host 0.0.0.0 --port 18181",
+    "storybook:ci": "storybook dev --ci --no-open --host 0.0.0.0 --port 18181",
     "build-storybook": "storybook build",
     "test:storybook": "vitest --project=storybook",
     "lint": "biome check .",
@@ -16,6 +16,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@iconify-icons/flagpack": "^1.2.7",
+    "@iconify/react": "^6.0.2",
     "react": "^18.0.0",
     "react-dom": "^18.0.0"
   },

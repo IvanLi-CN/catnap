@@ -9,7 +9,7 @@ pub struct ErrorResponse {
 #[serde(rename_all = "camelCase")]
 pub struct ErrorInfo {
     pub code: &'static str,
-    pub message: &'static str,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -37,7 +37,7 @@ pub struct Region {
     pub location_name: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Spec {
     pub key: String,
@@ -71,8 +71,18 @@ pub struct ConfigView {
     pub price: Money,
     pub inventory: Inventory,
     pub digest: String,
+    pub lifecycle: ConfigLifecycleView,
     pub monitor_supported: bool,
     pub monitor_enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigLifecycleView {
+    pub state: String,
+    pub listed_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delisted_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -110,7 +120,22 @@ pub struct MonitoringView {
 pub struct SettingsView {
     pub poll: SettingsPollView,
     pub site_base_url: Option<String>,
+    pub catalog_refresh: SettingsCatalogRefreshView,
+    pub monitoring_events: SettingsMonitoringEventsView,
     pub notifications: SettingsNotificationsView,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsCatalogRefreshView {
+    pub auto_interval_hours: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsMonitoringEventsView {
+    pub listed_enabled: bool,
+    pub delisted_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -172,6 +197,23 @@ pub struct SettingsUpdateRequest {
     pub poll: SettingsPollUpdate,
     pub site_base_url: Option<String>,
     pub notifications: SettingsNotificationsUpdate,
+    #[serde(default)]
+    pub catalog_refresh: Option<SettingsCatalogRefreshUpdate>,
+    #[serde(default)]
+    pub monitoring_events: Option<SettingsMonitoringEventsUpdate>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsCatalogRefreshUpdate {
+    pub auto_interval_hours: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsMonitoringEventsUpdate {
+    pub listed_enabled: bool,
+    pub delisted_enabled: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -207,6 +249,32 @@ pub struct WebPushSettingsUpdate {
 pub struct ProductsResponse {
     pub configs: Vec<ConfigView>,
     pub fetched_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogRefreshStatus {
+    pub job_id: String,
+    pub state: String,
+    pub trigger: String,
+    pub done: i64,
+    pub total: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    pub started_at: String,
+    pub updated_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current: Option<CatalogRefreshCurrent>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogRefreshCurrent {
+    pub url_key: String,
+    pub url: String,
+    pub action: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -258,6 +326,7 @@ pub struct RefreshStatusResponse {
 pub struct MonitoringListResponse {
     pub items: Vec<ConfigView>,
     pub fetched_at: String,
+    pub recent_listed24h: Vec<ConfigView>,
 }
 
 #[derive(Debug, Serialize)]

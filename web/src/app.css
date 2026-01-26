@@ -597,6 +597,15 @@ select {
   opacity: 0.95;
 }
 
+.pill.num {
+  padding-right: 8px;
+}
+
+.pill.num input[type="number"] {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
 .pill select,
 .pill input {
   width: 100%;
@@ -648,6 +657,9 @@ select {
 
 .cfg-card,
 .mon-card {
+  --card-flag-w: 144px;
+  --card-flag-h: 108px;
+
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--r14);
@@ -678,6 +690,40 @@ select {
   height: 100%;
   pointer-events: none;
   z-index: 0;
+}
+
+.card-flag-watermark {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.card-flag-icon {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: var(--card-flag-w);
+  height: var(--card-flag-h);
+  pointer-events: none;
+  /* Final alpha: top-left ~0.4 -> bottom-right 0. */
+  -webkit-mask-image: linear-gradient(to bottom right, rgba(0, 0, 0, 0.4), rgba(0, 0, 0, 0));
+  mask-image: linear-gradient(to bottom right, rgba(0, 0, 0, 0.4), rgba(0, 0, 0, 0));
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  filter: saturate(0.92) contrast(0.96);
+}
+
+:root[data-theme="dark"] .card-flag-icon {
+  filter: saturate(0.88) contrast(0.9) brightness(0.92);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) .card-flag-icon {
+    filter: saturate(0.88) contrast(0.9) brightness(0.92);
+  }
 }
 
 .trend-area {
@@ -755,6 +801,17 @@ select {
 .mon-title {
   font-size: 16px;
   font-weight: 800;
+  line-height: 1.2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cfg-title .title-text,
+.mon-title .title-text {
+  min-width: 0;
+  flex: 1 1 auto;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -765,6 +822,7 @@ select {
   margin-top: 6px;
   display: grid;
   grid-template-columns: 1fr 1fr;
+  grid-auto-rows: 1.2em;
   column-gap: 16px;
   row-gap: 4px;
   color: var(--muted);

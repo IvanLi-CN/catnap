@@ -1,7 +1,6 @@
 use catnap::{build_app, RuntimeConfig};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
-use std::{collections::HashMap, net::SocketAddr, str::FromStr, sync::Arc};
-use time::OffsetDateTime;
+use std::{net::SocketAddr, str::FromStr};
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
@@ -28,13 +27,7 @@ async fn main() -> anyhow::Result<()> {
         config: config.clone(),
         db: db.clone(),
         catalog: std::sync::Arc::new(tokio::sync::RwLock::new(catalog)),
-        manual_refresh_gate: Arc::new(tokio::sync::Mutex::new(
-            HashMap::<String, OffsetDateTime>::new(),
-        )),
-        manual_refresh_status: Arc::new(tokio::sync::Mutex::new(HashMap::<
-            String,
-            catnap::models::RefreshStatusResponse,
-        >::new())),
+        catalog_refresh: catnap::catalog_refresh::CatalogRefreshManager::new(),
     };
 
     tokio::spawn({

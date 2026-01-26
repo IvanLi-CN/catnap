@@ -2,9 +2,9 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 已完成
 - Created: 2026-01-25
-- Last: 2026-01-25
+- Last: 2026-01-26
 
 ## 背景 / 问题陈述
 
@@ -173,6 +173,8 @@ None（计划默认优先采用“无需新增旗帜资源”的实现路径；�
 - 2026-01-25: UI 草图改为基于 `docs/ui/*.svg` 的原始卡片设计（用于校准真实布局与层级）。
 - 2026-01-25: 增加 UI 组件高保真设计图 `ui/cards.svg` 作为评审基准。
 - 2026-01-25: 组件设计图需继续对齐“最新实际 UI”截图后再进入实现。
+- 2026-01-26: 实现国旗水印：ProductCard/MonitoringCard + `flagpack` icons + stories 覆盖；`bun run lint/typecheck/test:storybook` 通过。
+- 2026-01-26: 调整水印尺寸对齐 `docs/ui/cards.svg`；修复 `specs` 网格行高导致的卡片高度不一致。
 
 ## 参考（References）
 
