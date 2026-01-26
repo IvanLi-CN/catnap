@@ -42,7 +42,7 @@ start_window "backend" "$out_dir/backend.log" \
   "cd '$root_dir' && CATNAP_AUTH_USER_HEADER='x-user' BIND_ADDR='127.0.0.1:18088' exec cargo run"
 
 start_window "web" "$out_dir/web.log" \
-  "cd '$root_dir/web' && export API_PROXY_TARGET='http://127.0.0.1:18088' API_PROXY_USER_HEADER='x-user' API_PROXY_USER='u_1'; exec bun run dev -- --host 0.0.0.0 --port 5173 --strictPort"
+  "cd '$root_dir/web' && export API_PROXY_TARGET='http://127.0.0.1:18088' API_PROXY_USER_HEADER='x-user' API_PROXY_USER='u_1'; exec bun run dev -- --host 0.0.0.0 --port 18182 --strictPort"
 
 start_window "storybook" "$out_dir/storybook.log" \
   "cd '$root_dir/web' && exec bun run storybook:ci"
@@ -51,7 +51,7 @@ cat <<EOF
 
 ready (screen):
 - storybook: http://127.0.0.1:18181/
-- web dev:   http://127.0.0.1:5173/
+- web dev:   http://127.0.0.1:18182/
 
 attach: screen -r $session
 logs: $out_dir/*.log
