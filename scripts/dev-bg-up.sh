@@ -17,6 +17,25 @@ if ! command -v bun >/dev/null 2>&1; then
   exit 1
 fi
 
+backend_port="${CATNAP_DEV_PORT:-18090}"
+backend_bind_addr="0.0.0.0:${backend_port}"
+backend_url_addr="127.0.0.1:${backend_port}"
+storybook_port="${CATNAP_STORYBOOK_PORT:-18181}"
+web_dev_port="${CATNAP_WEB_DEV_PORT:-18182}"
+
+assert_port_free() {
+  local port="$1"
+  if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "Port $port already in use:" >&2
+    lsof -nP -iTCP:"$port" -sTCP:LISTEN >&2 || true
+    exit 1
+  fi
+}
+
+assert_port_free "$backend_port"
+assert_port_free "$storybook_port"
+assert_port_free "$web_dev_port"
+
 echo "building embedded web dist..."
 (cd "$root_dir/web" && bun run build >/dev/null)
 
@@ -39,19 +58,20 @@ echo "starting screen session '$session'..."
 screen -dmS "$session" -t shell bash -lc "echo 'catnap dev session'; exec bash"
 
 start_window "backend" "$out_dir/backend.log" \
-  "cd '$root_dir' && CATNAP_AUTH_USER_HEADER='x-user' BIND_ADDR='127.0.0.1:18088' exec cargo run"
+  "cd '$root_dir' && CATNAP_AUTH_USER_HEADER='x-user' CATNAP_DEV_USER_ID='u_1' CATNAP_DB_URL='sqlite::memory:' BIND_ADDR='$backend_bind_addr' exec cargo run"
 
 start_window "web" "$out_dir/web.log" \
-  "cd '$root_dir/web' && export API_PROXY_TARGET='http://127.0.0.1:18088' API_PROXY_USER_HEADER='x-user' API_PROXY_USER='u_1'; exec bun run dev -- --host 0.0.0.0 --port 18182 --strictPort"
+  "cd '$root_dir/web' && export API_PROXY_TARGET='http://$backend_url_addr' API_PROXY_USER_HEADER='x-user' API_PROXY_USER='u_1'; exec bun run dev -- --host 0.0.0.0 --port $web_dev_port --strictPort"
 
 start_window "storybook" "$out_dir/storybook.log" \
-  "cd '$root_dir/web' && exec bun run storybook:ci"
+  "cd '$root_dir/web' && exec bun run storybook:ci -- --port $storybook_port"
 
 cat <<EOF
 
 ready (screen):
-- storybook: http://127.0.0.1:18181/
-- web dev:   http://127.0.0.1:18182/
+- backend:   http://$backend_url_addr/#ops
+- storybook: http://127.0.0.1:$storybook_port/
+- web dev:   http://127.0.0.1:$web_dev_port/
 
 attach: screen -r $session
 logs: $out_dir/*.log

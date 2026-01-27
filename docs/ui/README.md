@@ -10,6 +10,8 @@
 - `settings.svg`：系统设置（来源：`#0009`）
 - `logs.svg`：日志（来源：`#0001`）
 - `unauthorized-401.svg`：401 未授权页（来源：`#0001`）
+- `ops-dashboard.svg`：采集观测台（来源：`#0011`）
+- `sse-tooltip.svg`：SSE 状态悬浮气泡（来源：`#0011`）
 
 ## 来源映射（仅用于追溯）
 
@@ -19,3 +21,5 @@
 - `settings.svg` ← `docs/plan/0009:catalog-full-refresh-sse/ui/settings.svg`
 - `logs.svg` ← `docs/plan/0001:lazycats-cart-inventory-monitor/ui/logs.svg`
 - `unauthorized-401.svg` ← `docs/plan/0001:lazycats-cart-inventory-monitor/ui/unauthorized-401.svg`
+- `ops-dashboard.svg` ← `docs/plan/0011:ops-collection-dashboard/ui/ops-dashboard.svg`
+- `sse-tooltip.svg` ← `docs/plan/0011:ops-collection-dashboard/ui/sse-tooltip.svg`

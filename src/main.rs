@@ -23,11 +23,16 @@ async fn main() -> anyhow::Result<()> {
 
     let catalog = catnap::upstream::CatalogSnapshot::empty(config.upstream_cart_url.clone());
 
+    let catalog = std::sync::Arc::new(tokio::sync::RwLock::new(catalog));
+    let ops = catnap::ops::OpsManager::new(config.clone(), db.clone(), catalog.clone());
+    ops.start();
+
     let state = catnap::AppState {
         config: config.clone(),
         db: db.clone(),
-        catalog: std::sync::Arc::new(tokio::sync::RwLock::new(catalog)),
+        catalog: catalog.clone(),
         catalog_refresh: catnap::catalog_refresh::CatalogRefreshManager::new(),
+        ops,
     };
 
     tokio::spawn({

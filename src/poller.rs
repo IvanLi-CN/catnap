@@ -1,4 +1,4 @@
-use crate::{app::AppState, db, upstream::UpstreamClient};
+use crate::{app::AppState, db};
 use sqlx::Row;
 use std::collections::HashMap;
 use time::OffsetDateTime;
@@ -15,7 +15,6 @@ pub async fn spawn(state: AppState) {
 }
 
 async fn run(state: AppState) -> anyhow::Result<()> {
-    let upstream = UpstreamClient::new(state.config.upstream_cart_url.clone())?;
     let mut next_due: HashMap<String, OffsetDateTime> = HashMap::new();
     let mut last_cleanup: Option<OffsetDateTime> = None;
     let mut auto_last_trigger: Option<OffsetDateTime> = None;
@@ -76,7 +75,7 @@ async fn run(state: AppState) -> anyhow::Result<()> {
                 now.saturating_add(time::Duration::seconds(interval * 60 + jitter_s)),
             );
 
-            if let Err(err) = poll_once(&state, &upstream, &user_id, &settings).await {
+            if let Err(err) = poll_once(&state, &user_id, &settings).await {
                 warn!(user_id, error = %err, "poll failed");
             }
         }
@@ -90,6 +89,7 @@ async fn run(state: AppState) -> anyhow::Result<()> {
                 state.config.log_retention_max_rows,
             )
             .await;
+            let _ = db::cleanup_ops(&state.db, state.config.ops_log_retention_days).await;
             let _ =
                 db::cleanup_inventory_samples_1m(&state.db, INVENTORY_HISTORY_RETENTION_DAYS).await;
             last_cleanup = Some(now);
@@ -101,7 +101,6 @@ async fn run(state: AppState) -> anyhow::Result<()> {
 
 async fn poll_once(
     state: &AppState,
-    upstream: &UpstreamClient,
     user_id: &str,
     settings: &db::SettingsRow,
 ) -> anyhow::Result<()> {
@@ -155,10 +154,10 @@ async fn poll_once(
             );
         }
 
-        // Fetch + apply shared URL task (dedup across monitoring + full refresh).
-        let _ = state
-            .catalog_refresh
-            .fetch_and_apply_region(state, upstream, &fid, gid.as_deref())
+        // Fetch + apply via global ops queue (dedup across poller + refresh).
+        let run = state
+            .ops
+            .enqueue_and_wait(&fid, gid.as_deref(), "poller_due")
             .await?;
 
         for id in ids {
@@ -203,31 +202,77 @@ async fn poll_once(
                 db::insert_log(&state.db, Some(user_id), "info", "poll", &msg, None).await?;
 
                 if settings.telegram_enabled {
-                    if let (Some(token), Some(target)) = (
+                    match (
                         settings.telegram_bot_token.as_deref(),
                         settings.telegram_target.as_deref(),
                     ) {
-                        if let Err(err) = crate::notifications::send_telegram(
-                            &state.config.telegram_api_base_url,
-                            token,
-                            target,
-                            &msg,
-                        )
-                        .await
-                        {
-                            warn!(user_id, error = %err, "telegram send failed");
-                            db::insert_log(
-                                &state.db,
-                                Some(user_id),
-                                "warn",
-                                "notify.telegram",
-                                "telegram send failed",
-                                Some(serde_json::json!({ "error": err.to_string() })),
+                        (Some(token), Some(target)) => {
+                            match crate::notifications::send_telegram(
+                                &state.config.telegram_api_base_url,
+                                token,
+                                target,
+                                &msg,
                             )
-                            .await?;
+                            .await
+                            {
+                                Ok(_) => {
+                                    let _ = state
+                                        .ops
+                                        .record_notify(run.run_id, "telegram", "success", None)
+                                        .await;
+                                }
+                                Err(err) => {
+                                    warn!(user_id, error = %err, "telegram send failed");
+                                    let err_msg = err.to_string();
+                                    let _ = state
+                                        .ops
+                                        .record_notify(
+                                            run.run_id,
+                                            "telegram",
+                                            "error",
+                                            Some(&err_msg),
+                                        )
+                                        .await;
+                                    db::insert_log(
+                                        &state.db,
+                                        Some(user_id),
+                                        "warn",
+                                        "notify.telegram",
+                                        "telegram send failed",
+                                        Some(serde_json::json!({ "error": err.to_string() })),
+                                    )
+                                    .await?;
+                                }
+                            }
+                        }
+                        _ => {
+                            let _ = state
+                                .ops
+                                .record_notify(
+                                    run.run_id,
+                                    "telegram",
+                                    "skipped",
+                                    Some("missing telegram config"),
+                                )
+                                .await;
                         }
                     }
                 }
+
+                let _ = state
+                    .ops
+                    .log(
+                        "info",
+                        "poll.result",
+                        &msg,
+                        Some(serde_json::json!({
+                            "runId": run.run_id,
+                            "userId": user_id,
+                            "configId": id,
+                            "events": events,
+                        })),
+                    )
+                    .await;
             }
         }
 

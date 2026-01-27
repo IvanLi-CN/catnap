@@ -13,11 +13,22 @@ pub struct RuntimeConfig {
     /// Name of the request header (provided by a trusted reverse proxy) used to identify the user.
     pub auth_user_header: Option<String>,
 
+    /// Local dev escape hatch: when set, missing/empty user header is treated as this user id.
+    /// Intended for local UI review without a reverse proxy; keep unset in real deployments.
+    pub dev_user_id: Option<String>,
+
     pub default_poll_interval_minutes: i64,
     pub default_poll_jitter_pct: f64,
 
     pub log_retention_days: i64,
     pub log_retention_max_rows: i64,
+
+    // Ops / observability
+    pub ops_worker_concurrency: usize,
+    pub ops_sse_replay_window_seconds: i64,
+    pub ops_log_retention_days: i64,
+    pub ops_log_tail_limit_default: i64,
+    pub ops_queue_task_limit_default: i64,
 
     pub db_url: String,
 
@@ -47,6 +58,11 @@ impl RuntimeConfig {
             .map(|v| v.trim().to_string())
             .filter(|v| !v.is_empty());
 
+        let dev_user_id = env::var("CATNAP_DEV_USER_ID")
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
+
         let default_poll_interval_minutes = env::var("CATNAP_DEFAULT_POLL_INTERVAL_MINUTES")
             .ok()
             .and_then(|v| v.trim().parse::<i64>().ok())
@@ -71,6 +87,36 @@ impl RuntimeConfig {
             .filter(|v| *v >= 0)
             .unwrap_or(10_000);
 
+        let ops_worker_concurrency = env::var("CATNAP_OPS_WORKER_CONCURRENCY")
+            .ok()
+            .and_then(|v| v.trim().parse::<i64>().ok())
+            .filter(|v| (1..=64).contains(v))
+            .unwrap_or(2) as usize;
+
+        let ops_sse_replay_window_seconds = env::var("CATNAP_OPS_SSE_REPLAY_WINDOW_SECONDS")
+            .ok()
+            .and_then(|v| v.trim().parse::<i64>().ok())
+            .filter(|v| *v >= 1)
+            .unwrap_or(3600);
+
+        let ops_log_retention_days = env::var("CATNAP_OPS_LOG_RETENTION_DAYS")
+            .ok()
+            .and_then(|v| v.trim().parse::<i64>().ok())
+            .filter(|v| *v >= 0)
+            .unwrap_or(7);
+
+        let ops_log_tail_limit_default = env::var("CATNAP_OPS_LOG_TAIL_LIMIT_DEFAULT")
+            .ok()
+            .and_then(|v| v.trim().parse::<i64>().ok())
+            .filter(|v| (1..=500).contains(v))
+            .unwrap_or(200);
+
+        let ops_queue_task_limit_default = env::var("CATNAP_OPS_QUEUE_TASK_LIMIT_DEFAULT")
+            .ok()
+            .and_then(|v| v.trim().parse::<i64>().ok())
+            .filter(|v| (1..=500).contains(v))
+            .unwrap_or(200);
+
         Self {
             bind_addr: env::var("BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:18080".to_string()),
             effective_version,
@@ -78,10 +124,16 @@ impl RuntimeConfig {
                 .unwrap_or_else(|_| "https://lazycats.vip/cart".to_string()),
             telegram_api_base_url,
             auth_user_header,
+            dev_user_id,
             default_poll_interval_minutes,
             default_poll_jitter_pct,
             log_retention_days,
             log_retention_max_rows,
+            ops_worker_concurrency,
+            ops_sse_replay_window_seconds,
+            ops_log_retention_days,
+            ops_log_tail_limit_default,
+            ops_queue_task_limit_default,
             db_url: env::var("CATNAP_DB_URL").unwrap_or_else(|_| "sqlite:catnap.db".to_string()),
             web_push_vapid_public_key: env::var("CATNAP_WEB_PUSH_VAPID_PUBLIC_KEY")
                 .ok()

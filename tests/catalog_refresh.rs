@@ -17,10 +17,16 @@ fn base_test_config() -> RuntimeConfig {
         upstream_cart_url: "http://127.0.0.1:0/cart".to_string(),
         telegram_api_base_url: "https://api.telegram.org".to_string(),
         auth_user_header: Some("x-user".to_string()),
+        dev_user_id: None,
         default_poll_interval_minutes: 1,
         default_poll_jitter_pct: 0.1,
         log_retention_days: 7,
         log_retention_max_rows: 10_000,
+        ops_worker_concurrency: 2,
+        ops_sse_replay_window_seconds: 3600,
+        ops_log_retention_days: 7,
+        ops_log_tail_limit_default: 200,
+        ops_queue_task_limit_default: 200,
         db_url: "sqlite::memory:".to_string(),
         web_push_vapid_public_key: None,
         web_push_vapid_private_key: None,
@@ -43,11 +49,16 @@ async fn make_app_with_config(cfg: RuntimeConfig) -> TestApp {
     catnap::db::init_db(&db).await.unwrap();
 
     let snapshot = catnap::upstream::CatalogSnapshot::empty(cfg.upstream_cart_url.clone());
+    let catalog = std::sync::Arc::new(tokio::sync::RwLock::new(snapshot));
+    let ops = catnap::ops::OpsManager::new(cfg.clone(), db.clone(), catalog.clone());
+    ops.start();
+
     let state = AppState {
         config: cfg,
         db: db.clone(),
-        catalog: std::sync::Arc::new(tokio::sync::RwLock::new(snapshot)),
+        catalog,
         catalog_refresh: catnap::catalog_refresh::CatalogRefreshManager::new(),
+        ops,
     };
 
     TestApp {

@@ -2,8 +2,6 @@ use crate::app::AppState;
 use crate::db;
 use crate::models::{CatalogRefreshCurrent, CatalogRefreshStatus};
 use crate::upstream::UpstreamClient;
-use futures_util::future::{BoxFuture, FutureExt, Shared};
-use sqlx::Row;
 use std::collections::HashMap;
 use std::sync::Arc;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
@@ -13,8 +11,6 @@ use uuid::Uuid;
 
 const MANUAL_MIN_INTERVAL_SECONDS: i64 = 30;
 const FULL_REFRESH_CACHE_HIT_SECONDS: i64 = 5 * 60;
-
-type UrlTask = Shared<BoxFuture<'static, Result<UrlTaskResult, String>>>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RefreshTrigger {
@@ -46,12 +42,6 @@ struct Inner {
     status: Mutex<CatalogRefreshStatus>,
     tx: broadcast::Sender<CatalogRefreshStatus>,
     manual_gate: Mutex<HashMap<String, OffsetDateTime>>,
-    url_tasks: Mutex<HashMap<String, UrlTask>>,
-}
-
-#[derive(Debug, Clone)]
-struct UrlTaskResult {
-    fetched_at: String,
 }
 
 fn now_rfc3339() -> String {
@@ -79,7 +69,6 @@ impl CatalogRefreshManager {
                 status: Mutex::new(initial),
                 tx,
                 manual_gate: Mutex::new(HashMap::new()),
-                url_tasks: Mutex::new(HashMap::new()),
             }),
         }
     }
@@ -173,110 +162,11 @@ impl CatalogRefreshManager {
         st.current = current;
         let _ = self.inner.tx.send(st.clone());
     }
-
-    async fn fetch_and_apply_url(
-        &self,
-        app: &AppState,
-        upstream: &UpstreamClient,
-        fid: &str,
-        gid: Option<&str>,
-    ) -> anyhow::Result<UrlTaskResult> {
-        let gid_part = gid.unwrap_or("0");
-        let url_key = format!("{fid}:{gid_part}");
-        let url = if let Some(gid) = gid {
-            format!("{}?fid={fid}&gid={gid}", app.config.upstream_cart_url)
-        } else {
-            format!("{}?fid={fid}", app.config.upstream_cart_url)
-        };
-
-        let task = {
-            let mut tasks = self.inner.url_tasks.lock().await;
-            if let Some(task) = tasks.get(&url_key) {
-                task.clone()
-            } else {
-                let app = app.clone();
-                let this = self.clone();
-                let upstream = upstream.clone();
-                let fid = fid.to_string();
-                let gid = gid.map(str::to_string);
-                let url_key_for_cleanup = url_key.clone();
-                let url_for_fetch = url.clone();
-
-                let task: UrlTask = async move {
-                    let res: Result<UrlTaskResult, String> = async {
-                        let parsed = upstream
-                            .fetch_region_configs(&fid, gid.as_deref())
-                            .await
-                            .map_err(|e| e.to_string())?;
-
-                        let applied = db::apply_catalog_url_fetch_success(
-                            &app.db,
-                            &fid,
-                            gid.as_deref(),
-                            &url_key_for_cleanup,
-                            &url_for_fetch,
-                            parsed,
-                        )
-                        .await
-                        .map_err(|e| e.to_string())?;
-
-                        {
-                            let mut snap = app.catalog.write().await;
-                            snap.fetched_at = applied.fetched_at.clone();
-                        }
-
-                        if !applied.listed_ids.is_empty() || !applied.delisted_ids.is_empty() {
-                            if let Err(err) = notify_lifecycle_events(&app, &applied).await {
-                                warn!(error = %err, "lifecycle notify failed");
-                            }
-                        }
-
-                        Ok(UrlTaskResult {
-                            fetched_at: applied.fetched_at,
-                        })
-                    }
-                    .await;
-
-                    // Remove the task before completing, so late joiners don't subscribe to a
-                    // finished sender and observe a spurious "closed" error.
-                    this.inner
-                        .url_tasks
-                        .lock()
-                        .await
-                        .remove(&url_key_for_cleanup);
-                    res
-                }
-                .boxed()
-                .shared();
-
-                tasks.insert(url_key.clone(), task.clone());
-                task
-            }
-        };
-
-        match task.await {
-            Ok(v) => Ok(v),
-            Err(msg) => anyhow::bail!(msg),
-        }
-    }
 }
 
 impl Default for CatalogRefreshManager {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-impl CatalogRefreshManager {
-    pub async fn fetch_and_apply_region(
-        &self,
-        app: &AppState,
-        upstream: &UpstreamClient,
-        fid: &str,
-        gid: Option<&str>,
-    ) -> anyhow::Result<String> {
-        let res = self.fetch_and_apply_url(app, upstream, fid, gid).await?;
-        Ok(res.fetched_at)
     }
 }
 
@@ -364,7 +254,9 @@ async fn run_full_refresh_job(
         .await;
 
         if action == "fetch" {
-            mgr.fetch_and_apply_url(&app, &upstream, &fid, gid.as_deref())
+            let _ = app
+                .ops
+                .enqueue_and_wait(&fid, gid.as_deref(), "manual_refresh")
                 .await?;
         }
 
@@ -374,216 +266,5 @@ async fn run_full_refresh_job(
 
     mgr.finish_success().await;
     info!(job_id, done, total, "catalog refresh finished");
-    Ok(())
-}
-
-async fn notify_lifecycle_events(
-    app: &AppState,
-    applied: &db::ApplyCatalogUrlResult,
-) -> anyhow::Result<()> {
-    let mut targets_listed = Vec::new();
-    let mut targets_delisted = Vec::new();
-
-    if !applied.listed_ids.is_empty() {
-        targets_listed = sqlx::query(
-            r#"
-SELECT
-  user_id,
-  site_base_url,
-  telegram_enabled,
-  telegram_bot_token,
-  telegram_target,
-  web_push_enabled
-FROM settings
-WHERE monitoring_events_listed_enabled = 1
-"#,
-        )
-        .fetch_all(&app.db)
-        .await?;
-    }
-    if !applied.delisted_ids.is_empty() {
-        targets_delisted = sqlx::query(
-            r#"
-SELECT
-  user_id,
-  site_base_url,
-  telegram_enabled,
-  telegram_bot_token,
-  telegram_target,
-  web_push_enabled
-FROM settings
-WHERE monitoring_events_delisted_enabled = 1
-"#,
-        )
-        .fetch_all(&app.db)
-        .await?;
-    }
-
-    if targets_listed.is_empty() && targets_delisted.is_empty() {
-        return Ok(());
-    }
-
-    async fn load_configs(
-        db: &sqlx::SqlitePool,
-        ids: &[String],
-    ) -> anyhow::Result<Vec<(String, String, f64, i64)>> {
-        if ids.is_empty() {
-            return Ok(Vec::new());
-        }
-        let placeholders = std::iter::repeat_n("?", ids.len())
-            .collect::<Vec<_>>()
-            .join(",");
-        let sql = format!(
-            r#"
-SELECT id, name, price_amount, inventory_quantity
-FROM catalog_configs
-WHERE id IN ({placeholders})
-"#
-        );
-        let mut q = sqlx::query(&sql);
-        for id in ids {
-            q = q.bind(id);
-        }
-        let rows = q.fetch_all(db).await?;
-        Ok(rows
-            .into_iter()
-            .map(|r| {
-                (
-                    r.get::<String, _>(0),
-                    r.get::<String, _>(1),
-                    r.get::<f64, _>(2),
-                    r.get::<i64, _>(3),
-                )
-            })
-            .collect())
-    }
-
-    let listed = load_configs(&app.db, &applied.listed_ids).await?;
-    let delisted = load_configs(&app.db, &applied.delisted_ids).await?;
-
-    for row in targets_listed {
-        let user_id = row.get::<String, _>(0);
-        let site_base_url = row.get::<Option<String>, _>(1);
-        let tg_enabled = row.get::<i64, _>(2) != 0;
-        let tg_bot_token = row.get::<Option<String>, _>(3);
-        let tg_target = row.get::<Option<String>, _>(4);
-        let wp_enabled = row.get::<i64, _>(5) != 0;
-
-        for (id, name, price, qty) in listed.iter() {
-            let url = site_base_url.as_deref().unwrap_or("").trim_end_matches('/');
-            let msg = format!("[listed] {name} ({id}) qty={qty} price={price} {url}/monitoring");
-            db::insert_log(
-                &app.db,
-                Some(&user_id),
-                "info",
-                "catalog.listed",
-                &msg,
-                None,
-            )
-            .await?;
-
-            if tg_enabled {
-                if let (Some(token), Some(target)) = (tg_bot_token.as_deref(), tg_target.as_deref())
-                {
-                    if let Err(err) = crate::notifications::send_telegram(
-                        &app.config.telegram_api_base_url,
-                        token,
-                        target,
-                        &msg,
-                    )
-                    .await
-                    {
-                        warn!(user_id, error = %err, "telegram send failed");
-                        let _ = db::insert_log(
-                            &app.db,
-                            Some(&user_id),
-                            "warn",
-                            "notify.telegram",
-                            "telegram send failed",
-                            Some(serde_json::json!({ "error": err.to_string() })),
-                        )
-                        .await;
-                    }
-                }
-            }
-
-            if wp_enabled {
-                if let Ok(Some(sub)) = db::get_latest_web_push_subscription(&app.db, &user_id).await
-                {
-                    let _ = crate::notifications::send_web_push(
-                        &app.config,
-                        &sub,
-                        "catnap",
-                        &msg,
-                        "/monitoring",
-                    )
-                    .await;
-                }
-            }
-        }
-    }
-
-    for row in targets_delisted {
-        let user_id = row.get::<String, _>(0);
-        let site_base_url = row.get::<Option<String>, _>(1);
-        let tg_enabled = row.get::<i64, _>(2) != 0;
-        let tg_bot_token = row.get::<Option<String>, _>(3);
-        let tg_target = row.get::<Option<String>, _>(4);
-        let wp_enabled = row.get::<i64, _>(5) != 0;
-
-        for (id, name, price, qty) in delisted.iter() {
-            let url = site_base_url.as_deref().unwrap_or("").trim_end_matches('/');
-            let msg = format!("[delisted] {name} ({id}) qty={qty} price={price} {url}/monitoring");
-            db::insert_log(
-                &app.db,
-                Some(&user_id),
-                "info",
-                "catalog.delisted",
-                &msg,
-                None,
-            )
-            .await?;
-
-            if tg_enabled {
-                if let (Some(token), Some(target)) = (tg_bot_token.as_deref(), tg_target.as_deref())
-                {
-                    if let Err(err) = crate::notifications::send_telegram(
-                        &app.config.telegram_api_base_url,
-                        token,
-                        target,
-                        &msg,
-                    )
-                    .await
-                    {
-                        warn!(user_id, error = %err, "telegram send failed");
-                        let _ = db::insert_log(
-                            &app.db,
-                            Some(&user_id),
-                            "warn",
-                            "notify.telegram",
-                            "telegram send failed",
-                            Some(serde_json::json!({ "error": err.to_string() })),
-                        )
-                        .await;
-                    }
-                }
-            }
-
-            if wp_enabled {
-                if let Ok(Some(sub)) = db::get_latest_web_push_subscription(&app.db, &user_id).await
-                {
-                    let _ = crate::notifications::send_web_push(
-                        &app.config,
-                        &sub,
-                        "catnap",
-                        &msg,
-                        "/monitoring",
-                    )
-                    .await;
-                }
-            }
-        }
-    }
-
     Ok(())
 }

@@ -5,10 +5,20 @@ export type AppShellProps = {
   subtitle?: ReactNode;
   actions?: ReactNode;
   sidebar?: ReactNode;
+  contentClassName?: string;
+  scrollInnerClassName?: string;
   children: ReactNode;
 };
 
-export function AppShell({ title, subtitle, actions, sidebar, children }: AppShellProps) {
+export function AppShell({
+  title,
+  subtitle,
+  actions,
+  sidebar,
+  contentClassName,
+  scrollInnerClassName,
+  children,
+}: AppShellProps) {
   const contentRef = useRef<HTMLElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const scrollInnerRef = useRef<HTMLDivElement | null>(null);
@@ -62,9 +72,15 @@ export function AppShell({ title, subtitle, actions, sidebar, children }: AppShe
 
         <div className="layout">
           <nav className="sidebar">{sidebar}</nav>
-          <main className="content" ref={contentRef}>
+          <main
+            className={`content${contentClassName ? ` ${contentClassName}` : ""}`}
+            ref={contentRef}
+          >
             <div className="content-scroll" ref={scrollRef}>
-              <div className="content-scroll-inner" ref={scrollInnerRef}>
+              <div
+                className={`content-scroll-inner${scrollInnerClassName ? ` ${scrollInnerClassName}` : ""}`}
+                ref={scrollInnerRef}
+              >
                 {children}
               </div>
             </div>

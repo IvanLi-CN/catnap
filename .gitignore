@@ -21,3 +21,6 @@
 /tmp-*.pid
 /tmp-*.png
 /tmp-dev-proxy.ts
+
+# Local build/runtime outputs
+/out

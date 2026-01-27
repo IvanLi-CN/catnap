@@ -20,7 +20,7 @@ import flagUa from "@iconify-icons/flagpack/ua";
 import flagUs from "@iconify-icons/flagpack/us";
 import flagVn from "@iconify-icons/flagpack/vn";
 import { Icon } from "@iconify/react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "./ui/layout/AppShell";
 import { ThemeMenu } from "./ui/nav/ThemeMenu";
 import "./app.css";
@@ -164,11 +164,69 @@ export type LogsResponse = {
   nextCursor: string | null;
 };
 
-export type Route = "monitoring" | "products" | "settings" | "logs";
+export type OpsRange = "24h" | "7d" | "30d";
+
+export type OpsRateBucket = {
+  total: number;
+  success: number;
+  failure: number;
+  successRatePct: number;
+};
+
+export type OpsSparksResponse = {
+  bucketSeconds: number;
+  volume: number[];
+  collectionSuccessRatePct: number[];
+  notifyTelegramSuccessRatePct: number[];
+  notifyWebPushSuccessRatePct: number[];
+};
+
+export type OpsSseUi = {
+  status: "connected" | "reconnecting" | "reset";
+  replayWindowSeconds: number | null;
+  lastEventId: number | null;
+  lastReset: { serverTime: string; reason: string; details?: string | null } | null;
+};
+
+export type OpsStateResponse = {
+  serverTime: string;
+  range: OpsRange;
+  replayWindowSeconds: number;
+  queue: { pending: number; running: number; deduped: number };
+  workers: Array<{
+    workerId: string;
+    state: "idle" | "running" | "error";
+    task: { fid: string; gid: string | null } | null;
+    startedAt: string | null;
+    lastError: { ts: string; message: string } | null;
+  }>;
+  tasks: Array<{
+    key: { fid: string; gid: string | null };
+    state: "pending" | "running";
+    enqueuedAt: string;
+    reasonCounts: Record<string, number>;
+    lastRun: { endedAt: string; ok: boolean } | null;
+  }>;
+  stats: {
+    collection: OpsRateBucket;
+    notify: { telegram?: OpsRateBucket; webPush?: OpsRateBucket };
+  };
+  sparks: OpsSparksResponse;
+  logTail: Array<{
+    eventId: number;
+    ts: string;
+    level: "debug" | "info" | "warn" | "error";
+    scope: string;
+    message: string;
+    meta?: unknown;
+  }>;
+};
+
+export type Route = "monitoring" | "products" | "settings" | "logs" | "ops";
 
 function getRoute(): Route {
   const raw = window.location.hash.replace(/^#/, "");
-  if (raw === "products" || raw === "settings" || raw === "logs") return raw;
+  if (raw === "products" || raw === "settings" || raw === "logs" || raw === "ops") return raw;
   return "monitoring";
 }
 
@@ -176,6 +234,7 @@ function routeTitle(route: Route): string {
   if (route === "products") return "全部产品";
   if (route === "settings") return "系统设置";
   if (route === "logs") return "日志";
+  if (route === "ops") return "采集观测台";
   return "库存监控";
 }
 
@@ -183,6 +242,8 @@ function routeSubtitle(route: Route): string {
   if (route === "products") return "分组：国家地区 → 可用区域 → 配置 • 点击切换监控（用户隔离）";
   if (route === "settings") return "按用户隔离 • 保存后立即生效（下次轮询使用新频率 + 抖动）";
   if (route === "logs") return "按用户隔离 • 支持过滤与分页（cursor）";
+  if (route === "ops")
+    return "全局共享 • 队列/worker/成功率/推送成功率 • SSE 实时 tail（断线自动续传/重置）";
   return "按国家地区 / 可用区分组展示；支持折叠，默认展开（折叠状态可记忆）";
 }
 
@@ -413,6 +474,15 @@ export function App() {
   const [catalogRefresh, setCatalogRefresh] = useState<CatalogRefreshStatus | null>(null);
   const [recentListed24h, setRecentListed24h] = useState<Config[]>([]);
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
+  const [opsRange, setOpsRange] = useState<OpsRange>("24h");
+  const [opsFollow, setOpsFollow] = useState<boolean>(true);
+  const [opsHelpOpen, setOpsHelpOpen] = useState<boolean>(false);
+  const [opsSseUi, setOpsSseUi] = useState<OpsSseUi>({
+    status: "reconnecting",
+    replayWindowSeconds: null,
+    lastEventId: null,
+    lastReset: null,
+  });
   const lastTerminalJobIdRef = useRef<string | null>(null);
 
   const applyProductsResponse = useCallback((res: ProductsResponse) => {
@@ -774,6 +844,9 @@ export function App() {
       <a className={route === "logs" ? "nav-item active" : "nav-item"} href="#logs">
         日志
       </a>
+      <a className={route === "ops" ? "nav-item active" : "nav-item"} href="#ops">
+        采集观测台
+      </a>
     </>
   );
 
@@ -793,74 +866,111 @@ export function App() {
         ? "刷新失败"
         : "立即刷新";
 
-  const actions = (
-    <>
-      {isRefreshing ? (
-        <span className="pill">{`全量刷新中（${catalogRefresh?.done ?? 0}/${catalogRefresh?.total || "?"}）`}</span>
-      ) : null}
-      {route === "products" ? (
+  const actions =
+    route === "ops" ? (
+      <>
+        <OpsSseIndicator sse={opsSseUi} />
+        <OpsRangePill range={opsRange} onChange={setOpsRange} />
         <button
           type="button"
-          className="pill"
-          disabled={loading || isRefreshing}
-          title="强制抓取上游并全量刷新（30s 限流）"
-          onClick={() => void startCatalogRefresh()}
+          className={`pill ${opsFollow ? "on" : ""}`}
+          onClick={() => setOpsFollow((v) => !v)}
         >
-          {refreshButtonText}
+          {opsFollow ? "跟随：开" : "跟随：关"}
         </button>
-      ) : route === "monitoring" ? (
-        bootstrap ? (
-          <>
-            <span className="pill">
-              最近刷新：{formatRelativeTime(bootstrap.catalog.fetchedAt, nowMs)}
-            </span>
-            <button
-              type="button"
-              className="pill"
-              disabled={isRefreshing}
-              title="强制抓取上游并全量刷新（30s 限流）"
-              onClick={() => void startCatalogRefresh()}
-            >
-              <span className={refreshIconClass} aria-hidden="true">
-                {isRefreshing ? (
-                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                    <path
-                      fill="currentColor"
-                      d="M12 4a8 8 0 0 1 7.9 6.7a1 1 0 1 1-2 .3A6 6 0 1 0 18 12a1 1 0 1 1 2 0a8 8 0 1 1-8-8"
-                    />
-                  </svg>
-                ) : catalogRefresh?.state === "error" ? (
-                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                    <path fill="currentColor" d="M1 21h22L12 2zm12-3h-2v-2h2zm0-4h-2v-4h2z" />
-                  </svg>
-                ) : catalogRefresh?.state === "success" ? (
-                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                    <path
-                      fill="currentColor"
-                      d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2m-1 14l-4-4l1.4-1.4L11 13.2l5.6-5.6L18 9z"
-                    />
-                  </svg>
-                ) : (
-                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                    <path fill="currentColor" d="M12 6V3L8 7l4 4V8a4 4 0 1 1-4 4H6a6 6 0 1 0 6-6" />
-                  </svg>
-                )}
+        <button type="button" className="pill" onClick={() => setOpsHelpOpen(true)}>
+          帮助
+        </button>
+        <ThemeMenu />
+      </>
+    ) : (
+      <>
+        {isRefreshing ? (
+          <span className="pill">{`全量刷新中（${catalogRefresh?.done ?? 0}/${catalogRefresh?.total || "?"}）`}</span>
+        ) : null}
+        {route === "products" ? (
+          <button
+            type="button"
+            className="pill"
+            disabled={loading || isRefreshing}
+            title="强制抓取上游并全量刷新（30s 限流）"
+            onClick={() => void startCatalogRefresh()}
+          >
+            {refreshButtonText}
+          </button>
+        ) : route === "monitoring" ? (
+          bootstrap ? (
+            <>
+              <span className="pill">
+                最近刷新：{formatRelativeTime(bootstrap.catalog.fetchedAt, nowMs)}
               </span>
-              {refreshButtonText}
-            </button>
-          </>
-        ) : null
-      ) : null}
-      <ThemeMenu />
-    </>
-  );
+              <button
+                type="button"
+                className="pill"
+                disabled={isRefreshing}
+                title="强制抓取上游并全量刷新（30s 限流）"
+                onClick={() => void startCatalogRefresh()}
+              >
+                <span className={refreshIconClass} aria-hidden="true">
+                  {isRefreshing ? (
+                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                      <path
+                        fill="currentColor"
+                        d="M12 4a8 8 0 0 1 7.9 6.7a1 1 0 1 1-2 .3A6 6 0 1 0 18 12a1 1 0 1 1 2 0a8 8 0 1 1-8-8"
+                      />
+                    </svg>
+                  ) : catalogRefresh?.state === "error" ? (
+                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                      <path fill="currentColor" d="M1 21h22L12 2zm12-3h-2v-2h2zm0-4h-2v-4h2z" />
+                    </svg>
+                  ) : catalogRefresh?.state === "success" ? (
+                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                      <path
+                        fill="currentColor"
+                        d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2m-1 14l-4-4l1.4-1.4L11 13.2l5.6-5.6L18 9z"
+                      />
+                    </svg>
+                  ) : (
+                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                      <path
+                        fill="currentColor"
+                        d="M12 6V3L8 7l4 4V8a4 4 0 1 1-4 4H6a6 6 0 1 0 6-6"
+                      />
+                    </svg>
+                  )}
+                </span>
+                {refreshButtonText}
+              </button>
+            </>
+          ) : null
+        ) : null}
+        <ThemeMenu />
+      </>
+    );
 
   return (
-    <AppShell title={title} subtitle={subtitle} actions={actions} sidebar={sidebar}>
-      {loading ? <p className="muted">Loading...</p> : null}
-      {error ? <p className="error">{error}</p> : null}
+    <AppShell
+      title={title}
+      subtitle={subtitle}
+      actions={actions}
+      sidebar={sidebar}
+      contentClassName={route === "ops" ? "ops-content" : undefined}
+      scrollInnerClassName={route === "ops" ? "fill" : undefined}
+    >
+      {route !== "ops" ? loading ? <p className="muted">Loading...</p> : null : null}
+      {route !== "ops" ? error ? <p className="error">{error}</p> : null : null}
 
-      {bootstrap ? (
+      {route === "ops" ? (
+        <OpsView
+          range={opsRange}
+          onRangeChange={setOpsRange}
+          follow={opsFollow}
+          onFollowChange={setOpsFollow}
+          helpOpen={opsHelpOpen}
+          onHelpOpenChange={setOpsHelpOpen}
+          onSseUiChange={setOpsSseUi}
+        />
+      ) : bootstrap ? (
         route === "products" ? (
           <ProductsView
             bootstrap={bootstrap}
@@ -2119,6 +2229,754 @@ export function LogsView({ fetchLogs }: LogsViewProps = {}) {
             下一页
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+type OpsViewProps = {
+  fetchState?: (range: OpsRange) => Promise<OpsStateResponse>;
+  createEventSource?: (url: string) => EventSource;
+  range?: OpsRange;
+  onRangeChange?: (range: OpsRange) => void;
+  follow?: boolean;
+  onFollowChange?: (follow: boolean) => void;
+  helpOpen?: boolean;
+  onHelpOpenChange?: (open: boolean) => void;
+  onSseUiChange?: (next: OpsSseUi) => void;
+};
+
+async function fetchOpsState(range: OpsRange): Promise<OpsStateResponse> {
+  return api<OpsStateResponse>(`/api/ops/state?range=${encodeURIComponent(range)}`);
+}
+
+function defaultCreateEventSource(url: string): EventSource {
+  return new EventSource(url);
+}
+
+function opsRangeLabel(range: OpsRange): string {
+  if (range === "24h") return "24小时";
+  if (range === "7d") return "7天";
+  return "30天";
+}
+
+function OpsRangePill({ range, onChange }: { range: OpsRange; onChange: (r: OpsRange) => void }) {
+  return (
+    <div className="pill select ops-range-pill" style={{ width: 168 }}>
+      <span className="pill-prefix">口径：</span>
+      <select value={range} onChange={(e) => onChange(e.target.value as OpsRange)}>
+        <option value="24h">24小时</option>
+        <option value="7d">7天</option>
+        <option value="30d">30天</option>
+      </select>
+    </div>
+  );
+}
+
+function OpsSseIndicator({ sse }: { sse: OpsSseUi }) {
+  const dotClass =
+    sse.status === "connected"
+      ? "ops-dot ok"
+      : sse.status === "reset"
+        ? "ops-dot err"
+        : "ops-dot warn";
+  const statusText =
+    sse.status === "connected"
+      ? "状态：已连接"
+      : sse.status === "reset"
+        ? "状态：已重置"
+        : "状态：重连中";
+  const resetText = sse.lastReset
+    ? `${sse.lastReset.reason}${sse.lastReset.details ? ` (${sse.lastReset.details})` : ""}`
+    : "无";
+
+  return (
+    <div className="ops-sse">
+      <span className="ops-dot-ring" aria-hidden="true">
+        <span className={dotClass} />
+      </span>
+      <span className="ops-sse-label">SSE</span>
+      <div className="ops-sse-tooltip" role="tooltip">
+        <div className="ops-sse-tooltip-title">SSE 连接状态</div>
+        <div className="ops-sse-tooltip-row">
+          <span className="ops-dot-ring sm" aria-hidden="true">
+            <span className={dotClass} />
+          </span>
+          <span className="ops-sse-tooltip-key">{statusText}</span>
+        </div>
+        <div className="ops-sse-tooltip-line">{`回放窗口：${sse.replayWindowSeconds ? `${Math.round(sse.replayWindowSeconds / 60)}分钟` : "—"}`}</div>
+        <div className="ops-sse-tooltip-line">
+          Last-Event-ID：<span className="mono">{sse.lastEventId ?? "—"}</span>
+        </div>
+        <div className="ops-sse-tooltip-line">{`最近 reset：${resetText}`}</div>
+      </div>
+    </div>
+  );
+}
+
+function formatCompactCount(n: number): string {
+  if (!Number.isFinite(n)) return "—";
+  const abs = Math.abs(n);
+  if (abs >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\\.0$/, "")}m`;
+  if (abs >= 1_000) return `${(n / 1_000).toFixed(1).replace(/\\.0$/, "")}k`;
+  return String(Math.round(n));
+}
+
+function sparkPath(values: number[], width: number, height: number): string | null {
+  if (!values.length) return null;
+  const n = values.length;
+  if (n === 1) return `M0 ${height / 2} L${width} ${height / 2}`;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const span = max - min || 1;
+  const pts = values.map((v, i) => {
+    const x = (i / (n - 1)) * width;
+    const y = height - ((v - min) / span) * height;
+    return { x, y };
+  });
+  return pts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(2)} ${p.y.toFixed(2)}`).join(" ");
+}
+
+function Sparkline({
+  values,
+  stroke,
+}: {
+  values: number[];
+  stroke: string;
+}) {
+  const w = 220;
+  const h = 28;
+  const d = sparkPath(values, w, h);
+  return (
+    <svg className="ops-spark" viewBox={`0 0 ${w} ${h}`} aria-hidden="true">
+      {d ? (
+        <>
+          <path className="ops-spark-fade" d={d} stroke={stroke} />
+          <path className="ops-spark-line" d={d} stroke={stroke} />
+        </>
+      ) : (
+        <line x1="0" y1={h / 2} x2={w} y2={h / 2} stroke="var(--trend-empty)" strokeWidth="2" />
+      )}
+    </svg>
+  );
+}
+
+export function OpsView({
+  fetchState = fetchOpsState,
+  createEventSource = defaultCreateEventSource,
+  range: rangeProp,
+  onRangeChange,
+  follow: followProp,
+  onFollowChange,
+  helpOpen = false,
+  onHelpOpenChange,
+  onSseUiChange,
+}: OpsViewProps = {}) {
+  const [rangeInternal, setRangeInternal] = useState<OpsRange>("24h");
+  const range = rangeProp ?? rangeInternal;
+  const setRange = onRangeChange ?? setRangeInternal;
+
+  const [followInternal, setFollowInternal] = useState<boolean>(true);
+  const follow = followProp ?? followInternal;
+  const setFollow = onFollowChange ?? setFollowInternal;
+
+  const [snap, setSnap] = useState<OpsStateResponse | null>(null);
+  const [loading, setLoading] = useState<boolean>(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [sseEpoch, setSseEpoch] = useState<number>(0);
+  const [search, setSearch] = useState<string>("");
+  const [sseUi, setSseUi] = useState<OpsSseUi>({
+    status: "reconnecting",
+    replayWindowSeconds: null,
+    lastEventId: null,
+    lastReset: null,
+  });
+  const [toast, setToast] = useState<{ text: string; tone: "warn" | "err" | "ok" } | null>(null);
+  const logRef = useRef<HTMLDivElement | null>(null);
+
+  const formatClock = useCallback((iso: string) => {
+    const ts = Date.parse(iso);
+    if (!Number.isFinite(ts)) return iso;
+    return new Date(ts).toLocaleTimeString("zh-CN", { hour12: false });
+  }, []);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    setErr(null);
+    try {
+      const next = await fetchState(range);
+      setSnap(next);
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, [fetchState, range]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  useEffect(() => {
+    onSseUiChange?.(sseUi);
+  }, [onSseUiChange, sseUi]);
+
+  useEffect(() => {
+    if (!toast) return;
+    const id = window.setTimeout(() => setToast(null), 6_000);
+    return () => window.clearTimeout(id);
+  }, [toast]);
+
+  useEffect(() => {
+    const url = `/api/ops/stream?range=${encodeURIComponent(range)}&epoch=${encodeURIComponent(
+      String(sseEpoch),
+    )}`;
+    const es = createEventSource(url);
+    let closed = false;
+
+    setSseUi((prev) => ({ ...prev, status: "reconnecting" }));
+
+    const noteEventId = (ev: MessageEvent) => {
+      const eventId = Number(ev.lastEventId || 0);
+      if (!Number.isFinite(eventId) || eventId <= 0) return;
+      setSseUi((prev) => ({
+        ...prev,
+        lastEventId: prev.lastEventId ? Math.max(prev.lastEventId, eventId) : eventId,
+      }));
+    };
+
+    es.onopen = () => {
+      if (!closed) setSseUi((prev) => ({ ...prev, status: "connected" }));
+    };
+    es.onerror = () => {
+      if (!closed)
+        setSseUi((prev) => (prev.status === "reset" ? prev : { ...prev, status: "reconnecting" }));
+    };
+
+    const onHello = (ev: MessageEvent) => {
+      noteEventId(ev);
+      try {
+        const data = JSON.parse(ev.data) as { replayWindowSeconds?: number };
+        const replayWindowSeconds = data.replayWindowSeconds;
+        if (typeof replayWindowSeconds === "number") {
+          setSseUi((prev) => ({ ...prev, replayWindowSeconds }));
+        }
+      } catch {
+        // ignore
+      }
+    };
+
+    const onMetrics = (ev: MessageEvent) => {
+      noteEventId(ev);
+      try {
+        const data = JSON.parse(ev.data) as { stats?: OpsStateResponse["stats"] };
+        const stats = data.stats;
+        if (!stats) return;
+        setSnap((prev) => (prev ? { ...prev, stats } : prev));
+      } catch {
+        // ignore
+      }
+    };
+
+    const onQueue = (ev: MessageEvent) => {
+      noteEventId(ev);
+      try {
+        const data = JSON.parse(ev.data) as { queue?: OpsStateResponse["queue"] };
+        const queue = data.queue;
+        if (!queue) return;
+        setSnap((prev) => (prev ? { ...prev, queue } : prev));
+      } catch {
+        // ignore
+      }
+    };
+
+    const onWorkers = (ev: MessageEvent) => {
+      noteEventId(ev);
+      try {
+        const data = JSON.parse(ev.data) as { workers?: OpsStateResponse["workers"] };
+        const workers = data.workers;
+        if (!workers) return;
+        setSnap((prev) => (prev ? { ...prev, workers } : prev));
+      } catch {
+        // ignore
+      }
+    };
+
+    const onTask = (ev: MessageEvent) => {
+      noteEventId(ev);
+      try {
+        const data = JSON.parse(ev.data) as {
+          phase?: "enqueued" | "started" | "finished";
+          key?: { fid: string; gid: string | null };
+          reasonCounts?: Record<string, number> | null;
+          run?: { runId: number; endedAt?: string | null; ok?: boolean | null } | null;
+        };
+        const phase = data.phase;
+        const key = data.key;
+        if (!phase || !key) return;
+        const keyStr = `${key.fid}:${key.gid ?? ""}`;
+        setSnap((prev) => {
+          if (!prev) return prev;
+          const byKey = new Map<string, OpsStateResponse["tasks"][number]>();
+          for (const t of prev.tasks) byKey.set(`${t.key.fid}:${t.key.gid ?? ""}`, t);
+          const existing = byKey.get(keyStr);
+
+          if (phase === "finished") {
+            byKey.delete(keyStr);
+            return { ...prev, tasks: Array.from(byKey.values()) };
+          }
+
+          const next: OpsStateResponse["tasks"][number] = {
+            key: { fid: key.fid, gid: key.gid },
+            state: phase === "started" ? "running" : (existing?.state ?? "pending"),
+            enqueuedAt: existing?.enqueuedAt ?? prev.serverTime,
+            reasonCounts: (data.reasonCounts ?? existing?.reasonCounts ?? {}) as Record<
+              string,
+              number
+            >,
+            lastRun: existing?.lastRun ?? null,
+          };
+          byKey.set(keyStr, next);
+          return { ...prev, tasks: Array.from(byKey.values()) };
+        });
+      } catch {
+        // ignore
+      }
+    };
+
+    const onLog = (ev: MessageEvent) => {
+      noteEventId(ev);
+      const eventId = Number(ev.lastEventId || 0);
+      try {
+        const data = JSON.parse(ev.data) as {
+          ts: string;
+          level: "debug" | "info" | "warn" | "error";
+          scope: string;
+          message: string;
+          meta?: unknown;
+        };
+        setSnap((prev) => {
+          if (!prev) return prev;
+          const next = {
+            ...prev,
+            logTail: [...prev.logTail, { eventId, ...data }].slice(-500),
+          };
+          return next;
+        });
+      } catch {
+        // ignore
+      }
+    };
+
+    const onReset = (ev: MessageEvent) => {
+      noteEventId(ev);
+      try {
+        const payload = JSON.parse(ev.data) as {
+          serverTime: string;
+          reason: string;
+          details?: string | null;
+        };
+        setSseUi((prev) => ({
+          ...prev,
+          status: "reset",
+          lastReset: {
+            serverTime: payload.serverTime,
+            reason: payload.reason,
+            details: payload.details ?? null,
+          },
+        }));
+        setToast({
+          tone: "warn",
+          text: `SSE 重置：${payload.reason} → 重新加载 snapshot…`,
+        });
+      } catch {
+        setSseUi((prev) => ({ ...prev, status: "reset" }));
+        setToast({ tone: "warn", text: "SSE 重置：重新加载 snapshot…" });
+      }
+      es.close();
+      void refresh();
+      setSseEpoch((v) => v + 1);
+    };
+
+    es.addEventListener("ops.hello", onHello as EventListener);
+    es.addEventListener("ops.metrics", onMetrics as EventListener);
+    es.addEventListener("ops.queue", onQueue as EventListener);
+    es.addEventListener("ops.worker", onWorkers as EventListener);
+    es.addEventListener("ops.task", onTask as EventListener);
+    es.addEventListener("ops.log", onLog as EventListener);
+    es.addEventListener("ops.reset", onReset as EventListener);
+
+    return () => {
+      closed = true;
+      es.close();
+    };
+  }, [range, refresh, sseEpoch, createEventSource]);
+
+  const setFollowNext = useCallback(
+    (next: boolean) => {
+      setFollow(next);
+    },
+    [setFollow],
+  );
+
+  const logLen = snap?.logTail.length ?? 0;
+  useEffect(() => {
+    if (!follow) return;
+    if (!logLen) return;
+    const el = logRef.current;
+    if (!el) return;
+    requestAnimationFrame(() => {
+      el.scrollTop = el.scrollHeight;
+    });
+  }, [follow, logLen]);
+
+  const filteredLogTail = useMemo(() => {
+    const items = snap?.logTail ?? [];
+    const q = search.trim().toLowerCase();
+    if (!q) return items;
+    return items.filter(
+      (it) => it.scope.toLowerCase().includes(q) || it.message.toLowerCase().includes(q),
+    );
+  }, [search, snap?.logTail]);
+
+  const recentNotifyFailure = useMemo(() => {
+    const items = snap?.logTail ?? [];
+    for (let i = items.length - 1; i >= 0; i -= 1) {
+      const it = items[i];
+      if ((it.level === "warn" || it.level === "error") && it.scope.startsWith("notify.")) {
+        return it.message;
+      }
+    }
+    return null;
+  }, [snap?.logTail]);
+
+  const workerConcurrency = snap?.workers.length ?? 0;
+  const rangeText = opsRangeLabel(range);
+
+  return (
+    <div className="panel ops-panel">
+      <div className="panel-section ops-surface">
+        {err ? <p className="error">{err}</p> : null}
+
+        {!snap ? (
+          <p className="muted">Loading…</p>
+        ) : (
+          <div className="ops-layout">
+            <div className="ops-kpi-grid">
+              <div
+                className="ops-kpi-card"
+                style={{ "--ops-accent": "var(--ops-green)" } as CSSProperties}
+              >
+                <div className="ops-kpi-head">
+                  <span className="ops-dot-ring" aria-hidden="true">
+                    <span className="ops-dot ok" />
+                  </span>
+                  <span className="ops-kpi-label">队列</span>
+                </div>
+                <div className="ops-kpi-value-row">
+                  <span className="ops-kpi-value">{formatCompactCount(snap.queue.pending)}</span>
+                  <span className="ops-kpi-unit">待处理</span>
+                </div>
+                <div className="ops-kpi-sub">{`运行中：${snap.queue.running} • 合并：${snap.queue.deduped}`}</div>
+                <div className="ops-kpi-meta">{`更新：${formatClock(snap.serverTime)}${loading ? "（刷新中）" : ""}`}</div>
+                <Sparkline values={snap.sparks.volume} stroke="var(--ops-green)" />
+              </div>
+
+              <div
+                className="ops-kpi-card"
+                style={{ "--ops-accent": "var(--ops-blue)" } as CSSProperties}
+              >
+                <div className="ops-kpi-head">
+                  <span className="ops-dot-ring" aria-hidden="true">
+                    <span className="ops-dot blue" />
+                  </span>
+                  <span className="ops-kpi-label">采集成功率</span>
+                </div>
+                <div className="ops-kpi-value-row">
+                  <span className="ops-kpi-value">{`${snap.stats.collection.successRatePct.toFixed(1)}%`}</span>
+                </div>
+                <div className="ops-kpi-sub">{`成功：${snap.stats.collection.success} • 失败：${snap.stats.collection.failure}`}</div>
+                <div className="ops-kpi-meta">{`口径：${rangeText}`}</div>
+                <Sparkline values={snap.sparks.collectionSuccessRatePct} stroke="var(--ops-blue)" />
+              </div>
+
+              <div
+                className="ops-kpi-card"
+                style={{ "--ops-accent": "var(--ops-purple)" } as CSSProperties}
+              >
+                <div className="ops-kpi-head">
+                  <span className="ops-dot-ring" aria-hidden="true">
+                    <span className="ops-dot purple" />
+                  </span>
+                  <span className="ops-kpi-label">通知成功率</span>
+                </div>
+                <div className="ops-kpi-value-row">
+                  <span className="ops-kpi-value">
+                    {snap.stats.notify.telegram?.total
+                      ? `${snap.stats.notify.telegram.successRatePct.toFixed(1)}%`
+                      : "—"}
+                  </span>
+                  <span className="ops-kpi-unit">Telegram</span>
+                </div>
+                <div className="ops-kpi-sub">
+                  {`Web Push：${
+                    snap.stats.notify.webPush?.total
+                      ? `${snap.stats.notify.webPush.successRatePct.toFixed(1)}%`
+                      : "—"
+                  }`}
+                </div>
+                <div className="ops-kpi-meta">{`最近失败：${recentNotifyFailure ?? "—"}`}</div>
+                <Sparkline
+                  values={snap.sparks.notifyTelegramSuccessRatePct}
+                  stroke="var(--ops-purple)"
+                />
+              </div>
+
+              <div
+                className="ops-kpi-card"
+                style={{ "--ops-accent": "var(--ops-orange)" } as CSSProperties}
+              >
+                <div className="ops-kpi-head">
+                  <span className="ops-dot-ring" aria-hidden="true">
+                    <span className="ops-dot orange" />
+                  </span>
+                  <span className="ops-kpi-label">采集量</span>
+                </div>
+                <div className="ops-kpi-value-row">
+                  <span className="ops-kpi-value">
+                    {formatCompactCount(snap.stats.collection.total)}
+                  </span>
+                  <span className="ops-kpi-unit">任务</span>
+                </div>
+                <div className="ops-kpi-sub">{`速率：${
+                  range === "24h"
+                    ? `${Math.round(snap.stats.collection.total / 24)}/小时`
+                    : range === "7d"
+                      ? `${Math.round(snap.stats.collection.total / 7)}/天`
+                      : `${Math.round(snap.stats.collection.total / 30)}/天`
+                } • 失败：${snap.stats.collection.failure}`}</div>
+                <div className="ops-kpi-meta">{`口径：${rangeText}`}</div>
+                <Sparkline values={snap.sparks.volume} stroke="var(--ops-orange)" />
+              </div>
+            </div>
+
+            <div className="ops-block-grid">
+              <section className="ops-block">
+                <div className="ops-block-head">
+                  <div className="ops-block-title">{`工作者（并发=${workerConcurrency}）`}</div>
+                </div>
+                <div className="ops-block-divider" />
+                <div className="ops-workers">
+                  {snap.workers.map((w) => {
+                    const idx = Number(w.workerId.replace(/^w/, ""));
+                    const name = Number.isFinite(idx) ? `工作者-${idx}` : w.workerId;
+                    const startedAtMs = w.startedAt ? Date.parse(w.startedAt) : Number.NaN;
+                    const nowMs = Date.now();
+                    const elapsedMs = Number.isFinite(startedAtMs)
+                      ? Math.max(0, nowMs - startedAtMs)
+                      : 0;
+                    const elapsedText =
+                      w.state === "running" && elapsedMs
+                        ? `耗时：${(elapsedMs / 1000).toFixed(1)}s`
+                        : null;
+
+                    const dotClass =
+                      w.state === "running"
+                        ? "ops-dot ok"
+                        : w.state === "error"
+                          ? "ops-dot err"
+                          : "ops-dot idle";
+
+                    return (
+                      <div className="ops-worker" key={w.workerId}>
+                        <div className="ops-worker-line1">
+                          <span className="ops-dot-ring" aria-hidden="true">
+                            <span className={dotClass} />
+                          </span>
+                          <span className="muted">{name}</span>
+                        </div>
+                        <div className="ops-worker-line2">
+                          <span className="muted">当前：</span>
+                          {w.task ? (
+                            <span className="mono">{`key=(fid=${w.task.fid}, gid=${w.task.gid ?? "-"})`}</span>
+                          ) : (
+                            <span className="muted">-</span>
+                          )}
+                          <span className="muted ops-worker-spacer" />
+                          {elapsedText ? <span className="muted">{elapsedText}</span> : null}
+                          {w.state !== "running" ? (
+                            <span className="muted">{`最近错误：${w.lastError?.message ?? "-"}`}</span>
+                          ) : null}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+
+              <section className="ops-block">
+                <div className="ops-block-head">
+                  <div className="ops-block-title">队列任务</div>
+                </div>
+                <div className="ops-block-divider" />
+                <div className="ops-tasks">
+                  <div className="ops-tasks-head muted">
+                    <div>状态</div>
+                    <div>键</div>
+                    <div>原因</div>
+                    <div className="ops-tasks-right">最近结果</div>
+                  </div>
+                  <div className="ops-block-divider thin" />
+                  {snap.tasks.length ? (
+                    snap.tasks.map((t) => {
+                      const dotClass = t.state === "running" ? "ops-dot ok" : "ops-dot pend";
+                      const reasons = Object.entries(t.reasonCounts)
+                        .map(([k, v]) => {
+                          const short =
+                            k === "manual_refresh" || k === "manual_ops"
+                              ? "manual"
+                              : k === "poller_due"
+                                ? "poller_due"
+                                : k;
+                          return `${short}=${v}`;
+                        })
+                        .join(", ");
+                      const lastText = t.lastRun
+                        ? `${t.lastRun.ok ? "成功" : "失败"} ${formatClock(t.lastRun.endedAt)}`
+                        : "—";
+                      return (
+                        <div className="ops-task" key={`${t.key.fid}:${t.key.gid ?? ""}`}>
+                          <div className="ops-task-state">
+                            <span className="ops-dot-ring" aria-hidden="true">
+                              <span className={dotClass} />
+                            </span>
+                          </div>
+                          <div className="mono">{`${t.key.fid} / ${t.key.gid ?? "-"}`}</div>
+                          <div className="mono" title={reasons || "—"}>
+                            {reasons || "—"}
+                          </div>
+                          <div className="muted ops-tasks-right">{lastText}</div>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <div className="muted ops-empty">当前无 pending/running 任务</div>
+                  )}
+                </div>
+              </section>
+            </div>
+
+            <section className="ops-block ops-log">
+              <div className="ops-block-head ops-log-headbar">
+                <div className="ops-block-title">{`实时日志（N=${filteredLogTail.length}）`}</div>
+                <button
+                  type="button"
+                  className={`pill sm ${follow ? "on" : ""}`}
+                  onClick={() => setFollowNext(!follow)}
+                >
+                  {follow ? "跟随：开" : "跟随：关"}
+                </button>
+                <div className="pill search sm ops-log-search" style={{ width: 240 }}>
+                  <span className="pill-prefix">搜索：</span>
+                  <input
+                    value={search}
+                    placeholder="关键字…"
+                    onChange={(e) => setSearch(e.target.value)}
+                  />
+                </div>
+                <button
+                  type="button"
+                  className="pill warn sm"
+                  onClick={() => {
+                    setSearch("");
+                    setSnap((prev) => (prev ? { ...prev, logTail: [] } : prev));
+                    setFollowNext(true);
+                  }}
+                >
+                  清空
+                </button>
+              </div>
+              <div className="ops-block-divider" />
+
+              {toast ? (
+                <div className={`ops-toast ${toast.tone}`}>
+                  <span className="mono">{toast.text}</span>
+                </div>
+              ) : null}
+
+              {!follow ? (
+                <div className="ops-follow-paused">
+                  <span className="muted">已暂停跟随（你已上滚）</span>
+                  <div className="ops-follow-actions">
+                    <button
+                      type="button"
+                      className="pill sm"
+                      onClick={() => {
+                        const el = logRef.current;
+                        if (el) el.scrollTop = el.scrollHeight;
+                      }}
+                    >
+                      跳到底部
+                    </button>
+                    <button
+                      type="button"
+                      className="pill sm on"
+                      onClick={() => setFollowNext(true)}
+                    >
+                      恢复跟随
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              <div
+                className="ops-logbox"
+                ref={logRef}
+                onScroll={(e) => {
+                  const el = e.currentTarget;
+                  const nearBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 8;
+                  setFollowNext(nearBottom);
+                }}
+              >
+                {filteredLogTail.map((it) => (
+                  <div className={`ops-log-row lvl-${it.level}`} key={it.eventId}>
+                    <div className="mono">{formatClock(it.ts)}</div>
+                    <div className="mono">{it.scope}</div>
+                    <div className="ops-log-msg">{it.message}</div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          </div>
+        )}
+
+        {helpOpen ? (
+          <div
+            className="ops-modal-backdrop"
+            onMouseDown={(e) => {
+              if (e.target === e.currentTarget) onHelpOpenChange?.(false);
+            }}
+            role="presentation"
+          >
+            <div className="ops-modal">
+              <div className="ops-modal-title">帮助</div>
+              <div className="ops-modal-body">
+                <div className="muted">- 先拉 snapshot，再用 SSE 实时更新（断线自动重连）。</div>
+                <div className="muted">
+                  - 若携带的 <span className="mono">Last-Event-ID</span> 过旧/非法，会收到{" "}
+                  <span className="mono">ops.reset</span> 并自动重拉 snapshot。
+                </div>
+                <div className="muted">- “跟随”只影响日志 tail 的自动滚动。</div>
+                <div className="muted">- “口径”切换会刷新成功率与推送成功率统计。</div>
+              </div>
+              <div className="ops-modal-actions">
+                <button type="button" className="pill" onClick={() => onHelpOpenChange?.(false)}>
+                  关闭
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
     </div>
   );

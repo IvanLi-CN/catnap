@@ -38,6 +38,12 @@
   - `stats`:
     - `collection`: `{ total: number, success: number, failure: number, successRatePct: number }`
     - `notify`: `{ telegram?: {...}, webPush?: {...} }`（每渠道同样结构）
+  - `sparks`（用于 KPI 卡片 sparkline）:
+    - `bucketSeconds`: number（bucket 粒度；24h=3600，7d/30d=86400）
+    - `volume`: number[]（每 bucket 的任务量）
+    - `collectionSuccessRatePct`: number[]（每 bucket 的采集成功率百分比）
+    - `notifyTelegramSuccessRatePct`: number[]（每 bucket 的 Telegram 成功率百分比）
+    - `notifyWebPushSuccessRatePct`: number[]（每 bucket 的 Web Push 成功率百分比）
   - `logTail`: array of（最近 N 条）
     - `eventId`: number
     - `ts`: RFC3339 string

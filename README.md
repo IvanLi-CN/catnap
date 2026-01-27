@@ -7,6 +7,7 @@
 - 监控 `lazycats.vip/cart` 的库存变化
 - Telegram 通知
 - Web Push（可选）
+- 采集观测台（`#ops`：全局队列/worker/成功率/推送成功率 + SSE 日志 tail）
 - SQLite 持久化（默认）
 
 ## 架构与访问模型
@@ -63,6 +64,7 @@ cargo run
 然后启动 Caddy（按你的安装方式启动即可），用浏览器访问：
 
 - `http://127.0.0.1:8080/`
+- `http://127.0.0.1:8080/#ops`
 
 ### 5) API 试跑（无需浏览器）
 
@@ -90,6 +92,11 @@ curl -sS \
 - `CATNAP_DEFAULT_POLL_JITTER_PCT`：默认抖动比例（0..=1），默认 `0.1`
 - `CATNAP_LOG_RETENTION_DAYS`：日志保留天数（>= 0），默认 `7`
 - `CATNAP_LOG_RETENTION_MAX_ROWS`：日志最大行数（>= 0），默认 `10000`
+- `CATNAP_OPS_WORKER_CONCURRENCY`：采集 worker 并发数（>= 1），默认 `2`
+- `CATNAP_OPS_SSE_REPLAY_WINDOW_SECONDS`：ops SSE 回放窗口（秒，>= 1），默认 `3600`
+- `CATNAP_OPS_LOG_RETENTION_DAYS`：ops 事件/运行记录保留天数（>= 0），默认 `7`
+- `CATNAP_OPS_LOG_TAIL_LIMIT_DEFAULT`：`/api/ops/state` 默认 `logLimit`，默认 `200`
+- `CATNAP_OPS_QUEUE_TASK_LIMIT_DEFAULT`：`/api/ops/state` 默认 `taskLimit`，默认 `200`
 
 ## 通知配置
 

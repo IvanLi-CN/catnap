@@ -30,6 +30,8 @@ pub fn router(state: AppState) -> Router {
         .route("/inventory/history", post(post_inventory_history))
         .route("/catalog/refresh", post(post_catalog_refresh))
         .route("/catalog/refresh/events", get(get_catalog_refresh_events))
+        .route("/ops/state", get(get_ops_state))
+        .route("/ops/stream", get(get_ops_stream))
         .route("/refresh", post(post_refresh))
         .route("/refresh/status", get(get_refresh_status))
         .route("/monitoring", get(get_monitoring))
@@ -244,6 +246,218 @@ async fn get_catalog_refresh_events(
             .interval(Duration::from_secs(15))
             .text("keep-alive"),
     )
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OpsStateQuery {
+    range: Option<String>,
+    log_limit: Option<i64>,
+    task_limit: Option<i64>,
+}
+
+async fn get_ops_state(
+    State(state): State<AppState>,
+    _user: axum::extract::Extension<UserView>,
+    Query(q): Query<OpsStateQuery>,
+) -> Result<Json<crate::ops::OpsStateSnapshot>, (StatusCode, Json<ErrorResponse>)> {
+    let range = match q.range.as_deref().map(crate::ops::OpsRange::parse) {
+        Some(Some(r)) => r,
+        Some(None) => return Err(json_invalid_argument()),
+        None => crate::ops::OpsRange::H24,
+    };
+    if q.log_limit.is_some_and(|v| !(1..=500).contains(&v))
+        || q.task_limit.is_some_and(|v| !(1..=500).contains(&v))
+    {
+        return Err(json_invalid_argument());
+    }
+    let snap = state
+        .ops
+        .snapshot(range, q.log_limit, q.task_limit)
+        .await
+        .map_err(|_| json_internal_error())?;
+    Ok(Json(snap))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OpsStreamQuery {
+    range: Option<String>,
+}
+
+async fn get_ops_stream(
+    State(state): State<AppState>,
+    _user: axum::extract::Extension<UserView>,
+    Query(q): Query<OpsStreamQuery>,
+    headers: axum::http::HeaderMap,
+) -> Result<
+    Sse<impl futures_util::stream::Stream<Item = Result<Event, Infallible>>>,
+    (StatusCode, Json<ErrorResponse>),
+> {
+    let range = match q.range.as_deref().map(crate::ops::OpsRange::parse) {
+        Some(Some(r)) => r,
+        Some(None) => return Err(json_invalid_argument()),
+        None => crate::ops::OpsRange::H24,
+    };
+
+    let now = OffsetDateTime::now_utc();
+    let server_time = now
+        .format(&Rfc3339)
+        .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string());
+    let replay_window_seconds = state.config.ops_sse_replay_window_seconds.max(1);
+    let cutoff = now
+        .saturating_sub(time::Duration::seconds(replay_window_seconds))
+        .format(&Rfc3339)
+        .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string());
+
+    let cursor_id = state.ops.cursor_id().await.unwrap_or(0);
+
+    let hello_payload = serde_json::json!({
+        "serverTime": server_time,
+        "range": range.as_str(),
+        "replayWindowSeconds": replay_window_seconds,
+    });
+    let hello_event = Event::default()
+        .id(cursor_id.to_string())
+        .event("ops.hello")
+        .data(serde_json::to_string(&hello_payload).unwrap_or_else(|_| "{}".to_string()));
+
+    let stats = state
+        .ops
+        .stats(range, now)
+        .await
+        .unwrap_or(crate::ops::OpsStatsView {
+            collection: crate::ops::OpsRateBucketView {
+                total: 0,
+                success: 0,
+                failure: 0,
+                success_rate_pct: 0.0,
+            },
+            notify: crate::ops::OpsNotifyStatsView {
+                telegram: None,
+                web_push: None,
+            },
+        });
+    let metrics_payload = serde_json::json!({
+        "serverTime": server_time,
+        "range": range.as_str(),
+        "stats": stats,
+    });
+    let metrics_event = Event::default()
+        .id(cursor_id.to_string())
+        .event("ops.metrics")
+        .data(serde_json::to_string(&metrics_payload).unwrap_or_else(|_| "{}".to_string()));
+
+    let last_event_id = headers
+        .get("last-event-id")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|v| !v.is_empty());
+
+    let mut reset_reason: Option<&'static str> = None;
+    let mut reset_details: Option<String> = None;
+    let mut replay: Vec<crate::ops::StoredOpsEvent> = Vec::new();
+
+    if let Some(raw) = last_event_id {
+        match raw.parse::<i64>() {
+            Ok(id) if id > 0 => {
+                let min_id = state.ops.min_replay_id_since(&cutoff).await.unwrap_or(None);
+                match min_id {
+                    Some(min_id) if id >= min_id => {
+                        replay = state
+                            .ops
+                            .replay_since(id, &cutoff)
+                            .await
+                            .unwrap_or_default();
+                    }
+                    _ => {
+                        reset_reason = Some("stale_last_event_id");
+                        reset_details = Some(format!("last_event_id={id} cutoff={cutoff}"));
+                    }
+                }
+            }
+            _ => {
+                reset_reason = Some("invalid_last_event_id");
+                reset_details = Some(format!("last_event_id={raw}"));
+            }
+        }
+    }
+
+    let mut initial_items: Vec<Result<Event, Infallible>> = Vec::new();
+    initial_items.push(Ok::<_, Infallible>(hello_event));
+    initial_items.push(Ok::<_, Infallible>(metrics_event));
+    if let Some(reason) = reset_reason {
+        let payload = serde_json::json!({
+            "serverTime": server_time,
+            "reason": reason,
+            "details": reset_details,
+        });
+        initial_items.push(Ok::<_, Infallible>(
+            Event::default()
+                .id(cursor_id.to_string())
+                .event("ops.reset")
+                .data(serde_json::to_string(&payload).unwrap_or_else(|_| "{}".to_string())),
+        ));
+    }
+    for e in replay {
+        initial_items.push(Ok::<_, Infallible>(
+            Event::default()
+                .id(e.id.to_string())
+                .event(e.event)
+                .data(e.data_json),
+        ));
+    }
+    let initial_stream = stream::iter(initial_items);
+
+    let rx = state.ops.subscribe();
+
+    let updates_stream = stream::unfold(rx, |mut rx| async {
+        loop {
+            match rx.recv().await {
+                Ok(ev) => {
+                    let out = Event::default()
+                        .id(ev.id.to_string())
+                        .event(ev.event)
+                        .data(ev.data_json);
+                    return Some((Ok::<_, Infallible>(out), rx));
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
+            }
+        }
+    });
+
+    let metrics_stream = stream::unfold((state.clone(), range), |(state, range)| async move {
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        let now = OffsetDateTime::now_utc();
+        let server_time = now
+            .format(&Rfc3339)
+            .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string());
+        let stats = state.ops.stats(range, now).await.ok()?;
+        let id = state.ops.cursor_id().await.unwrap_or(0);
+        let payload = serde_json::json!({
+            "serverTime": server_time,
+            "range": range.as_str(),
+            "stats": stats,
+        });
+        Some((
+            Ok::<_, Infallible>(
+                Event::default()
+                    .id(id.to_string())
+                    .event("ops.metrics")
+                    .data(serde_json::to_string(&payload).unwrap_or_else(|_| "{}".to_string())),
+            ),
+            (state, range),
+        ))
+    });
+
+    let combined =
+        futures_util::stream::select(initial_stream.chain(updates_stream), metrics_stream);
+    Ok(Sse::new(combined).keep_alive(
+        KeepAlive::new()
+            .interval(Duration::from_secs(15))
+            .text("keep-alive"),
+    ))
 }
 
 async fn get_refresh_status(

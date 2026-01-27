@@ -1,0 +1,273 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900">
+  <defs>
+    <style>
+      .bg { fill: #0b1220; }
+      .surface { fill: #0f1b33; stroke: none; }
+      .surface2 { fill: #0c172e; stroke: none; }
+      .line { stroke: rgba(27, 42, 74, 0.55); stroke-width: 1; }
+      .title { fill: #ffffff; font: 22px Inter, Arial, sans-serif; font-weight: 800; }
+      .h2 { fill: #e6eefc; font: 16px Inter, Arial, sans-serif; font-weight: 800; }
+      .text { fill: #e6eefc; font: 14px Inter, Arial, sans-serif; }
+      .muted { fill: #9bb0d0; font: 14px Inter, Arial, sans-serif; }
+      .mono { fill: #b9c7e6; font: 12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
+
+      .navLabel { fill: #cfe0ff; font: 14px Inter, Arial, sans-serif; font-weight: 650; }
+      .navLabelActive { fill: #ffffff; font: 14px Inter, Arial, sans-serif; font-weight: 850; }
+      .navAccent { fill: #2a8a55; }
+
+      .pill { fill: #101f3a; stroke: rgba(27, 42, 74, 0.55); stroke-width: 1; }
+      .pillOn { fill: #173428; stroke: rgba(42, 138, 85, 0.85); stroke-width: 1; }
+      .pillWarn { fill: #3b2f18; stroke: rgba(138, 106, 42, 0.9); stroke-width: 1; }
+      .pillErr { fill: #3b1a1a; stroke: rgba(138, 42, 42, 0.9); stroke-width: 1; }
+      .badgeText { fill: #e6eefc; font: 12px Inter, Arial, sans-serif; font-weight: 700; }
+      .badgeMuted { fill: #9bb0d0; font: 12px Inter, Arial, sans-serif; font-weight: 650; }
+
+      .kpiCard { fill: #0c172e; stroke: rgba(36, 58, 96, 0.9); stroke-width: 1; }
+      .kpiGlow { fill: url(#kpiGlow); opacity: 0.55; }
+      .kpiLabel { fill: #cfe0ff; font: 12px Inter, Arial, sans-serif; font-weight: 800; letter-spacing: 0.02em; }
+      .kpiValue { fill: #ffffff; font: 30px Inter, Arial, sans-serif; font-weight: 900; }
+      .kpiUnit { fill: #9bb0d0; font: 12px Inter, Arial, sans-serif; font-weight: 750; }
+      .kpiSub { fill: #9bb0d0; font: 12px Inter, Arial, sans-serif; font-weight: 650; }
+      .kpiMeta { fill: #7f97bf; font: 11px Inter, Arial, sans-serif; font-weight: 650; }
+      .spark { fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; opacity: 0.95; }
+      .sparkFade { fill: none; stroke-width: 6; stroke-linecap: round; stroke-linejoin: round; opacity: 0.18; }
+
+      .tip { fill: #0b1428; stroke: rgba(36, 58, 96, 0.95); stroke-width: 1; }
+      .tipTitle { fill: #e6eefc; font: 12px Inter, Arial, sans-serif; font-weight: 850; }
+      .tipText { fill: #9bb0d0; font: 12px Inter, Arial, sans-serif; font-weight: 650; }
+      .sseDot { fill: #2a8a55; }
+      .sseRing { fill: #101f3a; stroke: rgba(36, 58, 96, 0.95); stroke-width: 1; }
+
+      .stRing { fill: #101f3a; stroke: rgba(36, 58, 96, 0.95); stroke-width: 1; }
+      .stOk { fill: #2a8a55; }
+      .stIdle { fill: #5a6b86; }
+      .stPend { fill: #3a7bd5; }
+      .stErr { fill: #ef4444; }
+    </style>
+
+    <filter id="cardShadow" x="-20%" y="-20%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#000000" flood-opacity="0.35"/>
+    </filter>
+
+    <radialGradient id="kpiGlow" cx="0.12" cy="0.10" r="1.0">
+      <stop offset="0%" stop-color="#1a3a68" stop-opacity="0.85"/>
+      <stop offset="55%" stop-color="#0c172e" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#0c172e" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1440" height="900"/>
+
+  <!-- Layout:
+       outer padding=24
+       top bar: y=24 h=64
+       content y=112 (gap=24)
+       nav: x=24 w=240
+       main: x=288 w=1128
+       main inner: x=312..1392, y=136..852 -->
+
+  <!-- Top bar -->
+  <rect class="surface" x="24" y="24" width="1392" height="64" rx="14"/>
+  <text class="title" x="48" y="58">Catnap • 采集观测台</text>
+
+  <rect class="pill" x="992" y="40" width="168" height="32" rx="10"/>
+  <text class="badgeText" x="1008" y="61">口径：24小时 ▼</text>
+
+  <rect class="pillOn" x="1176" y="40" width="152" height="32" rx="10"/>
+  <text class="badgeText" x="1192" y="61">跟随：开</text>
+
+  <rect class="pill" x="1344" y="40" width="72" height="32" rx="10"/>
+  <text class="badgeText" x="1360" y="61">帮助</text>
+
+  <!-- SSE indicator (not a primary status): show details on hover tooltip -->
+  <g id="sse-indicator">
+    <circle class="sseRing" cx="840" cy="56" r="12"/>
+    <circle class="sseDot" cx="840" cy="56" r="5"/>
+    <text class="badgeMuted" x="860" y="61">SSE</text>
+  </g>
+
+  <!-- Tooltip is documented separately in `ui/sse-tooltip.svg`. -->
+
+  <!-- Left nav -->
+  <rect class="surface" x="24" y="112" width="240" height="764" rx="14"/>
+  <text class="h2" x="48" y="148">导航</text>
+  <text class="navLabel" x="56" y="194">库存监控</text>
+  <text class="navLabel" x="56" y="234">全部产品</text>
+  <text class="navLabel" x="56" y="274">系统设置</text>
+  <text class="navLabel" x="56" y="314">日志</text>
+  <rect class="navAccent" x="40" y="336" width="4" height="24" rx="2"/>
+  <text class="navLabelActive" x="56" y="354">采集观测台</text>
+
+  <!-- Main -->
+  <rect class="surface" x="288" y="112" width="1128" height="764" rx="14"/>
+
+  <!-- Overview cards row -->
+  <!-- KPI cards: big number + secondary stats + subtle sparkline -->
+  <g filter="url(#cardShadow)">
+    <path class="kpiCard" d="M312 136 H564 V280 A16 16 0 0 1 548 296 H328 A16 16 0 0 1 312 280 Z"/>
+    <path class="kpiGlow" d="M312 136 H564 V280 A16 16 0 0 1 548 296 H328 A16 16 0 0 1 312 280 Z"/>
+    <rect x="311.5" y="136" width="253" height="4" fill="#2a8a55"/>
+    <circle cx="344" cy="168" r="10" fill="#101f3a" stroke="rgba(27, 42, 74, 0.75)" stroke-width="1"/>
+    <circle cx="344" cy="168" r="4" fill="#2a8a55"/>
+    <text class="kpiLabel" x="362" y="172">队列</text>
+
+    <text class="kpiValue" x="336" y="214">18</text>
+    <text class="kpiUnit" x="386" y="214">待处理</text>
+    <text class="kpiSub" x="336" y="240">运行中：2 • 合并：31</text>
+    <text class="kpiMeta" x="336" y="262">更新：12:34:56</text>
+
+    <path class="sparkFade" d="M336 284 C356 268, 374 288, 396 276 S440 260, 464 272 S506 292, 540 276" stroke="#2a8a55"/>
+    <path class="spark" d="M336 284 C356 268, 374 288, 396 276 S440 260, 464 272 S506 292, 540 276" stroke="#2a8a55"/>
+  </g>
+
+  <g filter="url(#cardShadow)">
+    <path class="kpiCard" d="M588 136 H840 V280 A16 16 0 0 1 824 296 H604 A16 16 0 0 1 588 280 Z"/>
+    <path class="kpiGlow" d="M588 136 H840 V280 A16 16 0 0 1 824 296 H604 A16 16 0 0 1 588 280 Z"/>
+    <rect x="587.5" y="136" width="253" height="4" fill="#3a7bd5"/>
+    <circle cx="620" cy="168" r="10" fill="#101f3a" stroke="rgba(27, 42, 74, 0.75)" stroke-width="1"/>
+    <circle cx="620" cy="168" r="4" fill="#3a7bd5"/>
+    <text class="kpiLabel" x="638" y="172">采集成功率</text>
+
+    <text class="kpiValue" x="612" y="214">98.7%</text>
+    <text class="kpiSub" x="612" y="240">成功：1523 • 失败：20</text>
+    <text class="kpiMeta" x="612" y="262">口径：24小时</text>
+
+    <path class="sparkFade" d="M612 284 C632 274, 652 286, 676 272 S724 258, 748 270 S796 296, 816 268" stroke="#3a7bd5"/>
+    <path class="spark" d="M612 284 C632 274, 652 286, 676 272 S724 258, 748 270 S796 296, 816 268" stroke="#3a7bd5"/>
+  </g>
+
+  <g filter="url(#cardShadow)">
+    <path class="kpiCard" d="M864 136 H1116 V280 A16 16 0 0 1 1100 296 H880 A16 16 0 0 1 864 280 Z"/>
+    <path class="kpiGlow" d="M864 136 H1116 V280 A16 16 0 0 1 1100 296 H880 A16 16 0 0 1 864 280 Z"/>
+    <rect x="863.5" y="136" width="253" height="4" fill="#7a5de8"/>
+    <circle cx="896" cy="168" r="10" fill="#101f3a" stroke="rgba(27, 42, 74, 0.75)" stroke-width="1"/>
+    <circle cx="896" cy="168" r="4" fill="#7a5de8"/>
+    <text class="kpiLabel" x="914" y="172">通知成功率</text>
+
+    <text class="kpiValue" x="888" y="214">99.2%</text>
+    <text class="kpiUnit" x="980" y="214">Telegram</text>
+    <text class="kpiSub" x="888" y="240">Web Push：96.4%</text>
+    <text class="kpiMeta" x="888" y="262">最近失败：Web Push http 500</text>
+
+    <path class="sparkFade" d="M888 284 C906 270, 926 286, 948 274 S996 262, 1018 270 S1060 292, 1092 278" stroke="#7a5de8"/>
+    <path class="spark" d="M888 284 C906 270, 926 286, 948 274 S996 262, 1018 270 S1060 292, 1092 278" stroke="#7a5de8"/>
+  </g>
+
+  <g filter="url(#cardShadow)">
+    <path class="kpiCard" d="M1140 136 H1392 V280 A16 16 0 0 1 1376 296 H1156 A16 16 0 0 1 1140 280 Z"/>
+    <path class="kpiGlow" d="M1140 136 H1392 V280 A16 16 0 0 1 1376 296 H1156 A16 16 0 0 1 1140 280 Z"/>
+    <rect x="1139.5" y="136" width="253" height="4" fill="#f59e0b"/>
+    <circle cx="1172" cy="168" r="10" fill="#101f3a" stroke="rgba(27, 42, 74, 0.75)" stroke-width="1"/>
+    <circle cx="1172" cy="168" r="4" fill="#f59e0b"/>
+    <text class="kpiLabel" x="1190" y="172">采集量</text>
+
+    <text class="kpiValue" x="1164" y="214">1.5k</text>
+    <text class="kpiUnit" x="1234" y="214">任务</text>
+    <text class="kpiSub" x="1164" y="240">速率：64/小时 • 失败：20</text>
+    <text class="kpiMeta" x="1164" y="262">口径：24小时</text>
+
+    <path class="sparkFade" d="M1164 284 C1182 264, 1206 292, 1232 272 S1276 260, 1296 276 S1338 296, 1368 274" stroke="#f59e0b"/>
+    <path class="spark" d="M1164 284 C1182 264, 1206 292, 1232 272 S1276 260, 1296 276 S1338 296, 1368 274" stroke="#f59e0b"/>
+  </g>
+
+  <!-- Workers (left) -->
+  <rect class="surface2" x="312" y="320" width="528" height="240" rx="14"/>
+  <text class="h2" x="336" y="356">工作者（并发=2）</text>
+  <line class="line" x1="336" y1="374" x2="816" y2="374"/>
+
+  <!-- Worker item: 2 lines (line 1 = identity + status, line 2 = current work/details) -->
+  <!-- Worker 1 -->
+  <g>
+    <title>状态：运行中</title>
+    <circle class="stRing" cx="348" cy="400" r="10"/>
+    <circle class="stOk" cx="348" cy="400" r="4"/>
+  </g>
+  <text class="muted" x="368" y="406">工作者-1</text>
+  <text class="muted" x="368" y="430">当前：</text>
+  <text class="mono" x="410" y="430">key=(fid=7, gid=40)</text>
+  <text class="muted" x="650" y="430">耗时：3.2s</text>
+
+  <!-- Worker 2 -->
+  <g>
+    <title>状态：空闲</title>
+    <circle class="stRing" cx="348" cy="468" r="10"/>
+    <circle class="stIdle" cx="348" cy="468" r="4"/>
+  </g>
+  <text class="muted" x="368" y="474">工作者-2</text>
+  <text class="muted" x="368" y="498">当前：</text>
+  <text class="muted" x="410" y="498">-</text>
+  <text class="muted" x="456" y="498">最近错误：-</text>
+
+  <!-- Queue tasks (right) -->
+  <rect class="surface2" x="864" y="320" width="528" height="240" rx="14"/>
+  <text class="h2" x="888" y="356">队列任务</text>
+  <line class="line" x1="888" y1="374" x2="1368" y2="374"/>
+
+  <text class="muted" x="888" y="404">状态</text>
+  <text class="muted" x="914" y="404">键</text>
+  <text class="muted" x="1068" y="404">原因</text>
+  <text class="muted" x="1368" y="404" text-anchor="end">最近结果</text>
+  <line class="line" x1="888" y1="416" x2="1368" y2="416"/>
+
+  <g>
+    <title>状态：运行</title>
+    <circle class="stRing" cx="896" cy="440" r="10"/>
+    <circle class="stOk" cx="896" cy="440" r="4"/>
+  </g>
+  <text class="mono" x="914" y="446">7 / 40</text>
+  <text class="mono" x="1068" y="446">poller_due=12</text>
+  <text class="muted" x="1368" y="446" text-anchor="end">成功 12:34:12</text>
+
+  <g>
+    <title>状态：排队</title>
+    <circle class="stRing" cx="896" cy="476" r="10"/>
+    <circle class="stPend" cx="896" cy="476" r="4"/>
+  </g>
+  <text class="mono" x="914" y="482">2 / 56</text>
+  <text class="mono" x="1068" y="482">poller_due=3, manual=1</text>
+  <text class="muted" x="1368" y="482" text-anchor="end">失败 12:20:01</text>
+
+  <g>
+    <title>状态：排队</title>
+    <circle class="stRing" cx="896" cy="512" r="10"/>
+    <circle class="stPend" cx="896" cy="512" r="4"/>
+  </g>
+  <text class="mono" x="914" y="518">2 / -</text>
+  <text class="mono" x="1068" y="518">poller_due=9</text>
+  <text class="muted" x="1368" y="518" text-anchor="end">-</text>
+
+  <!-- Live log tail -->
+  <rect class="surface2" x="312" y="584" width="1080" height="268" rx="14"/>
+  <text class="h2" x="336" y="620">实时日志（N=200）</text>
+  <rect class="pillOn" x="920" y="604" width="120" height="28" rx="10"/>
+  <text class="badgeText" x="936" y="623">跟随：开</text>
+  <rect class="pill" x="1052" y="604" width="216" height="28" rx="10"/>
+  <text class="badgeMuted" x="1068" y="623">搜索：关键字…</text>
+  <rect class="pillWarn" x="1280" y="604" width="88" height="28" rx="12"/>
+  <text class="badgeText" x="1324" y="618" text-anchor="middle" dominant-baseline="middle">清空</text>
+
+  <line class="line" x1="336" y1="636" x2="1368" y2="636"/>
+
+  <text class="mono" x="336" y="664">12:34:12</text>
+  <text class="mono" x="420" y="664">ops.task</text>
+  <text class="text" x="516" y="664">开始 key=(7,40) 原因=poller_due</text>
+
+  <text class="mono" x="336" y="692">12:34:15</text>
+  <text class="mono" x="420" y="692">ops.log</text>
+  <text class="text" x="516" y="692">解析成功 产出=24 耗时=311ms</text>
+
+  <text class="mono" x="336" y="720">12:34:15</text>
+  <text class="mono" x="420" y="720">ops.log</text>
+  <text class="text" x="516" y="720">成果: [restock] A1 (id=...) qty=6</text>
+
+  <text class="mono" x="336" y="748">12:34:16</text>
+  <text class="mono" x="420" y="748">ops.notify</text>
+  <text class="text" x="516" y="748">Telegram 成功 target=@channel</text>
+
+  <text class="mono" x="336" y="776">12:34:16</text>
+  <text class="mono" x="420" y="776">ops.task</text>
+  <text class="text" x="516" y="776">完成 key=(7,40) ok=true 耗时=3.8s</text>
+
+  <rect class="pillErr" x="336" y="800" width="1032" height="36" rx="12"/>
+  <text class="badgeText" x="352" y="823">SSE 重置：Last-Event-ID 过旧 → 重新加载 snapshot…</text>
+</svg>

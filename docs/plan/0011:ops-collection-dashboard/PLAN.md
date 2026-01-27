@@ -2,9 +2,9 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 已完成
 - Created: 2026-01-25
-- Last: 2026-01-25
+- Last: 2026-01-27
 
 ## 背景 / 问题陈述
 
@@ -190,10 +190,11 @@
 
 ## 实现里程碑（Milestones）
 
-- [ ] M1: 后端：全局队列 + worker 池 + ops DB 留存（7d）+ snapshot API
-- [ ] M2: 后端：SSE stream（含 Last-Event-ID 回放 1h + reset 语义）+ 事件/日志产出覆盖成果与推送
-- [ ] M3: 前端：Ops 页面 + SSE 订阅 + log tail 自动滚动 + range 切换
-- [ ] M4: 测试与文档：集成测试补齐 + README 更新
+- [x] M1: 后端：全局队列 + worker 池 + ops DB 留存（7d）+ snapshot API
+- [x] M2: 后端：SSE stream（含 Last-Event-ID 回放 1h + reset 语义）+ 事件/日志产出覆盖成果与推送
+- [x] M3: 前端：Ops 页面 + SSE 订阅 + log tail 自动滚动 + range 切换
+- [x] M4: 测试与文档：集成测试补齐 + README 更新
+- [x] M5: 交付确认：UI 与 `docs/ui/ops-dashboard.svg` 一致（owner check）
 
 ## 方案概述（Approach, high-level）
 
@@ -222,6 +223,10 @@
 - 2026-01-25: 创建计划，冻结范围、接口与验收标准。
 - 2026-01-25: UI 调整：replay/Last-Event-ID 移至 SSE 状态悬浮气泡；KPI 区补充 Volume 卡片。
 - 2026-01-25: UI 调整：页面文案统一中文；补充 `ui/sse-tooltip.svg` 作为悬浮气泡独立设计图。
+- 2026-01-26: 实现落地：全局队列 + `/api/ops/state|stream` + Ops 页面（#ops）+ 7d 留存与统计；UI 资产晋升到 `docs/ui/`。
+- 2026-01-26: UI 对齐：按 `docs/ui/ops-dashboard.svg` 重做布局（顶栏控件/KPI 卡片/区块/日志 tail），snapshot 增加 `sparks` 用于 sparkline；待主人确认后标记“已完成”。
+- 2026-01-26: UI 微调：KPI 卡片边框/光晕/顶部条圆角对齐 `docs/ui/ops-dashboard.svg`；本地预览补齐常驻启动脚本（避免 review 时服务退出）。
+- 2026-01-27: UI 修复：深色主题下按 `docs/ui/ops-dashboard.svg` 对齐背景层级（main surface）与 KPI glow（radial），并增强 Storybook 常驻脚本稳定性；待主人确认后再勾选 M5。
 
 ## 参考（References）
 
