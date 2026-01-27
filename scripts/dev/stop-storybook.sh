@@ -5,6 +5,24 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
 PID_FILE="tmp-storybook-run.pid"
+SCREEN_SESSION="catnap-storybook"
+PORT="${CATNAP_STORYBOOK_PORT:-18181}"
+
+if command -v screen >/dev/null 2>&1; then
+  if screen -list | grep -q "\\.${SCREEN_SESSION}[[:space:]]"; then
+    echo "Stopping storybook screen session '$SCREEN_SESSION'..."
+    screen -S "$SCREEN_SESSION" -X quit >/dev/null 2>&1 || true
+    sleep 0.2
+  fi
+
+  if lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+    pid="$(lsof -nP -iTCP:"$PORT" -sTCP:LISTEN -t 2>/dev/null | head -n 1 || true)"
+    if [[ -n "$pid" ]]; then
+      echo "Stopping listener on port $PORT (pid=$pid)..."
+      kill "$pid" 2>/dev/null || true
+    fi
+  fi
+fi
 
 if [[ ! -f "$PID_FILE" ]]; then
   echo "No pid file ($PID_FILE)."

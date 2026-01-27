@@ -18,7 +18,12 @@
   --ops-orange: #f59e0b;
   --ops-card-border: var(--line);
   --ops-card-shadow: 0 10px 28px rgba(0, 0, 0, 0.12);
-  --ops-kpi-glow: linear-gradient(90deg, rgba(26, 58, 104, 0.12) 0%, rgba(26, 58, 104, 0.0) 55%);
+  --ops-kpi-glow: radial-gradient(
+    circle at 12% 10%,
+    rgba(26, 58, 104, 0.12) 0%,
+    rgba(241, 243, 248, 0) 55%,
+    rgba(241, 243, 248, 0) 100%
+  );
   --ops-log-bg: rgba(11, 18, 32, 0.04);
   --ops-log-border: rgba(11, 18, 32, 0.14);
   --ops-subtle-bg: rgba(11, 18, 32, 0.03);
@@ -121,8 +126,13 @@
   --ops-tooltip-bg: rgba(11, 20, 40, 0.98);
   --ops-tooltip-border: rgba(36, 58, 96, 0.95);
   --ops-card-border: rgba(36, 58, 96, 0.9);
-  --ops-card-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
-  --ops-kpi-glow: linear-gradient(90deg, rgba(26, 58, 104, 0.55) 0%, rgba(12, 23, 46, 0) 55%);
+  --ops-card-shadow: 0 10px 14px rgba(0, 0, 0, 0.22);
+  --ops-kpi-glow: radial-gradient(
+    circle at 12% 10%,
+    rgba(26, 58, 104, 0.85) 0%,
+    rgba(12, 23, 46, 0) 55%,
+    rgba(12, 23, 46, 0) 100%
+  );
 }
 
 @media (prefers-color-scheme: dark) {
@@ -174,8 +184,13 @@
     --ops-tooltip-bg: rgba(11, 20, 40, 0.98);
     --ops-tooltip-border: rgba(36, 58, 96, 0.95);
     --ops-card-border: rgba(36, 58, 96, 0.9);
-    --ops-card-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
-    --ops-kpi-glow: linear-gradient(90deg, rgba(26, 58, 104, 0.55) 0%, rgba(12, 23, 46, 0) 55%);
+    --ops-card-shadow: 0 10px 14px rgba(0, 0, 0, 0.22);
+    --ops-kpi-glow: radial-gradient(
+      circle at 12% 10%,
+      rgba(26, 58, 104, 0.85) 0%,
+      rgba(12, 23, 46, 0) 55%,
+      rgba(12, 23, 46, 0) 100%
+    );
   }
 }
 
@@ -349,7 +364,8 @@ select {
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
-  background: var(--surface2);
+  --content-bg: var(--surface2);
+  background: var(--content-bg);
   border: 1px solid var(--line);
   border-radius: var(--r14);
   --content-pad-x: 24px;
@@ -376,12 +392,12 @@ select {
 
 .content::before {
   top: var(--content-pad-y);
-  background: linear-gradient(to bottom, var(--surface2), transparent);
+  background: linear-gradient(to bottom, var(--content-bg), transparent);
 }
 
 .content::after {
   bottom: var(--content-pad-y);
-  background: linear-gradient(to bottom, transparent, var(--surface2));
+  background: linear-gradient(to bottom, transparent, var(--content-bg));
 }
 
 .content[data-fade-top="1"]::before {
@@ -392,13 +408,31 @@ select {
   opacity: 0.92;
 }
 
+.content.ops-content {
+  --content-bg: var(--surface);
+  border: 0;
+}
+
 .content-scroll {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
   padding-bottom: 4px;
+  display: flex;
+  flex-direction: column;
   scrollbar-width: none;
   -ms-overflow-style: none;
+}
+
+.content-scroll-inner.fill {
+  flex: 1 1 auto;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.content-scroll-inner.fill > .ops-panel {
+  flex: 1 1 auto;
 }
 
 .content-scroll::-webkit-scrollbar {
@@ -412,11 +446,26 @@ select {
   gap: var(--gap);
 }
 
+.ops-panel {
+  min-height: 100%;
+}
+
+.ops-panel > .panel-section.ops-surface {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
 .panel-section {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--r14);
   padding: 24px;
+}
+
+/* Ops dashboard uses its own "main surface" block in the design SVG: no outer stroke. */
+.panel-section.ops-surface {
+  border: 0;
+  box-shadow: none;
 }
 
 .panel-head {
@@ -1315,7 +1364,7 @@ select {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-@media (max-width: 980px) {
+@media (max-width: 1220px) {
   .ops-block-grid {
     grid-template-columns: 1fr;
   }
@@ -1323,10 +1372,8 @@ select {
 
 .ops-block {
   background: var(--surface2);
-  border: 1px solid var(--ops-card-border);
   border-radius: 14px;
   padding: 16px 16px 14px;
-  box-shadow: var(--ops-card-shadow);
 }
 
 .ops-block-head {
@@ -1386,9 +1433,20 @@ select {
 .ops-tasks-head,
 .ops-task {
   display: grid;
-  grid-template-columns: 34px 140px 1fr 160px;
+  grid-template-columns: 34px minmax(0, 140px) minmax(0, 1fr) minmax(0, 160px);
   gap: 14px;
   align-items: center;
+}
+
+.ops-tasks-head > div,
+.ops-task > div {
+  min-width: 0;
+}
+
+.ops-task > .mono {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ops-tasks-right {

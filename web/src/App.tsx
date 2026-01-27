@@ -949,9 +949,16 @@ export function App() {
     );
 
   return (
-    <AppShell title={title} subtitle={subtitle} actions={actions} sidebar={sidebar}>
-      {loading ? <p className="muted">Loading...</p> : null}
-      {error ? <p className="error">{error}</p> : null}
+    <AppShell
+      title={title}
+      subtitle={subtitle}
+      actions={actions}
+      sidebar={sidebar}
+      contentClassName={route === "ops" ? "ops-content" : undefined}
+      scrollInnerClassName={route === "ops" ? "fill" : undefined}
+    >
+      {route !== "ops" ? loading ? <p className="muted">Loading...</p> : null : null}
+      {route !== "ops" ? error ? <p className="error">{error}</p> : null : null}
 
       {route === "ops" ? (
         <OpsView
@@ -2647,7 +2654,7 @@ export function OpsView({
   const rangeText = opsRangeLabel(range);
 
   return (
-    <div className="panel">
+    <div className="panel ops-panel">
       <div className="panel-section ops-surface">
         {err ? <p className="error">{err}</p> : null}
 
