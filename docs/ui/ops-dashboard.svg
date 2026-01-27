@@ -104,9 +104,9 @@
   <!-- Overview cards row -->
   <!-- KPI cards: big number + secondary stats + subtle sparkline -->
   <g filter="url(#cardShadow)">
-    <rect class="kpiCard" x="312" y="136" width="252" height="160" rx="16"/>
-    <rect class="kpiGlow" x="312" y="136" width="252" height="160" rx="16"/>
-    <rect x="312" y="136" width="252" height="4" rx="2" fill="#2a8a55"/>
+    <path class="kpiCard" d="M312 136 H564 V280 A16 16 0 0 1 548 296 H328 A16 16 0 0 1 312 280 Z"/>
+    <path class="kpiGlow" d="M312 136 H564 V280 A16 16 0 0 1 548 296 H328 A16 16 0 0 1 312 280 Z"/>
+    <rect x="311.5" y="136" width="253" height="4" fill="#2a8a55"/>
     <circle cx="344" cy="168" r="10" fill="#101f3a" stroke="rgba(27, 42, 74, 0.75)" stroke-width="1"/>
     <circle cx="344" cy="168" r="4" fill="#2a8a55"/>
     <text class="kpiLabel" x="362" y="172">队列</text>
@@ -121,9 +121,9 @@
   </g>
 
   <g filter="url(#cardShadow)">
-    <rect class="kpiCard" x="588" y="136" width="252" height="160" rx="16"/>
-    <rect class="kpiGlow" x="588" y="136" width="252" height="160" rx="16"/>
-    <rect x="588" y="136" width="252" height="4" rx="2" fill="#3a7bd5"/>
+    <path class="kpiCard" d="M588 136 H840 V280 A16 16 0 0 1 824 296 H604 A16 16 0 0 1 588 280 Z"/>
+    <path class="kpiGlow" d="M588 136 H840 V280 A16 16 0 0 1 824 296 H604 A16 16 0 0 1 588 280 Z"/>
+    <rect x="587.5" y="136" width="253" height="4" fill="#3a7bd5"/>
     <circle cx="620" cy="168" r="10" fill="#101f3a" stroke="rgba(27, 42, 74, 0.75)" stroke-width="1"/>
     <circle cx="620" cy="168" r="4" fill="#3a7bd5"/>
     <text class="kpiLabel" x="638" y="172">采集成功率</text>
@@ -137,9 +137,9 @@
   </g>
 
   <g filter="url(#cardShadow)">
-    <rect class="kpiCard" x="864" y="136" width="252" height="160" rx="16"/>
-    <rect class="kpiGlow" x="864" y="136" width="252" height="160" rx="16"/>
-    <rect x="864" y="136" width="252" height="4" rx="2" fill="#7a5de8"/>
+    <path class="kpiCard" d="M864 136 H1116 V280 A16 16 0 0 1 1100 296 H880 A16 16 0 0 1 864 280 Z"/>
+    <path class="kpiGlow" d="M864 136 H1116 V280 A16 16 0 0 1 1100 296 H880 A16 16 0 0 1 864 280 Z"/>
+    <rect x="863.5" y="136" width="253" height="4" fill="#7a5de8"/>
     <circle cx="896" cy="168" r="10" fill="#101f3a" stroke="rgba(27, 42, 74, 0.75)" stroke-width="1"/>
     <circle cx="896" cy="168" r="4" fill="#7a5de8"/>
     <text class="kpiLabel" x="914" y="172">通知成功率</text>
@@ -154,9 +154,9 @@
   </g>
 
   <g filter="url(#cardShadow)">
-    <rect class="kpiCard" x="1140" y="136" width="252" height="160" rx="16"/>
-    <rect class="kpiGlow" x="1140" y="136" width="252" height="160" rx="16"/>
-    <rect x="1140" y="136" width="252" height="4" rx="2" fill="#f59e0b"/>
+    <path class="kpiCard" d="M1140 136 H1392 V280 A16 16 0 0 1 1376 296 H1156 A16 16 0 0 1 1140 280 Z"/>
+    <path class="kpiGlow" d="M1140 136 H1392 V280 A16 16 0 0 1 1376 296 H1156 A16 16 0 0 1 1140 280 Z"/>
+    <rect x="1139.5" y="136" width="253" height="4" fill="#f59e0b"/>
     <circle cx="1172" cy="168" r="10" fill="#101f3a" stroke="rgba(27, 42, 74, 0.75)" stroke-width="1"/>
     <circle cx="1172" cy="168" r="4" fill="#f59e0b"/>
     <text class="kpiLabel" x="1190" y="172">采集量</text>
