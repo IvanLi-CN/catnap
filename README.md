@@ -146,6 +146,9 @@ bun run lint
 bun run typecheck
 bun run build
 
+# Vite dev (fixed port: 18182; avoid default 5173 to reduce conflicts)
+bun run dev
+
 # Storybook (fixed port: 18181; if you see 6006 you likely didn't use the script or ran from the wrong cwd)
 bun run storybook
 bun run storybook:ci

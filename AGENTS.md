@@ -20,7 +20,7 @@ Backend (from repo root):
 Frontend:
 
 - `cd web && bun install`: Install dependencies.
-- `cd web && bun run dev`: Local dev server.
+- `cd web && bun run dev`: Local dev server (fixed port `18182`).
 - `cd web && bun run build`: Build `web/dist` for embedding.
 - Storybook (fixed port `18181`):
   - `cd web && bun run storybook` (dev server)

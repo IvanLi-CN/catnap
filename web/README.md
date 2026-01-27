@@ -10,6 +10,8 @@ bun install
 bun run dev
 ```
 
+默认固定端口：`18182`（避免使用默认端口 `5173` 导致冲突）。
+
 ## Storybook
 
 ```bash

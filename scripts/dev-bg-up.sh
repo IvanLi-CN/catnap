@@ -21,7 +21,7 @@ backend_port="${CATNAP_DEV_PORT:-18090}"
 backend_bind_addr="0.0.0.0:${backend_port}"
 backend_url_addr="127.0.0.1:${backend_port}"
 storybook_port="${CATNAP_STORYBOOK_PORT:-18181}"
-web_dev_port="${CATNAP_WEB_DEV_PORT:-5173}"
+web_dev_port="${CATNAP_WEB_DEV_PORT:-18182}"
 
 assert_port_free() {
   local port="$1"
