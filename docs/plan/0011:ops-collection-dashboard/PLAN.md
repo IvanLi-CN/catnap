@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 部分完成（4/5）
+- Status: 已完成
 - Created: 2026-01-25
 - Last: 2026-01-27
 
@@ -194,7 +194,7 @@
 - [x] M2: 后端：SSE stream（含 Last-Event-ID 回放 1h + reset 语义）+ 事件/日志产出覆盖成果与推送
 - [x] M3: 前端：Ops 页面 + SSE 订阅 + log tail 自动滚动 + range 切换
 - [x] M4: 测试与文档：集成测试补齐 + README 更新
-- [ ] M5: 交付确认：UI 与 `docs/ui/ops-dashboard.svg` 一致（owner check）
+- [x] M5: 交付确认：UI 与 `docs/ui/ops-dashboard.svg` 一致（owner check）
 
 ## 方案概述（Approach, high-level）
 
