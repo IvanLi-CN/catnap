@@ -26,6 +26,7 @@ pub struct AppState {
     pub catalog: Arc<RwLock<crate::upstream::CatalogSnapshot>>,
     pub catalog_refresh: crate::catalog_refresh::CatalogRefreshManager,
     pub ops: crate::ops::OpsManager,
+    pub update_checker: crate::updates::UpdateChecker,
 }
 
 fn unauthorized_html() -> &'static str {

@@ -33,6 +33,7 @@ async fn main() -> anyhow::Result<()> {
         catalog: catalog.clone(),
         catalog_refresh: catnap::catalog_refresh::CatalogRefreshManager::new(),
         ops,
+        update_checker: catnap::updates::UpdateChecker::new(config.clone()),
     };
 
     tokio::spawn({

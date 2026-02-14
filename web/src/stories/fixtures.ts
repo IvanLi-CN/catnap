@@ -186,6 +186,11 @@ export const demoConfigs: Config[] = [
 
 export const demoBootstrap: BootstrapResponse = {
   user: { id: "u-demo", displayName: "Demo" },
+  app: {
+    effectiveVersion: "0.1.0",
+    webDistBuildId: "demo-build-id-00000000",
+    repoUrl: "https://github.com/IvanLi-CN/catnap",
+  },
   catalog: {
     countries: demoCountries,
     regions: demoRegions,

@@ -13,6 +13,11 @@ function SettingsViewPanelDemo() {
         const { telegramBotToken: _telegramBotToken, ...settings } = next;
         setBootstrap((prev) => ({ ...prev, settings: { ...prev.settings, ...settings } }));
       }}
+      fetchUpdate={async () => ({
+        currentVersion: bootstrap.app.effectiveVersion,
+        updateAvailable: false,
+        checkedAt: new Date().toISOString(),
+      })}
     />
   );
 }

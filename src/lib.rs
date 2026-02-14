@@ -7,6 +7,7 @@ pub mod models;
 pub mod notifications;
 pub mod ops;
 pub mod poller;
+pub mod updates;
 pub mod upstream;
 
 pub use app::{build_app, AppState};

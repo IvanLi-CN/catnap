@@ -4,6 +4,11 @@ use std::env;
 pub struct RuntimeConfig {
     pub bind_addr: String,
     pub effective_version: String,
+    pub repo_url: String,
+    pub github_api_base_url: String,
+    pub update_check_repo: String,
+    pub update_check_enabled: bool,
+    pub update_check_ttl_seconds: i64,
 
     pub upstream_cart_url: String,
 
@@ -46,6 +51,35 @@ impl RuntimeConfig {
             .ok()
             .filter(|v| !v.trim().is_empty())
             .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
+
+        let repo_url = env::var("CATNAP_REPO_URL")
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| "https://github.com/IvanLi-CN/catnap".to_string());
+
+        let github_api_base_url = env::var("CATNAP_GITHUB_API_BASE_URL")
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| "https://api.github.com".to_string());
+
+        let update_check_repo = env::var("CATNAP_UPDATE_CHECK_REPO")
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| "IvanLi-CN/catnap".to_string());
+
+        let update_check_enabled = env::var("CATNAP_UPDATE_CHECK_ENABLED")
+            .ok()
+            .and_then(|v| parse_bool(&v))
+            .unwrap_or(true);
+
+        let update_check_ttl_seconds = env::var("CATNAP_UPDATE_CHECK_TTL_SECONDS")
+            .ok()
+            .and_then(|v| v.trim().parse::<i64>().ok())
+            .filter(|v| *v >= 0)
+            .unwrap_or(3600);
 
         let telegram_api_base_url = env::var("CATNAP_TELEGRAM_API_BASE_URL")
             .ok()
@@ -120,6 +154,11 @@ impl RuntimeConfig {
         Self {
             bind_addr: env::var("BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:18080".to_string()),
             effective_version,
+            repo_url,
+            github_api_base_url,
+            update_check_repo,
+            update_check_enabled,
+            update_check_ttl_seconds,
             upstream_cart_url: env::var("CATNAP_UPSTREAM_CART_URL")
                 .unwrap_or_else(|_| "https://lazycats.vip/cart".to_string()),
             telegram_api_base_url,
@@ -149,5 +188,13 @@ impl RuntimeConfig {
                 .filter(|v| !v.is_empty()),
             allow_insecure_local_web_push_endpoints: false,
         }
+    }
+}
+
+fn parse_bool(s: &str) -> Option<bool> {
+    match s.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
     }
 }
