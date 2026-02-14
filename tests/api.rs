@@ -315,10 +315,7 @@ async fn bootstrap_includes_app_meta() {
 
     let bytes = to_bytes(res.into_body(), usize::MAX).await.unwrap();
     let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    let app = json
-        .get("app")
-        .cloned()
-        .unwrap_or(serde_json::Value::Null);
+    let app = json.get("app").cloned().unwrap_or(serde_json::Value::Null);
     assert!(app.get("effectiveVersion").is_some());
     assert!(app.get("webDistBuildId").is_some());
     assert!(app.get("repoUrl").is_some());
