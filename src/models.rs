@@ -171,11 +171,42 @@ pub struct WebPushSettingsView {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AppMetaView {
+    pub effective_version: String,
+    pub web_dist_build_id: String,
+    pub repo_url: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BootstrapResponse {
     pub user: UserView,
+    pub app: AppMetaView,
     pub catalog: CatalogView,
     pub monitoring: MonitoringView,
     pub settings: SettingsView,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LatestReleaseView {
+    pub tag: String,
+    pub version: String,
+    pub html_url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub published_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateCheckResponse {
+    pub current_version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest: Option<LatestReleaseView>,
+    pub update_available: bool,
+    pub checked_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -22,9 +22,13 @@ use std::time::Duration;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use tracing::warn;
 
+const WEB_DIST_BUILD_ID: &str = env!("CATNAP_WEB_DIST_BUILD_ID");
+
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(api_health))
+        .route("/meta", get(get_meta))
+        .route("/update", get(get_update))
         .route("/bootstrap", get(get_bootstrap))
         .route("/products", get(get_products))
         .route("/inventory/history", post(post_inventory_history))
@@ -64,6 +68,24 @@ async fn api_health(
         "version": state.config.effective_version,
     }))
     .into_response()
+}
+
+async fn get_meta(
+    State(state): State<AppState>,
+    _user: axum::extract::Extension<UserView>,
+) -> Json<AppMetaView> {
+    Json(AppMetaView {
+        effective_version: state.config.effective_version,
+        web_dist_build_id: WEB_DIST_BUILD_ID.to_string(),
+        repo_url: state.config.repo_url,
+    })
+}
+
+async fn get_update(
+    State(state): State<AppState>,
+    _user: axum::extract::Extension<UserView>,
+) -> Json<UpdateCheckResponse> {
+    Json(state.update_checker.check().await)
 }
 
 async fn enforce_same_origin(
@@ -524,6 +546,11 @@ async fn get_bootstrap(
         user: UserView {
             id: user_id,
             display_name: None,
+        },
+        app: AppMetaView {
+            effective_version: state.config.effective_version.clone(),
+            web_dist_build_id: WEB_DIST_BUILD_ID.to_string(),
+            repo_url: state.config.repo_url.clone(),
         },
         catalog: CatalogView {
             countries: snapshot.countries,

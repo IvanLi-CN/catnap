@@ -13,6 +13,11 @@ fn test_config() -> RuntimeConfig {
     RuntimeConfig {
         bind_addr: "127.0.0.1:0".to_string(),
         effective_version: "test".to_string(),
+        repo_url: "https://example.com/repo".to_string(),
+        github_api_base_url: "https://api.github.com".to_string(),
+        update_check_repo: "IvanLi-CN/catnap".to_string(),
+        update_check_enabled: false,
+        update_check_ttl_seconds: 3600,
         upstream_cart_url: "https://lazycats.vip/cart".to_string(),
         telegram_api_base_url: "https://api.telegram.org".to_string(),
         auth_user_header: Some("x-user".to_string()),
@@ -53,12 +58,15 @@ async fn make_app() -> TestApp {
     let ops = catnap::ops::OpsManager::new(cfg.clone(), db.clone(), catalog.clone());
     ops.start();
 
+    let update_checker = catnap::updates::UpdateChecker::new(cfg.clone());
+
     let state = AppState {
         config: cfg,
         db: db.clone(),
         catalog,
         catalog_refresh: catnap::catalog_refresh::CatalogRefreshManager::new(),
         ops,
+        update_checker,
     };
 
     TestApp {

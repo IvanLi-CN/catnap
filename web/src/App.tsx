@@ -89,8 +89,30 @@ export type SettingsView = {
   };
 };
 
+export type AppMetaView = {
+  effectiveVersion: string;
+  webDistBuildId: string;
+  repoUrl: string;
+};
+
+export type LatestReleaseView = {
+  tag: string;
+  version: string;
+  htmlUrl: string;
+  publishedAt?: string;
+};
+
+export type UpdateCheckResponse = {
+  currentVersion: string;
+  latest?: LatestReleaseView;
+  updateAvailable: boolean;
+  checkedAt: string;
+  error?: string;
+};
+
 export type BootstrapResponse = {
   user: UserView;
+  app: AppMetaView;
   catalog: {
     countries: Country[];
     regions: Region[];
@@ -484,6 +506,9 @@ export function App() {
     lastReset: null,
   });
   const lastTerminalJobIdRef = useRef<string | null>(null);
+  const baselineMetaRef = useRef<AppMetaView | null>(null);
+  const [deployUpdateMeta, setDeployUpdateMeta] = useState<AppMetaView | null>(null);
+  const [releaseUpdate, setReleaseUpdate] = useState<UpdateCheckResponse | null>(null);
 
   const applyProductsResponse = useCallback((res: ProductsResponse) => {
     setBootstrap((prev) =>
@@ -519,6 +544,23 @@ export function App() {
   }, [bootstrap]);
 
   useEffect(() => {
+    // We only use `?reload=<buildId>` as a one-shot cache buster during "deploy update reload".
+    // Strip it after load so the URL remains stable and shareable.
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has("reload")) return;
+    url.searchParams.delete("reload");
+    const q = url.searchParams.toString();
+    const next = `${window.location.pathname}${q ? `?${q}` : ""}${window.location.hash}`;
+    window.history.replaceState(null, "", next);
+  }, []);
+
+  const reloadIntoNewFrontend = useCallback((nextBuildId: string) => {
+    const url = new URL(window.location.href);
+    url.searchParams.set("reload", nextBuildId);
+    window.location.replace(url.toString());
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
 
     async function run() {
@@ -542,6 +584,68 @@ export function App() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!bootstrap) return;
+    if (!baselineMetaRef.current) baselineMetaRef.current = bootstrap.app;
+  }, [bootstrap]);
+
+  useEffect(() => {
+    if (!bootstrap) return;
+    const baseline = baselineMetaRef.current;
+    if (!baseline) return;
+
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const meta = await api<AppMetaView>("/api/meta");
+        if (cancelled) return;
+        if (
+          meta.webDistBuildId !== baseline.webDistBuildId ||
+          meta.effectiveVersion !== baseline.effectiveVersion
+        ) {
+          setDeployUpdateMeta(meta);
+        }
+      } catch {
+        // Ignore update polling errors: should not break the app.
+      }
+    };
+
+    const id = window.setInterval(() => void tick(), 60_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [bootstrap]);
+
+  useEffect(() => {
+    if (!bootstrap) return;
+
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const res = await api<UpdateCheckResponse>("/api/update");
+        if (!cancelled) setReleaseUpdate(res);
+      } catch (e) {
+        if (!cancelled) {
+          setReleaseUpdate({
+            currentVersion: bootstrap.app.effectiveVersion,
+            latest: undefined,
+            updateAvailable: false,
+            checkedAt: new Date().toISOString(),
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
+      }
+    };
+
+    void tick();
+    const id = window.setInterval(() => void tick(), 6 * 60 * 60 * 1000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [bootstrap]);
 
   useEffect(() => {
     const onHash = () => setRoute(getRoute());
@@ -847,6 +951,22 @@ export function App() {
       <a className={route === "ops" ? "nav-item active" : "nav-item"} href="#ops">
         采集观测台
       </a>
+
+      {bootstrap ? (
+        <div className="sidebar-footer">
+          <div className="sidebar-meta mono">
+            <span className="muted">v{bootstrap.app.effectiveVersion}</span>
+          </div>
+          <a
+            className="sidebar-link muted"
+            href={bootstrap.app.repoUrl}
+            target="_blank"
+            rel="noreferrer"
+          >
+            Repo
+          </a>
+        </div>
+      ) : null}
     </>
   );
 
@@ -866,9 +986,35 @@ export function App() {
         ? "刷新失败"
         : "立即刷新";
 
+  const deployUpdatePill = deployUpdateMeta ? (
+    <button
+      type="button"
+      className="pill warn"
+      title={`检测到新部署：${deployUpdateMeta.webDistBuildId.slice(0, 8)}`}
+      onClick={() => reloadIntoNewFrontend(deployUpdateMeta.webDistBuildId)}
+    >
+      检测到新版本，点击刷新
+    </button>
+  ) : null;
+
+  const releaseUpdatePill =
+    releaseUpdate?.updateAvailable && releaseUpdate.latest ? (
+      <a
+        className="pill warn"
+        href={releaseUpdate.latest.htmlUrl}
+        target="_blank"
+        rel="noreferrer"
+        title={`最新 release：${releaseUpdate.latest.tag}`}
+      >
+        新版本 {releaseUpdate.latest.tag}
+      </a>
+    ) : null;
+
   const actions =
     route === "ops" ? (
       <>
+        {deployUpdatePill}
+        {releaseUpdatePill}
         <OpsSseIndicator sse={opsSseUi} />
         <OpsRangePill range={opsRange} onChange={setOpsRange} />
         <button
@@ -885,6 +1031,8 @@ export function App() {
       </>
     ) : (
       <>
+        {deployUpdatePill}
+        {releaseUpdatePill}
         {isRefreshing ? (
           <span className="pill">{`全量刷新中（${catalogRefresh?.done ?? 0}/${catalogRefresh?.total || "?"}）`}</span>
         ) : null}
@@ -1628,9 +1776,11 @@ export function MonitoringSection({
 export function SettingsViewPanel({
   bootstrap,
   onSave,
+  fetchUpdate,
 }: {
   bootstrap: BootstrapResponse;
   onSave: (next: SettingsView & { telegramBotToken?: string | null }) => Promise<void>;
+  fetchUpdate?: () => Promise<UpdateCheckResponse>;
 }) {
   const [intervalMinutes, setIntervalMinutes] = useState<number>(
     bootstrap.settings.poll.intervalMinutes,
@@ -1665,9 +1815,38 @@ export function SettingsViewPanel({
   const [wpTestPending, setWpTestPending] = useState<boolean>(false);
   const [wpTestStatus, setWpTestStatus] = useState<string | null>(null);
   const [saving, setSaving] = useState<boolean>(false);
+  const [aboutStatus, setAboutStatus] = useState<string | null>(null);
+  const [aboutUpdatePending, setAboutUpdatePending] = useState<boolean>(false);
+  const [aboutUpdate, setAboutUpdate] = useState<UpdateCheckResponse | null>(null);
 
   const wpKey = bootstrap.settings.notifications.webPush.vapidPublicKey;
   const wpSupported = "serviceWorker" in navigator && "PushManager" in window;
+  const shortBuildId = bootstrap.app.webDistBuildId.slice(0, 8);
+
+  const checkUpdateNow = useCallback(async () => {
+    setAboutUpdatePending(true);
+    setAboutStatus(null);
+    try {
+      const res = fetchUpdate ? await fetchUpdate() : await api<UpdateCheckResponse>("/api/update");
+      setAboutUpdate(res);
+      if (res.error) setAboutStatus(res.error);
+    } catch (e) {
+      setAboutUpdate({
+        currentVersion: bootstrap.app.effectiveVersion,
+        latest: undefined,
+        updateAvailable: false,
+        checkedAt: new Date().toISOString(),
+        error: e instanceof Error ? e.message : String(e),
+      });
+      setAboutStatus(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAboutUpdatePending(false);
+    }
+  }, [bootstrap.app.effectiveVersion, fetchUpdate]);
+
+  useEffect(() => {
+    void checkUpdateNow();
+  }, [checkUpdateNow]);
 
   return (
     <div className="panel">
@@ -2046,6 +2225,94 @@ export function SettingsViewPanel({
             保存设置
           </button>
         </div>
+      </div>
+
+      <div className="panel-section">
+        <div className="panel-title">关于（About）</div>
+        <div className="panel-subtitle">版本/构建信息与更新提示（后端权威）</div>
+
+        <div className="settings-row">
+          <div>版本</div>
+          <div
+            className="pill"
+            style={{ justifyContent: "space-between", width: "100%", gap: "12px" }}
+          >
+            <span className="mono">{`v${bootstrap.app.effectiveVersion} • ${shortBuildId}`}</span>
+            <span className="muted">build</span>
+          </div>
+        </div>
+
+        <div className="settings-row">
+          <div>仓库</div>
+          <div className="controls" style={{ marginTop: 0 }}>
+            <div className="pill grow" style={{ minWidth: 0 }}>
+              <a
+                className="mono"
+                href={bootstrap.app.repoUrl}
+                target="_blank"
+                rel="noreferrer"
+                style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                title={bootstrap.app.repoUrl}
+              >
+                {bootstrap.app.repoUrl}
+              </a>
+            </div>
+
+            <button
+              type="button"
+              className="pill warn center"
+              style={{ width: "160px" }}
+              onClick={async () => {
+                setAboutStatus(null);
+                try {
+                  await navigator.clipboard.writeText(bootstrap.app.repoUrl);
+                  setAboutStatus("已复制仓库地址。");
+                } catch {
+                  window.prompt("复制以下仓库地址：", bootstrap.app.repoUrl);
+                  setAboutStatus("已打开复制对话框。");
+                }
+              }}
+            >
+              复制 Repo
+            </button>
+          </div>
+        </div>
+
+        <div className="settings-row">
+          <div>更新检查</div>
+          <div className="controls" style={{ marginTop: 0 }}>
+            <button
+              type="button"
+              className="pill warn center"
+              style={{ width: "160px" }}
+              disabled={aboutUpdatePending}
+              onClick={async () => checkUpdateNow()}
+            >
+              {aboutUpdatePending ? "检查中…" : "立即检查更新"}
+            </button>
+
+            {aboutUpdate?.latest ? (
+              <a
+                className="pill center"
+                style={{ width: "160px" }}
+                href={aboutUpdate.latest.htmlUrl}
+                target="_blank"
+                rel="noreferrer"
+              >
+                打开 Release
+              </a>
+            ) : null}
+          </div>
+        </div>
+
+        {aboutUpdate ? (
+          <div className="hint">
+            {aboutUpdate.updateAvailable && aboutUpdate.latest
+              ? `新版本可用：${aboutUpdate.latest.tag}（已于 ${formatRelativeTime(aboutUpdate.checkedAt, Date.now())} 检查）`
+              : `暂无更新（已于 ${formatRelativeTime(aboutUpdate.checkedAt, Date.now())} 检查）`}
+          </div>
+        ) : null}
+        {aboutStatus ? <div className="hint">{aboutStatus}</div> : null}
       </div>
     </div>
   );

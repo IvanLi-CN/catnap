@@ -1,6 +1,8 @@
 use axum::{
     body::{to_bytes, Body},
     http::{Request, StatusCode},
+    routing::get,
+    Json, Router,
 };
 use catnap::{build_app, AppState, RuntimeConfig};
 use sqlx::sqlite::SqlitePoolOptions;
@@ -17,6 +19,11 @@ fn test_config() -> RuntimeConfig {
     RuntimeConfig {
         bind_addr: "127.0.0.1:0".to_string(),
         effective_version: "test".to_string(),
+        repo_url: "https://example.com/repo".to_string(),
+        github_api_base_url: "https://api.github.com".to_string(),
+        update_check_repo: "IvanLi-CN/catnap".to_string(),
+        update_check_enabled: false,
+        update_check_ttl_seconds: 3600,
         upstream_cart_url: "https://lazycats.vip/cart".to_string(),
         telegram_api_base_url: "https://api.telegram.org".to_string(),
         auth_user_header: Some("x-user".to_string()),
@@ -85,12 +92,15 @@ async fn make_app_with_config(cfg: RuntimeConfig) -> TestApp {
     let ops = catnap::ops::OpsManager::new(cfg.clone(), db.clone(), catalog.clone());
     ops.start();
 
+    let update_checker = catnap::updates::UpdateChecker::new(cfg.clone());
+
     let state = AppState {
         config: cfg,
         db: db.clone(),
         catalog,
         catalog_refresh: catnap::catalog_refresh::CatalogRefreshManager::new(),
         ops,
+        update_checker,
     };
 
     TestApp {
@@ -283,6 +293,107 @@ async fn monitoring_toggle_persists() {
         .iter()
         .any(|v| v.as_str() == Some("lc:7:40:128"));
     assert!(enabled);
+}
+
+#[tokio::test]
+async fn bootstrap_includes_app_meta() {
+    let t = make_app().await;
+    let res = t
+        .app
+        .oneshot(
+            Request::builder()
+                .uri("/api/bootstrap")
+                .header("host", "example.com")
+                .header("x-user", "u_1")
+                .header("origin", "http://example.com")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let bytes = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let app = json.get("app").cloned().unwrap_or(serde_json::Value::Null);
+    assert!(app.get("effectiveVersion").is_some());
+    assert!(app.get("webDistBuildId").is_some());
+    assert!(app.get("repoUrl").is_some());
+}
+
+#[tokio::test]
+async fn meta_endpoint_returns_app_meta() {
+    let t = make_app().await;
+    let res = t
+        .app
+        .oneshot(
+            Request::builder()
+                .uri("/api/meta")
+                .header("host", "example.com")
+                .header("x-user", "u_1")
+                .header("origin", "http://example.com")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let bytes = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(json.get("effectiveVersion").is_some());
+    assert!(json.get("webDistBuildId").is_some());
+    assert!(json.get("repoUrl").is_some());
+}
+
+#[tokio::test]
+async fn update_endpoint_uses_stub_github() {
+    let stub = Router::new().route(
+        "/repos/IvanLi-CN/catnap/releases/latest",
+        get(|| async {
+            Json(serde_json::json!({
+                "tag_name": "v9.9.9",
+                "html_url": "https://example.com/releases/v9.9.9",
+                "published_at": "2026-02-01T00:00:00Z",
+            }))
+        }),
+    );
+    let base = spawn_stub_server(stub).await;
+
+    let mut cfg = test_config();
+    cfg.effective_version = "0.1.0".to_string();
+    cfg.github_api_base_url = base;
+    cfg.update_check_enabled = true;
+    cfg.update_check_ttl_seconds = 0;
+
+    let t = make_app_with_config(cfg).await;
+    let res = t
+        .app
+        .oneshot(
+            Request::builder()
+                .uri("/api/update")
+                .header("host", "example.com")
+                .header("x-user", "u_1")
+                .header("origin", "http://example.com")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let bytes = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        json.get("updateAvailable").and_then(|v| v.as_bool()),
+        Some(true)
+    );
+    assert_eq!(
+        json.get("latest")
+            .and_then(|v| v.get("tag"))
+            .and_then(|v| v.as_str()),
+        Some("v9.9.9")
+    );
 }
 
 #[tokio::test]

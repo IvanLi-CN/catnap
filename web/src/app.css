@@ -330,6 +330,20 @@ select {
   margin-bottom: 24px;
 }
 
+.sidebar-footer {
+  margin-top: auto;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.sidebar-link {
+  font-weight: 750;
+}
+
 .nav-item {
   position: relative;
   padding-left: 8px;
@@ -493,6 +507,11 @@ select {
 
 .muted {
   color: var(--muted);
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 14px;
 }
 
 .mono {
