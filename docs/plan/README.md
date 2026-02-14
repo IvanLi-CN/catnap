@@ -51,3 +51,4 @@
 | 0009 | 全量刷新：SSE 进度 + 缓存复用 + 配置上下架 | 已完成 | `0009:catalog-full-refresh-sse/PLAN.md` | 2026-01-25 | 全局调度=最小间隔；缺失一次即下架；监控页展示最近 24h 上架（含重新上架） |
 | 0010 | 配置卡片：国家国旗水印背景 | 已完成 | `0010:card-country-flag-watermark/PLAN.md` | 2026-01-26 | 实现：国旗水印（Iconify `flagpack`） |
 | 0011 | 采集观测台：全局采集队列 + SSE 日志订阅 | 已完成 | `0011:ops-collection-dashboard/PLAN.md` | 2026-01-27 | - |
+| 0012 | 版本号显示 + 仓库地址 + 更新提示 | 待实现 | `0012:version-and-repo-link/PLAN.md` | 2026-02-14 | - |
