@@ -178,6 +178,31 @@ pub struct BootstrapResponse {
     pub settings: SettingsView,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AboutUpdateView {
+    pub enabled: bool,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checked_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_url: Option<String>,
+    pub update_available: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AboutResponse {
+    pub version: String,
+    pub web_dist_build_id: String,
+    pub repo_url: String,
+    pub update: AboutUpdateView,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MonitoringToggleRequest {

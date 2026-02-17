@@ -5,6 +5,16 @@ pub struct RuntimeConfig {
     pub bind_addr: String,
     pub effective_version: String,
 
+    // About / meta
+    pub repo_url: String,
+
+    // Update-check (GitHub Releases stable latest)
+    pub update_repo: String,
+    pub update_check_enabled: bool,
+    pub update_check_ttl_seconds: i64,
+    pub update_check_timeout_ms: i64,
+    pub github_api_base_url: String,
+
     pub upstream_cart_url: String,
 
     /// Base URL for Telegram Bot API. Used to allow local stubs in tests.
@@ -46,6 +56,43 @@ impl RuntimeConfig {
             .ok()
             .filter(|v| !v.trim().is_empty())
             .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
+
+        let repo_url = env::var("CATNAP_REPO_URL")
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| "https://github.com/IvanLi-CN/catnap".to_string());
+
+        let update_repo = env::var("CATNAP_UPDATE_REPO")
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| "IvanLi-CN/catnap".to_string());
+
+        let update_check_enabled = env::var("CATNAP_UPDATE_CHECK_ENABLED")
+            .ok()
+            .map(|v| v.trim().to_ascii_lowercase())
+            .filter(|v| !v.is_empty())
+            .map(|v| matches!(v.as_str(), "1" | "true" | "yes" | "y" | "on"))
+            .unwrap_or(true);
+
+        let update_check_ttl_seconds = env::var("CATNAP_UPDATE_CHECK_TTL_SECONDS")
+            .ok()
+            .and_then(|v| v.trim().parse::<i64>().ok())
+            .filter(|v| *v >= 0)
+            .unwrap_or(6 * 60 * 60);
+
+        let update_check_timeout_ms = env::var("CATNAP_UPDATE_CHECK_TIMEOUT_MS")
+            .ok()
+            .and_then(|v| v.trim().parse::<i64>().ok())
+            .filter(|v| (200..=30_000).contains(v))
+            .unwrap_or(1500);
+
+        let github_api_base_url = env::var("CATNAP_GITHUB_API_BASE_URL")
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| "https://api.github.com".to_string());
 
         let telegram_api_base_url = env::var("CATNAP_TELEGRAM_API_BASE_URL")
             .ok()
@@ -120,6 +167,12 @@ impl RuntimeConfig {
         Self {
             bind_addr: env::var("BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:18080".to_string()),
             effective_version,
+            repo_url,
+            update_repo,
+            update_check_enabled,
+            update_check_ttl_seconds,
+            update_check_timeout_ms,
+            github_api_base_url,
             upstream_cart_url: env::var("CATNAP_UPSTREAM_CART_URL")
                 .unwrap_or_else(|_| "https://lazycats.vip/cart".to_string()),
             telegram_api_base_url,

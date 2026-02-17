@@ -27,12 +27,15 @@ async fn main() -> anyhow::Result<()> {
     let ops = catnap::ops::OpsManager::new(config.clone(), db.clone(), catalog.clone());
     ops.start();
 
+    let update_cache = catnap::update_check::new_cache();
+
     let state = catnap::AppState {
         config: config.clone(),
         db: db.clone(),
         catalog: catalog.clone(),
         catalog_refresh: catnap::catalog_refresh::CatalogRefreshManager::new(),
         ops,
+        update_cache,
     };
 
     tokio::spawn({

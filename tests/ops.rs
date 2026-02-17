@@ -13,6 +13,12 @@ fn test_config() -> RuntimeConfig {
     RuntimeConfig {
         bind_addr: "127.0.0.1:0".to_string(),
         effective_version: "test".to_string(),
+        repo_url: "https://example.com/repo".to_string(),
+        update_repo: "example/repo".to_string(),
+        update_check_enabled: false,
+        update_check_ttl_seconds: 0,
+        update_check_timeout_ms: 1500,
+        github_api_base_url: "https://api.github.com".to_string(),
         upstream_cart_url: "https://lazycats.vip/cart".to_string(),
         telegram_api_base_url: "https://api.telegram.org".to_string(),
         auth_user_header: Some("x-user".to_string()),
@@ -59,6 +65,7 @@ async fn make_app() -> TestApp {
         catalog,
         catalog_refresh: catnap::catalog_refresh::CatalogRefreshManager::new(),
         ops,
+        update_cache: catnap::update_check::new_cache(),
     };
 
     TestApp {

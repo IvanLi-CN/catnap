@@ -25,6 +25,7 @@ use tracing::warn;
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(api_health))
+        .route("/about", get(get_about))
         .route("/bootstrap", get(get_bootstrap))
         .route("/products", get(get_products))
         .route("/inventory/history", post(post_inventory_history))
@@ -64,6 +65,65 @@ async fn api_health(
         "version": state.config.effective_version,
     }))
     .into_response()
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AboutQuery {
+    force: Option<String>,
+}
+
+fn query_force(q: &AboutQuery) -> bool {
+    matches!(q.force.as_deref(), Some("1" | "true"))
+}
+
+async fn get_about(
+    State(state): State<AppState>,
+    user: axum::extract::Extension<UserView>,
+    Query(q): Query<AboutQuery>,
+) -> Result<Json<AboutResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let _ = db::ensure_user(&state.db, &state.config, &user.0.id).await;
+
+    let enabled = state.config.update_check_enabled;
+    if enabled {
+        crate::update_check::maybe_refresh(&state.config, &state.update_cache, query_force(&q))
+            .await;
+    }
+
+    let st = state.update_cache.read().await.clone();
+    let status = if !enabled {
+        "disabled".to_string()
+    } else if st.last_error.is_some() {
+        "error".to_string()
+    } else {
+        "ok".to_string()
+    };
+
+    let latest_version = if enabled {
+        st.latest_version.clone()
+    } else {
+        None
+    };
+    let update_available = enabled
+        && latest_version
+            .as_deref()
+            .map(|v| crate::update_check::is_update_available(&state.config.effective_version, v))
+            .unwrap_or(false);
+
+    Ok(Json(AboutResponse {
+        version: state.config.effective_version.clone(),
+        web_dist_build_id: env!("CATNAP_WEB_DIST_BUILD_ID").to_string(),
+        repo_url: state.config.repo_url.clone(),
+        update: AboutUpdateView {
+            enabled,
+            status,
+            checked_at: if enabled { st.checked_at.clone() } else { None },
+            latest_version,
+            latest_url: if enabled { st.latest_url.clone() } else { None },
+            update_available,
+            message: if enabled { st.last_error.clone() } else { None },
+        },
+    }))
 }
 
 async fn enforce_same_origin(
