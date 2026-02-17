@@ -1,5 +1,6 @@
 use crate::config::RuntimeConfig;
 use crate::models::ErrorResponse;
+use crate::update_check::UpdateCheckCache;
 use axum::{
     body::Body,
     extract::{OriginalUri, State},
@@ -26,6 +27,7 @@ pub struct AppState {
     pub catalog: Arc<RwLock<crate::upstream::CatalogSnapshot>>,
     pub catalog_refresh: crate::catalog_refresh::CatalogRefreshManager,
     pub ops: crate::ops::OpsManager,
+    pub update_cache: Arc<RwLock<UpdateCheckCache>>,
 }
 
 fn unauthorized_html() -> &'static str {

@@ -360,6 +360,39 @@ select {
   background: var(--nav-accent);
 }
 
+.sidebar-meta {
+  margin-top: auto;
+  padding-top: 18px;
+}
+
+.sidebar-meta-divider {
+  height: 1px;
+  background: var(--line);
+  margin: 16px 0 12px;
+  opacity: 0.85;
+}
+
+.sidebar-meta-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.sidebar-meta-version,
+.sidebar-meta-repo {
+  text-decoration: none;
+}
+
+.sidebar-meta-version:hover,
+.sidebar-meta-repo:hover {
+  text-decoration: underline;
+}
+
+.sidebar-meta-repo .mono {
+  color: var(--muted);
+}
+
 .content {
   flex: 1 1 auto;
   min-width: 0;

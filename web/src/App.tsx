@@ -105,6 +105,23 @@ export type BootstrapResponse = {
   settings: SettingsView;
 };
 
+export type AboutUpdate = {
+  enabled: boolean;
+  status: "ok" | "disabled" | "error";
+  checkedAt?: string;
+  latestVersion?: string;
+  latestUrl?: string;
+  updateAvailable: boolean;
+  message?: string;
+};
+
+export type AboutResponse = {
+  version: string;
+  webDistBuildId: string;
+  repoUrl: string;
+  update: AboutUpdate;
+};
+
 export type ProductsResponse = {
   configs: Config[];
   fetchedAt: string;
@@ -245,6 +262,26 @@ function routeSubtitle(route: Route): string {
   if (route === "ops")
     return "全局共享 • 队列/worker/成功率/推送成功率 • SSE 实时 tail（断线自动续传/重置）";
   return "按国家地区 / 可用区分组展示；支持折叠，默认展开（折叠状态可记忆）";
+}
+
+function formatVersionDisplay(version: string | null | undefined): string {
+  const v = (version ?? "").trim();
+  if (!v) return "-";
+  if (/^v/i.test(v)) return v;
+  if (/^\d+\.\d+\.\d+$/.test(v)) return `v${v}`;
+  return v;
+}
+
+function asGitVersionRef(version: string | null | undefined): string | null {
+  const v = (version ?? "").trim();
+  if (!v) return null;
+  if (/^v\d+\.\d+\.\d+$/.test(v)) return v;
+  if (/^\d+\.\d+\.\d+$/.test(v)) return `v${v}`;
+  return null;
+}
+
+function encodeGitRefForPath(ref: string): string {
+  return encodeURIComponent(ref).replaceAll("%2F", "/");
 }
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
@@ -468,6 +505,9 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array {
 export function App() {
   const [route, setRoute] = useState<Route>(() => getRoute());
   const [bootstrap, setBootstrap] = useState<BootstrapResponse | null>(null);
+  const [about, setAbout] = useState<AboutResponse | null>(null);
+  const [aboutLoading, setAboutLoading] = useState<boolean>(false);
+  const [aboutError, setAboutError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [syncAlert, setSyncAlert] = useState<string | null>(null);
@@ -564,6 +604,20 @@ export function App() {
     }
   }, []);
 
+  const refreshAbout = useCallback(async (force: boolean) => {
+    setAboutLoading(true);
+    setAboutError(null);
+    try {
+      const json = await api<AboutResponse>(force ? "/api/about?force=1" : "/api/about");
+      setAbout(json);
+      setAboutError(null);
+    } catch (e) {
+      setAboutError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAboutLoading(false);
+    }
+  }, []);
+
   const refreshMonitoringSilently = useCallback(async () => {
     try {
       const res = await api<MonitoringResponse>("/api/monitoring");
@@ -572,6 +626,11 @@ export function App() {
       // Ignore monitoring refresh errors.
     }
   }, []);
+
+  useEffect(() => {
+    if (!hasBootstrap) return;
+    void refreshAbout(false);
+  }, [hasBootstrap, refreshAbout]);
 
   useEffect(() => {
     if (!hasBootstrap) return;
@@ -829,6 +888,33 @@ export function App() {
 
   const title = `Catnap • ${routeTitle(route)}`;
   const subtitle = route === "monitoring" ? null : routeSubtitle(route);
+  const repoUrl = about?.repoUrl?.trim() ? about.repoUrl.trim() : null;
+  const repoBaseUrl = repoUrl ? repoUrl.replace(/\/+$/, "") : null;
+  const versionRaw = about?.version ?? import.meta.env.VITE_APP_VERSION;
+  const versionDisplay = formatVersionDisplay(versionRaw);
+  const versionRef = asGitVersionRef(versionRaw);
+  const versionHref =
+    repoBaseUrl && versionRef
+      ? `${repoBaseUrl}/releases/tag/${encodeGitRefForPath(versionRef)}`
+      : null;
+  const updateHref = about?.update?.latestUrl ?? null;
+  const updatePill =
+    about?.update.updateAvailable && about.update.latestVersion ? (
+      <a
+        className="pill warn center"
+        href={updateHref ?? "#settings"}
+        {...(updateHref && /^https?:\/\//.test(updateHref)
+          ? { target: "_blank", rel: "noopener noreferrer" }
+          : {})}
+        title={
+          updateHref
+            ? `有新版本：${formatVersionDisplay(about.update.latestVersion)}`
+            : "有新版本：请在系统设置中查看"
+        }
+      >
+        {`有新版本 ${formatVersionDisplay(about.update.latestVersion)}`}
+      </a>
+    ) : null;
   const sidebar = (
     <>
       <div className="sidebar-title">导航</div>
@@ -847,6 +933,38 @@ export function App() {
       <a className={route === "ops" ? "nav-item active" : "nav-item"} href="#ops">
         采集观测台
       </a>
+
+      <div className="sidebar-meta">
+        <div className="sidebar-meta-divider" aria-hidden="true" />
+        <div className="sidebar-meta-top">
+          {versionHref ? (
+            <a
+              className="sidebar-meta-version"
+              href={versionHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              title={`Version: ${versionDisplay}`}
+            >
+              <span className="mono">{versionDisplay}</span>
+            </a>
+          ) : (
+            <span className="mono">{versionDisplay}</span>
+          )}
+          {repoBaseUrl ? (
+            <a
+              className="sidebar-meta-repo"
+              href={repoBaseUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              title={repoBaseUrl}
+            >
+              <span className="mono">GitHub</span>
+            </a>
+          ) : (
+            <span className="mono muted">-</span>
+          )}
+        </div>
+      </div>
     </>
   );
 
@@ -881,6 +999,7 @@ export function App() {
         <button type="button" className="pill" onClick={() => setOpsHelpOpen(true)}>
           帮助
         </button>
+        {updatePill}
         <ThemeMenu />
       </>
     ) : (
@@ -944,6 +1063,7 @@ export function App() {
             </>
           ) : null
         ) : null}
+        {updatePill}
         <ThemeMenu />
       </>
     );
@@ -979,7 +1099,14 @@ export function App() {
             onToggle={toggleMonitoring}
           />
         ) : route === "settings" ? (
-          <SettingsViewPanel bootstrap={bootstrap} onSave={saveSettings} />
+          <SettingsViewPanel
+            bootstrap={bootstrap}
+            about={about}
+            aboutLoading={aboutLoading}
+            aboutError={aboutError}
+            onCheckUpdate={async () => refreshAbout(true)}
+            onSave={saveSettings}
+          />
         ) : route === "logs" ? (
           <LogsView />
         ) : (
@@ -1627,9 +1754,17 @@ export function MonitoringSection({
 
 export function SettingsViewPanel({
   bootstrap,
+  about,
+  aboutLoading,
+  aboutError,
+  onCheckUpdate,
   onSave,
 }: {
   bootstrap: BootstrapResponse;
+  about: AboutResponse | null;
+  aboutLoading: boolean;
+  aboutError: string | null;
+  onCheckUpdate: () => Promise<void>;
   onSave: (next: SettingsView & { telegramBotToken?: string | null }) => Promise<void>;
 }) {
   const [intervalMinutes, setIntervalMinutes] = useState<number>(
@@ -1668,6 +1803,33 @@ export function SettingsViewPanel({
 
   const wpKey = bootstrap.settings.notifications.webPush.vapidPublicKey;
   const wpSupported = "serviceWorker" in navigator && "PushManager" in window;
+
+  const aboutVersionDisplay = formatVersionDisplay(
+    about?.version ?? import.meta.env.VITE_APP_VERSION,
+  );
+  const aboutWebDistBuildId = about?.webDistBuildId?.trim() ? about.webDistBuildId.trim() : null;
+  const aboutRepoUrl = about?.repoUrl?.trim() ? about.repoUrl.trim() : null;
+  const aboutRepoBaseUrl = aboutRepoUrl ? aboutRepoUrl.replace(/\/+$/, "") : null;
+  const update = about?.update ?? null;
+  const updateStatus: AboutUpdate["status"] = update?.status ?? "error";
+  const updateBadgeClass =
+    updateStatus === "ok"
+      ? "pill badge on"
+      : updateStatus === "disabled"
+        ? "pill badge disabled"
+        : "pill badge err";
+  const updateCheckedAt = update?.checkedAt ?? null;
+  const updateLatestVersion = update?.latestVersion ?? null;
+  const updateLatestUrl = update?.latestUrl ?? null;
+  const updateAvailable = update?.updateAvailable ?? false;
+  const updateMessage = update?.message ?? aboutError;
+
+  function formatLocalTime(iso: string | null): string {
+    if (!iso) return "-";
+    const t = Date.parse(iso);
+    if (!Number.isFinite(t)) return iso;
+    return new Date(t).toLocaleString();
+  }
 
   return (
     <div className="panel">
@@ -2044,6 +2206,83 @@ export function SettingsViewPanel({
             }}
           >
             保存设置
+          </button>
+        </div>
+      </div>
+
+      <div className="panel-section">
+        <div className="panel-title">关于（About）</div>
+        <div className="panel-subtitle">
+          版本号来自运行中服务；升级提示基于 GitHub Releases 的 stable latest（可关闭）。
+        </div>
+
+        <div className="settings-grid">
+          <div>当前版本</div>
+          <div className="mono">{aboutVersionDisplay}</div>
+          <div className="hint">
+            {aboutWebDistBuildId ? `webDist: ${aboutWebDistBuildId}` : "-"}
+          </div>
+
+          <div>仓库</div>
+          <div className="mono">
+            {aboutRepoBaseUrl ? (
+              <a href={aboutRepoBaseUrl} target="_blank" rel="noopener noreferrer">
+                {aboutRepoBaseUrl}
+              </a>
+            ) : (
+              "-"
+            )}
+          </div>
+          <div className="hint">CATNAP_REPO_URL 可覆盖</div>
+
+          <div>更新检查</div>
+          <div>
+            <span className={updateBadgeClass}>{updateStatus}</span>
+            {updateAvailable ? (
+              <span className="pill badge warn" style={{ marginLeft: 8 }}>
+                update
+              </span>
+            ) : null}
+          </div>
+          <div className="hint">
+            {updateCheckedAt ? `checked: ${formatLocalTime(updateCheckedAt)}` : "-"}
+          </div>
+
+          <div>最新版本</div>
+          <div className="mono">
+            {updateLatestVersion ? formatVersionDisplay(updateLatestVersion) : "-"}
+          </div>
+          <div className="hint">
+            {updateLatestUrl ? (
+              <a href={updateLatestUrl} target="_blank" rel="noopener noreferrer">
+                打开 Release
+              </a>
+            ) : (
+              "-"
+            )}
+          </div>
+        </div>
+
+        {updateMessage ? (
+          <div className="muted" style={{ marginTop: 12 }}>
+            {updateMessage}
+          </div>
+        ) : null}
+
+        <div className="settings-actions">
+          <button
+            type="button"
+            className="pill warn center btn"
+            disabled={aboutLoading || (about !== null && update?.enabled === false)}
+            onClick={async () => {
+              try {
+                await onCheckUpdate();
+              } catch {
+                // Ignore; errors surface via aboutError/updateMessage.
+              }
+            }}
+          >
+            {aboutLoading ? "检查中…" : "检查更新"}
           </button>
         </div>
       </div>

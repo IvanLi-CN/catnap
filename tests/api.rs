@@ -17,6 +17,12 @@ fn test_config() -> RuntimeConfig {
     RuntimeConfig {
         bind_addr: "127.0.0.1:0".to_string(),
         effective_version: "test".to_string(),
+        repo_url: "https://example.com/repo".to_string(),
+        update_repo: "example/repo".to_string(),
+        update_check_enabled: false,
+        update_check_ttl_seconds: 0,
+        update_check_timeout_ms: 1500,
+        github_api_base_url: "https://api.github.com".to_string(),
         upstream_cart_url: "https://lazycats.vip/cart".to_string(),
         telegram_api_base_url: "https://api.telegram.org".to_string(),
         auth_user_header: Some("x-user".to_string()),
@@ -91,6 +97,7 @@ async fn make_app_with_config(cfg: RuntimeConfig) -> TestApp {
         catalog,
         catalog_refresh: catnap::catalog_refresh::CatalogRefreshManager::new(),
         ops,
+        update_cache: catnap::update_check::new_cache(),
     };
 
     TestApp {
@@ -190,6 +197,105 @@ async fn bootstrap_returns_catalog_and_settings() {
     assert!(json.get("catalog").is_some());
     assert!(json.get("settings").is_some());
     assert!(json.get("monitoring").is_some());
+}
+
+#[tokio::test]
+async fn about_returns_repo_and_version() {
+    let t = make_app().await;
+    let res = t
+        .app
+        .oneshot(
+            Request::builder()
+                .uri("/api/about")
+                .header("host", "example.com")
+                .header("x-user", "u_1")
+                .header("origin", "http://example.com")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let bytes = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(json.get("version").and_then(|v| v.as_str()), Some("test"));
+    assert!(json.get("repoUrl").is_some());
+    assert_eq!(
+        json.pointer("/update/enabled").and_then(|v| v.as_bool()),
+        Some(false)
+    );
+    assert_eq!(
+        json.pointer("/update/status").and_then(|v| v.as_str()),
+        Some("disabled")
+    );
+}
+
+#[tokio::test]
+async fn about_can_force_refresh_update_cache() {
+    let gh = axum::Router::new().route(
+        "/repos/example/repo/releases/latest",
+        axum::routing::get(|| async {
+            axum::Json(serde_json::json!({
+                "tag_name": "v9.9.9",
+                "html_url": "https://example.invalid/releases/tag/v9.9.9",
+            }))
+        }),
+    );
+    let gh_base = spawn_stub_server(gh).await;
+
+    let mut cfg = test_config();
+    cfg.effective_version = "0.1.0".to_string();
+    cfg.update_check_enabled = true;
+    cfg.update_check_ttl_seconds = 3600;
+    cfg.update_repo = "example/repo".to_string();
+    cfg.github_api_base_url = gh_base;
+
+    let t = make_app_with_config(cfg).await;
+    let res = t
+        .app
+        .oneshot(
+            Request::builder()
+                .uri("/api/about?force=1")
+                .header("host", "example.com")
+                .header("x-user", "u_1")
+                .header("origin", "http://example.com")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let bytes = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(json.get("version").and_then(|v| v.as_str()), Some("0.1.0"));
+    assert_eq!(
+        json.pointer("/update/enabled").and_then(|v| v.as_bool()),
+        Some(true)
+    );
+    assert_eq!(
+        json.pointer("/update/status").and_then(|v| v.as_str()),
+        Some("ok")
+    );
+    assert!(json
+        .pointer("/update/checkedAt")
+        .and_then(|v| v.as_str())
+        .is_some());
+    assert_eq!(
+        json.pointer("/update/latestVersion")
+            .and_then(|v| v.as_str()),
+        Some("9.9.9")
+    );
+    assert_eq!(
+        json.pointer("/update/latestUrl").and_then(|v| v.as_str()),
+        Some("https://example.invalid/releases/tag/v9.9.9")
+    );
+    assert_eq!(
+        json.pointer("/update/updateAvailable")
+            .and_then(|v| v.as_bool()),
+        Some(true)
+    );
 }
 
 #[tokio::test]
