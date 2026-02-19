@@ -81,7 +81,7 @@ jobs:
           openssl = { version = "0.10", features = ["vendored"] }
           EOF
 
-          cargo check
+          CARGO_TARGET_DIR=target/host cargo check
 
       - name: Build release assets (linux/amd64+arm64, gnu+musl)
         shell: bash
