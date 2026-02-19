@@ -65,21 +65,37 @@ jobs:
         with:
           toolchain: stable
 
-      - name: Enable vendored OpenSSL for musl (compat, old tags)
+      - name: Ensure vendored OpenSSL for linux targets (compat, old tags)
         shell: bash
         run: |
           set -euo pipefail
 
-          if grep -q "target\\.'cfg(target_env = \\\"musl\\\")'\\.dependencies" Cargo.toml; then
-            echo "musl vendored OpenSSL already configured"
-            exit 0
-          fi
+          changed="false"
 
-          cat >> Cargo.toml <<'EOF'
+          if ! grep -q "target\\.'cfg(target_env = \\\"musl\\\")'\\.dependencies" Cargo.toml; then
+            cat >> Cargo.toml <<'EOF'
 
           [target.'cfg(target_env = "musl")'.dependencies]
           openssl = { version = "0.10", features = ["vendored"] }
           EOF
+
+            changed="true"
+          fi
+
+          if ! grep -q "target\\.'cfg(all(target_os = \\\"linux\\\", target_env = \\\"gnu\\\"))'\\.dependencies" Cargo.toml; then
+            cat >> Cargo.toml <<'EOF'
+
+          [target.'cfg(all(target_os = "linux", target_env = "gnu"))'.dependencies]
+          openssl = { version = "0.10", features = ["vendored"] }
+          EOF
+
+            changed="true"
+          fi
+
+          if [[ "${changed}" == "false" ]]; then
+            echo "vendored OpenSSL already configured"
+            exit 0
+          fi
 
           CARGO_TARGET_DIR=target/host cargo check
 
@@ -92,25 +108,25 @@ jobs:
           [target.x86_64-unknown-linux-gnu]
           pre-build = [
             "dpkg_arch=${CROSS_DEB_ARCH#musl-linux-} && dpkg --add-architecture ${dpkg_arch}",
-            "apt-get update && apt-get install --assume-yes --no-install-recommends pkg-config libssl-dev:${dpkg_arch}"
+            "apt-get update && apt-get install --assume-yes --no-install-recommends pkg-config perl libssl-dev:${dpkg_arch}"
           ]
 
           [target.aarch64-unknown-linux-gnu]
           pre-build = [
             "dpkg_arch=${CROSS_DEB_ARCH#musl-linux-} && dpkg --add-architecture ${dpkg_arch}",
-            "apt-get update && apt-get install --assume-yes --no-install-recommends pkg-config libssl-dev:amd64 libssl-dev:${dpkg_arch}"
+            "apt-get update && apt-get install --assume-yes --no-install-recommends pkg-config perl libssl-dev:amd64 libssl-dev:${dpkg_arch}"
           ]
 
           [target.x86_64-unknown-linux-musl]
           pre-build = [
             "dpkg_arch=${CROSS_DEB_ARCH#musl-linux-} && dpkg --add-architecture ${dpkg_arch}",
-            "apt-get update && apt-get install --assume-yes --no-install-recommends pkg-config libssl-dev:${dpkg_arch}"
+            "apt-get update && apt-get install --assume-yes --no-install-recommends pkg-config perl libssl-dev:${dpkg_arch}"
           ]
 
           [target.aarch64-unknown-linux-musl]
           pre-build = [
             "dpkg_arch=${CROSS_DEB_ARCH#musl-linux-} && dpkg --add-architecture ${dpkg_arch}",
-            "apt-get update && apt-get install --assume-yes --no-install-recommends pkg-config libssl-dev:amd64 libssl-dev:${dpkg_arch}"
+            "apt-get update && apt-get install --assume-yes --no-install-recommends pkg-config perl libssl-dev:amd64 libssl-dev:${dpkg_arch}"
           ]
           EOF
 
