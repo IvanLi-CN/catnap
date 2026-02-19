@@ -1,0 +1,189 @@
+name: Release Backfill
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing semver tag to publish (vX.Y.Z)
+        required: true
+
+concurrency:
+  group: release-backfill-${{ inputs.tag }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_REPO: catnap
+  PLATFORMS: linux/amd64,linux/arm64
+
+jobs:
+  release:
+    name: Release (backfill)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Validate input tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ inputs.tag }}"
+          if [[ ! "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "invalid tag (expected vX.Y.Z): ${tag}" >&2
+            exit 1
+          fi
+
+          echo "APP_EFFECTIVE_VERSION=${tag#v}" >> "${GITHUB_ENV}"
+
+      - name: Checkout (full history, tag)
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          ref: ${{ inputs.tag }}
+
+      - name: Set up Bun (optional)
+        if: hashFiles('web/package.json') != ''
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1
+
+      - name: Build web (optional, for embedded UI)
+        if: hashFiles('web/package.json') != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd web
+          bun install --frozen-lockfile
+          VITE_APP_VERSION="${APP_EFFECTIVE_VERSION}" bun run build
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Build release assets (linux/amd64+arm64, gnu+musl)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cargo install cross --locked
+
+          out_dir="dist/release-assets"
+          rm -rf "${out_dir}"
+          mkdir -p "${out_dir}"
+
+          build_one() {
+            local target="$1"
+            local arch="$2"
+            local abi="$3"
+
+            cross build --release --locked --target "${target}"
+
+            local bin="target/${target}/release/catnap"
+            if [[ ! -f "${bin}" ]]; then
+              echo "missing binary: ${bin}" >&2
+              exit 1
+            fi
+
+            local base="catnap_${APP_EFFECTIVE_VERSION}_linux_${arch}_${abi}"
+            local tgz="${out_dir}/${base}.tar.gz"
+            tar -C "$(dirname "${bin}")" -czf "${tgz}" catnap
+            sha256sum "${tgz}" | awk '{print $1}' > "${tgz}.sha256"
+          }
+
+          build_one x86_64-unknown-linux-gnu amd64 gnu
+          build_one aarch64-unknown-linux-gnu arm64 gnu
+          build_one x86_64-unknown-linux-musl amd64 musl
+          build_one aarch64-unknown-linux-musl arm64 musl
+
+      - name: Smoke test (linux/amd64 gnu binary)
+        shell: bash
+        run: |
+          bash ./.github/scripts/smoke-test.sh ./target/x86_64-unknown-linux-gnu/release/catnap
+
+      - name: Create/Update GitHub Release and upload assets
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ inputs.tag }}
+          name: ${{ inputs.tag }}
+          generateReleaseNotes: true
+          allowUpdates: true
+          omitBodyDuringUpdate: true
+          artifacts: dist/release-assets/*
+          artifactErrorsFailBuild: true
+          replacesArtifacts: true
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image tags
+        id: image-tags
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          owner_lower="$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
+          image="${REGISTRY}/${owner_lower}/${IMAGE_REPO}"
+
+          {
+            echo "image=${image}"
+            echo "tags<<EOF"
+            echo "${image}:v${APP_EFFECTIVE_VERSION}"
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Build and push Docker image
+        id: docker-push
+        uses: docker/build-push-action@v6
+        continue-on-error: true
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: ${{ env.PLATFORMS }}
+          push: true
+          tags: ${{ steps.image-tags.outputs.tags }}
+          labels: |
+            org.opencontainers.image.version=${{ env.APP_EFFECTIVE_VERSION }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          build-args: |
+            APP_EFFECTIVE_VERSION=${{ env.APP_EFFECTIVE_VERSION }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Warn on Docker cache export failure (retrying without cache-to)
+        if: steps.docker-push.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "WARN: Docker push step failed with GHA cache enabled; retrying without cache-to. If the retry succeeds, this is treated as a cache export/transient issue; real build errors must still fail the job." >&2
+
+      - name: Build and push Docker image (fallback without cache-to)
+        if: steps.docker-push.outcome == 'failure'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: ${{ env.PLATFORMS }}
+          push: true
+          tags: ${{ steps.image-tags.outputs.tags }}
+          labels: |
+            org.opencontainers.image.version=${{ env.APP_EFFECTIVE_VERSION }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          build-args: |
+            APP_EFFECTIVE_VERSION=${{ env.APP_EFFECTIVE_VERSION }}
+          cache-from: type=gha
