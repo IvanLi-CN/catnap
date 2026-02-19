@@ -65,6 +65,24 @@ jobs:
         with:
           toolchain: stable
 
+      - name: Enable vendored OpenSSL for musl (compat, old tags)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if grep -q "target\\.'cfg(target_env = \\\"musl\\\")'\\.dependencies" Cargo.toml; then
+            echo "musl vendored OpenSSL already configured"
+            exit 0
+          fi
+
+          cat >> Cargo.toml <<'EOF'
+
+          [target.'cfg(target_env = "musl")'.dependencies]
+          openssl = { version = "0.10", features = ["vendored"] }
+          EOF
+
+          cargo check
+
       - name: Build release assets (linux/amd64+arm64, gnu+musl)
         shell: bash
         run: |
