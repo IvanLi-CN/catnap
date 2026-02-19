@@ -20,7 +20,8 @@ on:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # Cancel stale PR runs, but never cancel main/tag releases mid-flight.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -514,7 +515,7 @@ jobs:
             fi
 
             is_main="true"
-            existing_tag="$(git tag --points-at HEAD | grep -E '^v[0-9]+\\.[0-9]+\\.[0-9]+$' | head -n1 || true)"
+            existing_tag="$(git tag --points-at HEAD | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n1 || true)"
             if [[ -n "${existing_tag}" ]]; then
               tag="${existing_tag}"
               version="${tag#v}"

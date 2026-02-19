@@ -252,12 +252,20 @@ PY
 )
 
 if (( ${#pr_numbers[@]} == 0 )); then
-  log "no associated PR for sha=${sha}; policy: skip auto release"
-  write_output "should_release" "false"
-  write_output "bump_level" "none"
-  write_output "intent_label" "none"
-  write_output "pr_number" "none"
-  exit 0
+  # GitHub's commits/{sha}/pulls endpoint may return an empty list for merge commits created by
+  # the "Create a merge commit" strategy, even though the commit subject contains the PR number.
+  commit_subject="$(git log -1 --format=%s "${sha}" 2>/dev/null || true)"
+  if [[ "${commit_subject}" =~ ^Merge\ pull\ request\ \#([0-9]+)\  ]]; then
+    pr_number="${BASH_REMATCH[1]}"
+    log "no associated PR via commits API for sha=${sha}; using merge-commit subject fallback pr=${pr_number}"
+  else
+    log "no associated PR for sha=${sha}; policy: skip auto release"
+    write_output "should_release" "false"
+    write_output "bump_level" "none"
+    write_output "intent_label" "none"
+    write_output "pr_number" "none"
+    exit 0
+  fi
 fi
 
 if (( ${#pr_numbers[@]} > 1 )); then
@@ -269,7 +277,9 @@ if (( ${#pr_numbers[@]} > 1 )); then
   exit 0
 fi
 
-pr_number="${pr_numbers[0]}"
+if [[ "${pr_number}" == "none" ]]; then
+  pr_number="${pr_numbers[0]}"
+fi
 issue_url="${api_base}/repos/${repo}/issues/${pr_number}"
 
 issue_json=""
