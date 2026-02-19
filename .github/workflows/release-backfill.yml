@@ -125,6 +125,7 @@ jobs:
             local arch="$2"
             local abi="$3"
 
+            rm -rf target/release
             cross build --release --locked --target "${target}"
 
             local bin="target/${target}/release/catnap"
