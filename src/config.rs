@@ -174,7 +174,7 @@ impl RuntimeConfig {
             update_check_timeout_ms,
             github_api_base_url,
             upstream_cart_url: env::var("CATNAP_UPSTREAM_CART_URL")
-                .unwrap_or_else(|_| "https://lazycats.vip/cart".to_string()),
+                .unwrap_or_else(|_| "https://lxc.lazycat.wiki/cart".to_string()),
             telegram_api_base_url,
             auth_user_header,
             dev_user_id,

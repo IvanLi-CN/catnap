@@ -8,7 +8,7 @@
 
 ## 背景 / 问题陈述
 
-Catnap 需要抓取上游购物车页面（默认由 `CATNAP_UPSTREAM_CART_URL` 指定）。当前仓库内仍存在对旧域名 `lazycats.vip` 的硬编码与示例文档，导致：
+Catnap 需要抓取上游购物车页面（默认由 `CATNAP_UPSTREAM_CART_URL` 指定）。当前仓库内仍存在对“旧上游域名”的硬编码与示例文档，导致：
 
 - 新部署不设置 env 时会抓取旧站点；
 - README / deploy 示例会误导用户；
@@ -43,7 +43,7 @@ Catnap 需要抓取上游购物车页面（默认由 `CATNAP_UPSTREAM_CART_URL` 
 
 ## 验收标准（Acceptance Criteria）
 
-1. 仓库中不再出现 `lazycats.vip`（默认不保留任何旧域名引用）。
+1. 仓库中不再出现旧上游域名（默认不保留任何旧域名引用）。
 2. `CATNAP_UPSTREAM_CART_URL` 默认值为 `https://lxc.lazycat.wiki/cart`。
 3. README 与 deploy 示例展示的新默认值与上述一致，并提示 “`/cart` 无尾随 `/`”。
 4. `cargo test --all-features` 通过。
@@ -52,4 +52,3 @@ Catnap 需要抓取上游购物车页面（默认由 `CATNAP_UPSTREAM_CART_URL` 
 ## 风险
 
 - 上游路径严格：`/cart/` 可能 404，因此必须使用 `https://lxc.lazycat.wiki/cart`（无尾随斜杠）作为默认入口。
-

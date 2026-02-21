@@ -199,7 +199,7 @@ export const demoBootstrap: BootstrapResponse = {
   },
   settings: {
     poll: { intervalMinutes: 1, jitterPct: 0.2 },
-    siteBaseUrl: "https://lazycats.vip",
+    siteBaseUrl: "https://lxc.lazycat.wiki",
     catalogRefresh: { autoIntervalHours: 6 },
     monitoringEvents: { listedEnabled: true, delistedEnabled: true },
     notifications: {
