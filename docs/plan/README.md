@@ -52,4 +52,4 @@
 | 0010 | 配置卡片：国家国旗水印背景 | 已完成 | `0010:card-country-flag-watermark/PLAN.md` | 2026-01-26 | 实现：国旗水印（Iconify `flagpack`） |
 | 0011 | 采集观测台：全局采集队列 + SSE 日志订阅 | 已完成 | `0011:ops-collection-dashboard/PLAN.md` | 2026-01-27 | - |
 | 0012 | 关于：版本号显示 + 升级提示 + 仓库地址显示 | 已完成 | `0012:about-version-update-meta/PLAN.md` | 2026-02-17 | - |
-| 0013 | 上游站点域名迁移（lxc.lazycat.wiki） | 待实现 | `0013:upstream-domain-lxc-lazycat-wiki/PLAN.md` | 2026-02-21 | - |
+| 0013 | 上游站点域名迁移（lxc.lazycat.wiki） | 已完成 | `0013:upstream-domain-lxc-lazycat-wiki/PLAN.md` | 2026-02-21 | PR #44 |

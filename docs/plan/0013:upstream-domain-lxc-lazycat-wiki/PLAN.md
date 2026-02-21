@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 已完成
 - Created: 2026-02-21
 - Last: 2026-02-21
 
@@ -52,3 +52,7 @@ Catnap 需要抓取上游购物车页面（默认由 `CATNAP_UPSTREAM_CART_URL` 
 ## 风险
 
 - 上游路径严格：`/cart/` 可能 404，因此必须使用 `https://lxc.lazycat.wiki/cart`（无尾随斜杠）作为默认入口。
+
+## 落地记录
+
+- PR: #44
