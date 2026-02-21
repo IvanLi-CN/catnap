@@ -12,7 +12,7 @@ fn test_config() -> RuntimeConfig {
         update_check_ttl_seconds: 0,
         update_check_timeout_ms: 1500,
         github_api_base_url: "https://api.github.com".to_string(),
-        upstream_cart_url: "https://lazycats.vip/cart".to_string(),
+        upstream_cart_url: "https://lxc.lazycat.wiki/cart".to_string(),
         telegram_api_base_url: "https://api.telegram.org".to_string(),
         auth_user_header: Some("x-user".to_string()),
         dev_user_id: None,

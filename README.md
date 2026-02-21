@@ -1,10 +1,10 @@
 # catnap
 
-`lazycats.vip/cart` 的库存监控与通知（同源 Web UI + Rust 后端）。
+`lxc.lazycat.wiki/cart` 的库存监控与通知（同源 Web UI + Rust 后端）。
 
 ## 功能
 
-- 监控 `lazycats.vip/cart` 的库存变化
+- 监控 `lxc.lazycat.wiki/cart` 的库存变化
 - Telegram 通知
 - Web Push（可选）
 - 采集观测台（`#ops`：全局队列/worker/成功率/推送成功率 + SSE 日志 tail）
@@ -43,7 +43,7 @@ export BIND_ADDR=127.0.0.1:18080
 
 # 可选
 export CATNAP_DB_URL=sqlite:catnap.db
-export CATNAP_UPSTREAM_CART_URL=https://lazycats.vip/cart
+export CATNAP_UPSTREAM_CART_URL=https://lxc.lazycat.wiki/cart
 
 cargo run
 ```
@@ -83,7 +83,7 @@ curl -sS \
 - `BIND_ADDR`：监听地址，默认 `0.0.0.0:18080`
 - `CATNAP_AUTH_USER_HEADER`：用户标识 header 名（由反向代理注入），默认空（不启用）
 - `CATNAP_DB_URL`：数据库连接串，默认 `sqlite:catnap.db`
-- `CATNAP_UPSTREAM_CART_URL`：上游页面，默认 `https://lazycats.vip/cart`
+- `CATNAP_UPSTREAM_CART_URL`：上游页面，默认 `https://lxc.lazycat.wiki/cart`（注意：`/cart` 不要带尾随 `/`，例如 `/cart/` 可能 404）
 - `CATNAP_TELEGRAM_API_BASE_URL`：Telegram Bot API base URL（默认 `https://api.telegram.org`；用于测试 stub）
 - `CATNAP_WEB_PUSH_VAPID_PUBLIC_KEY`：Web Push VAPID public key（base64url，可选）
 - `CATNAP_WEB_PUSH_VAPID_PRIVATE_KEY`：Web Push VAPID private key（base64url，可选；用于服务端发送测试 Push）
