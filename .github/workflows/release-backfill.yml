@@ -24,7 +24,7 @@ jobs:
   release:
     name: Release (backfill)
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 180
     steps:
       - name: Validate input tag
         shell: bash
@@ -166,18 +166,6 @@ jobs:
         run: |
           bash ./.github/scripts/smoke-test.sh ./target/x86_64-unknown-linux-gnu/release/catnap
 
-      - name: Create/Update GitHub Release and upload assets
-        uses: ncipollo/release-action@v1
-        with:
-          tag: ${{ inputs.tag }}
-          name: ${{ inputs.tag }}
-          generateReleaseNotes: true
-          allowUpdates: true
-          omitBodyDuringUpdate: true
-          artifacts: dist/release-assets/*
-          artifactErrorsFailBuild: true
-          replacesArtifacts: true
-
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
@@ -199,11 +187,33 @@ jobs:
 
           owner_lower="$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
           image="${REGISTRY}/${owner_lower}/${IMAGE_REPO}"
+          current_tag="${{ inputs.tag }}"
+          highest_stable_tag="$(
+            git tag -l \
+              | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+              | sort -V \
+              | tail -n1 || true
+          )"
+          if [[ -z "${highest_stable_tag}" ]]; then
+            echo "failed to resolve highest stable tag for latest policy" >&2
+            exit 1
+          fi
+
+          publish_latest="false"
+          if [[ "${current_tag}" == "${highest_stable_tag}" ]]; then
+            publish_latest="true"
+          fi
 
           {
             echo "image=${image}"
+            echo "current_tag=${current_tag}"
+            echo "highest_stable_tag=${highest_stable_tag}"
+            echo "publish_latest=${publish_latest}"
             echo "tags<<EOF"
-            echo "${image}:v${APP_EFFECTIVE_VERSION}"
+            echo "${image}:${current_tag}"
+            if [[ "${publish_latest}" == "true" ]]; then
+              echo "${image}:latest"
+            fi
             echo "EOF"
           } >> "${GITHUB_OUTPUT}"
 
@@ -234,6 +244,7 @@ jobs:
 
       - name: Build and push Docker image (fallback without cache-to)
         if: steps.docker-push.outcome == 'failure'
+        id: docker-push-fallback
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -248,3 +259,47 @@ jobs:
           build-args: |
             APP_EFFECTIVE_VERSION=${{ env.APP_EFFECTIVE_VERSION }}
           cache-from: type=gha
+
+      - name: Verify docker push gate (must pass before release publish)
+        shell: bash
+        run: |
+          set -euo pipefail
+          primary_outcome="${{ steps.docker-push.outcome }}"
+          fallback_conclusion="${{ steps.docker-push-fallback.conclusion || 'skipped' }}"
+          current_tag="${{ inputs.tag }}"
+          highest_stable_tag="${{ steps.image-tags.outputs.highest_stable_tag }}"
+          publish_latest="${{ steps.image-tags.outputs.publish_latest }}"
+
+          release_gate_passed="false"
+          if [[ "${primary_outcome}" == "success" ]]; then
+            release_gate_passed="true"
+          elif [[ "${primary_outcome}" == "failure" && "${fallback_conclusion}" == "success" ]]; then
+            release_gate_passed="true"
+          fi
+
+          {
+            echo "### Release publish gate"
+            echo "- current_tag: ${current_tag}"
+            echo "- highest_stable_tag: ${highest_stable_tag}"
+            echo "- publish_latest: ${publish_latest}"
+            echo "- docker_primary_outcome: ${primary_outcome}"
+            echo "- docker_fallback_conclusion: ${fallback_conclusion}"
+            echo "- release_gate_passed: ${release_gate_passed}"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+          if [[ "${release_gate_passed}" != "true" ]]; then
+            echo "Docker image push did not complete successfully; blocking release publish." >&2
+            exit 1
+          fi
+
+      - name: Create/Update GitHub Release and upload assets
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ inputs.tag }}
+          name: ${{ inputs.tag }}
+          generateReleaseNotes: true
+          allowUpdates: true
+          omitBodyDuringUpdate: true
+          artifacts: dist/release-assets/*
+          artifactErrorsFailBuild: true
+          replacesArtifacts: true
