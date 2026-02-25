@@ -212,7 +212,7 @@ docker compose up -d --build
 - 镜像：`ghcr.io/<owner>/catnap`
 - Tags（最低集合）：
   - `v<semver>`
-  - `latest`（仅 `main` 自动发版会更新）
+  - `latest`（跟随仓库“最高 stable semver tag”的发布结果）
 
 示例：
 
@@ -241,8 +241,10 @@ sha256sum -c catnap_<semver>_linux_amd64_gnu.tar.gz.sha256
 
 在 GitHub Actions 手动触发 `workflow_dispatch`：
 
-- ref=`main`：完整发布链路（tag/release/assets/GHCR；并更新 `latest`）；必须提供 `bump_level=major|minor|patch`
-- ref=`refs/tags/v<semver>`：重跑/补齐该版本（assets/GHCR；不更新 `latest`）
+- ref=`main`：完整发布链路（tag/release/assets/GHCR）；必须提供 `bump_level=major|minor|patch`
+- ref=`refs/tags/v<semver>`：重跑/补齐该版本（assets/GHCR）
+- `latest` 更新规则：仅当“当前发布 tag == 仓库最高 stable semver tag”时更新（适用于 main 发布与 backfill）
+- backfill 多 tag 建议按时间顺序执行（例如 `v0.2.0 -> v0.2.1 -> v0.2.2`），最终 `latest` 应指向最高 stable tag
 
 ### Smoke test（本地/CI）
 
