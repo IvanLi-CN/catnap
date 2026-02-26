@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 已完成
 - Created: 2026-02-26
 - Last: 2026-02-26
 
@@ -73,7 +73,7 @@ None（不新增/修改/删除任何运行时接口或数据契约）。
 
 ## 实现里程碑（Milestones）
 
-- [ ] M1: 新增 spec（`docs/specs/xvecz-install-ui-ux-pro-max-codex/SPEC.md`）并登记 index
-- [ ] M2: 完成 `uipro-cli` 升级与项目级 Codex 技能安装
-- [ ] M3: 完成 `.gitignore` 边界调整与 smoke test
-- [ ] M4: 完成提交、push、PR 创建与 checks/review-loop 收敛
+- [x] M1: 新增 spec（`docs/specs/xvecz-install-ui-ux-pro-max-codex/SPEC.md`）并登记 index
+- [x] M2: 完成 `uipro-cli` 升级与项目级 Codex 技能安装
+- [x] M3: 完成 `.gitignore` 边界调整与 smoke test
+- [x] M4: 完成提交、push、PR 创建与 checks/review-loop 收敛
