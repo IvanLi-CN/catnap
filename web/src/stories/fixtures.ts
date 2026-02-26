@@ -68,6 +68,7 @@ export const demoConfigs: Config[] = [
       { key: "RAM", value: "4G" },
       { key: "Disk", value: "80G" },
       { key: "Bandwidth", value: "100Mbps" },
+      { key: "Traffic", value: "800GB" },
     ],
     price: money(19.9, "USD"),
     inventory: inv(3, new Date(demoNowMs - 1000 * 60 * 2).toISOString()),
