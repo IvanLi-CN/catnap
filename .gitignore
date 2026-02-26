@@ -3,7 +3,13 @@
 /deploy/.env
 **/.DS_Store
 
-/.codex
+/.codex/*
+!/.codex/skills/
+/.codex/skills/*
+!/.codex/skills/ui-ux-pro-max/
+!/.codex/skills/ui-ux-pro-max/**
+/.codex/skills/ui-ux-pro-max/scripts/__pycache__/
+/.codex/skills/ui-ux-pro-max/scripts/**/*.pyc
 
 /web/node_modules
 /web/dist
