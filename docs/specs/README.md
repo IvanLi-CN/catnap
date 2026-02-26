@@ -2,7 +2,7 @@
 
 本目录用于管理工作项的**规格与追踪**：记录范围、验收标准、任务清单与状态，作为交付依据；实现与验证应以对应 `SPEC.md` 为准。
 
-> Legacy compatibility: 历史规格仍保留在 `docs/plan/**/PLAN.md`（只读兼容）。新规格统一创建在 `docs/specs/**/SPEC.md`。
+> 本目录为项目内规格文档的唯一索引入口。
 
 ## 目录与命名规则
 
@@ -26,4 +26,17 @@
 
 | ID   | Title | Status | Spec | Last | Notes |
 |-----:|-------|--------|------|------|-------|
-| pgnnw | 发布链路修复与 GHCR 回填闭环（Dockrev 无候选） | 已完成（5/5） | `pgnnw-release-ghcr-chain-fix/SPEC.md` | 2026-02-26 | fast-track + 验证闭环完成 |
+| pgnnw | 发布链路修复与 GHCR 回填闭环（Dockrev 无候选） | 已完成 | `pgnnw-release-ghcr-chain-fix/SPEC.md` | 2026-02-26 | fast-track + 验证闭环完成 |
+| 7ey9f | 懒猫云购物车库存监控 | 已完成 | `7ey9f-lazycats-cart-inventory-monitor/SPEC.md` | 2026-01-20 | UI 对齐 wireframes + 监控页重新同步（Playwright 复验）  |
+| hrjpv | Storybook 展示与主题切换（含亮色主题） | 已完成 | `hrjpv-storybook-theme-switching/SPEC.md` | 2026-01-20 | 补齐 stories 覆盖（components/pages/layout）  |
+| tbpgt | CI/CD：发版自动化（GHCR + GitHub Release + Release Assets）对标与补齐 | 已完成 | `tbpgt-release-automation-alignment/SPEC.md` | 2026-01-21 | Release assets（4 targets + sha256）+ GHCR multi-arch + PR smoke test + UI embed  |
+| grjep | 配置卡片：库存历史与近 1 日走势（minute bucket） | 已完成 | `grjep-inventory-history-trend/SPEC.md` | 2026-01-21 | 实现：history API（batch）+ 卡片背景 sparkline + 30 天清理；API=sparse；>10=10+  |
+| 8btwa | CI/CD：自动发版意图标签与版本号策略（防止 docs-only 发版） | 已完成 | `8btwa-release-intent-label-gating/SPEC.md` | 2026-01-21 | PR label gate：`type:docs\|skip\|patch\|minor\|major`；无关联 PR 的 `push main`=跳过；base=语义版本最大 tag（无 tag fallback `Cargo.toml`）；按标签 bump  |
+| xrv7y | CI/CD：GitHub Actions 构建提速（PR：跳过 arm64 + gating + cache） | 已完成 | `xrv7y-github-actions-performance/SPEC.md` | 2026-01-22 | PR ≤ 10 分钟（baseline Actions run `21235535755`）；PR smoke job 输出 timings summary（key steps）  |
+| yghay | CI/CD：修复 Release job 失败（Determine release version/tag） | 已完成 | `yghay-release-job-unblock/SPEC.md` | 2026-01-24 | M3 证据：run `21313516531`（main，tag `v0.1.9`）+ `21313516840`（tag `v0.1.8`）；`Determine release version/tag` step 成功  |
+| uqe6j | 系统设置：通知测试按钮（Telegram + Web Push） | 已完成 | `uqe6j-settings-notifications-test-button/SPEC.md` | 2026-01-24 | Telegram：可用已保存配置或临时覆盖（不保存）；Web Push：补齐发送链路（VAPID private/subject）用于测试  |
+| 2vjvb | 全量刷新：SSE 进度 + 缓存复用 + 配置上下架 | 已完成 | `2vjvb-catalog-full-refresh-sse/SPEC.md` | 2026-01-25 | 全局调度=最小间隔；缺失一次即下架；监控页展示最近 24h 上架（含重新上架）  |
+| 6b675 | 配置卡片：国家国旗水印背景 | 已完成 | `6b675-card-country-flag-watermark/SPEC.md` | 2026-01-26 | 实现：国旗水印（Iconify `flagpack`）  |
+| ynjyv | 采集观测台：全局采集队列 + SSE 日志订阅 | 已完成 | `ynjyv-ops-collection-dashboard/SPEC.md` | 2026-01-27 | -  |
+| wzc6m | 关于：版本号显示 + 升级提示 + 仓库地址显示 | 已完成 | `wzc6m-about-version-update-meta/SPEC.md` | 2026-02-17 | -  |
+| jqp64 | 上游站点域名迁移（lxc.lazycat.wiki） | 已完成 | `jqp64-upstream-domain-lxc-lazycat-wiki/SPEC.md` | 2026-02-21 | PR #44  |
