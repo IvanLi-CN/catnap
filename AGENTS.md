@@ -6,7 +6,7 @@
 - `web/`: Frontend (React + Vite + Bun). Build output `web/dist` is embedded into the backend at compile time, so it must exist before building/running the Rust service.
 - `tests/`: Rust integration tests (`tests/*.rs`) and HTML fixtures in `tests/fixtures/`.
 - `deploy/`: Docker Compose + Caddy reverse-proxy example for same-origin access and injecting the user-id header.
-- `docs/plan/`: Scoped plan docs (frozen acceptance criteria per plan). `docs/ui/` contains consolidated design SVGs.
+- `docs/specs/`: Scoped plan docs (frozen acceptance criteria per plan). `docs/ui/` contains consolidated design SVGs.
 
 ## Build, Test, and Development Commands
 
