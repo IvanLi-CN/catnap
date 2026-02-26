@@ -40,3 +40,4 @@
 | ynjyv | 采集观测台：全局采集队列 + SSE 日志订阅 | 已完成 | `ynjyv-ops-collection-dashboard/SPEC.md` | 2026-01-27 | -  |
 | wzc6m | 关于：版本号显示 + 升级提示 + 仓库地址显示 | 已完成 | `wzc6m-about-version-update-meta/SPEC.md` | 2026-02-17 | -  |
 | jqp64 | 上游站点域名迁移（lxc.lazycat.wiki） | 已完成 | `jqp64-upstream-domain-lxc-lazycat-wiki/SPEC.md` | 2026-02-21 | PR #44  |
+| xvecz | Codex：安装 UI UX Pro Max 技能 | 已完成 | `xvecz-install-ui-ux-pro-max-codex/SPEC.md` | 2026-02-26 | - |
