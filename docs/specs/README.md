@@ -26,4 +26,4 @@
 
 | ID   | Title | Status | Spec | Last | Notes |
 |-----:|-------|--------|------|------|-------|
-| pgnnw | 发布链路修复与 GHCR 回填闭环（Dockrev 无候选） | 部分完成（4/5） | `pgnnw-release-ghcr-chain-fix/SPEC.md` | 2026-02-25 | fast-track |
+| pgnnw | 发布链路修复与 GHCR 回填闭环（Dockrev 无候选） | 已完成（5/5） | `pgnnw-release-ghcr-chain-fix/SPEC.md` | 2026-02-26 | fast-track + 验证闭环完成 |
