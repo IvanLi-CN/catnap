@@ -1133,6 +1133,7 @@ type SpecCell = { label: string; value: string } | null;
 type SpecSlotCell = { key: string; label: string; value: string } | { key: string; empty: true };
 
 const SPEC_SLOTS = ["s1", "s2", "s3", "s4", "s5", "s6"] as const;
+const SPEC_CARD_MAX_CELLS = 5;
 
 function specBucket(key: string): {
   id: "cpu" | "ram" | "disk" | "bandwidth" | "traffic" | "ports" | "other";
@@ -1291,10 +1292,10 @@ export function ProductCard({
   const monitorTone = isCloud ? "disabled" : cfg.monitorEnabled ? "on" : "";
   const monitorText = isCloud ? "监控：禁用" : cfg.monitorEnabled ? "监控：开" : "监控：关";
   const foot = isCloud ? null : cfg.monitorEnabled ? "变化检测：补货 / 价格 / 配置" : null;
-  const rawSpecCells = isCloud ? [] : buildSpecCells(cfg.specs, 4);
+  const rawSpecCells = isCloud ? [] : buildSpecCells(cfg.specs, SPEC_CARD_MAX_CELLS);
   const specCells: SpecSlotCell[] = isCloud
     ? []
-    : SPEC_SLOTS.slice(0, 4).map((key, i) => {
+    : SPEC_SLOTS.slice(0, SPEC_CARD_MAX_CELLS).map((key, i) => {
         const c = rawSpecCells[i];
         return c ? { key, ...c } : { key, empty: true };
       });
@@ -1368,8 +1369,8 @@ export function MonitoringCard({
       : cfg.inventory.quantity > 10
         ? "10+"
         : String(cfg.inventory.quantity);
-  const rawSpecCells = buildSpecCells(cfg.specs, 4);
-  const specCells: SpecSlotCell[] = SPEC_SLOTS.slice(0, 4).map((key, i) => {
+  const rawSpecCells = buildSpecCells(cfg.specs, SPEC_CARD_MAX_CELLS);
+  const specCells: SpecSlotCell[] = SPEC_SLOTS.slice(0, SPEC_CARD_MAX_CELLS).map((key, i) => {
     const c = rawSpecCells[i];
     return c ? { key, ...c } : { key, empty: true };
   });
