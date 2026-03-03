@@ -1,5 +1,5 @@
 use crate::models::{Country, Inventory, Money, Region, Spec};
-use scraper::{Html, Selector};
+use scraper::{ElementRef, Html, Selector};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -458,12 +458,8 @@ pub fn parse_configs(fid: &str, gid: Option<&str>, html: &str) -> Vec<ConfigBase
             .select(&price_block)
             .next()
             .map(|v| normalize_text(&v.text().collect::<String>()))
-            .or_else(|| {
-                el.select(&a_price)
-                    .next()
-                    .map(|v| normalize_text(&v.text().collect::<String>()))
-            })
-            .unwrap_or_default();
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| extract_price_line_from_price_anchor(&el, &a_price));
         let price = Money {
             amount,
             currency: "CNY".to_string(),
@@ -610,13 +606,13 @@ fn detect_period_from_price_text(raw: &str) -> Option<&'static str> {
         (None, None) => {}
     }
 
-    let year_keyword_pos = first_match_pos(&compact, &["每年"])
+    let year_keyword_pos = first_match_pos(&compact, &["年付", "按年", "年缴", "年费"])
         .into_iter()
-        .chain(first_match_pos(&lower, &["peryear"]))
+        .chain(first_match_pos(&lower, &["annual", "yearly"]))
         .min();
-    let month_keyword_pos = first_match_pos(&compact, &["每月"])
+    let month_keyword_pos = first_match_pos(&compact, &["月付", "按月", "月缴", "月费"])
         .into_iter()
-        .chain(first_match_pos(&lower, &["permonth"]))
+        .chain(first_match_pos(&lower, &["monthly"]))
         .min();
     match (month_keyword_pos, year_keyword_pos) {
         (Some(month_pos), Some(year_pos)) => Some(if month_pos <= year_pos { "month" } else { "year" }),
@@ -654,6 +650,19 @@ fn detect_period_from_name(name: &str) -> Option<&'static str> {
 
 fn first_match_pos(text: &str, patterns: &[&str]) -> Option<usize> {
     patterns.iter().filter_map(|pattern| text.find(pattern)).min()
+}
+
+fn extract_price_line_from_price_anchor(card: &ElementRef<'_>, price_anchor: &Selector) -> String {
+    let Some(anchor) = card.select(price_anchor).next() else {
+        return String::new();
+    };
+    if let Some(parent) = anchor.parent().and_then(ElementRef::wrap) {
+        let parent_text = normalize_text(&parent.text().collect::<String>());
+        if !parent_text.is_empty() {
+            return parent_text;
+        }
+    }
+    normalize_text(&anchor.text().collect::<String>())
 }
 
 fn split_kv(s: &str) -> Option<(String, String)> {
@@ -827,6 +836,50 @@ mod tests {
             </div>
             <div class="text-right">
               ¥ <a class="cart-num DINCondensed-Bold">4.99</a> 元 / 月（折合 ¥59.88 / 年）
+            </div>
+            <div class="card-footer">
+              <a href="/cart?action=configureproduct&pid=188">立即购买</a>
+            </div>
+          </div>
+        </body></html>
+        "#;
+        let configs = parse_configs("11", Some("81"), html);
+        assert!(!configs.is_empty());
+        assert_eq!(configs[0].price.period, "month");
+    }
+
+    #[test]
+    fn parse_configs_detects_year_from_price_anchor_parent_without_text_right() {
+        let html = r#"
+        <html><body>
+          <div class="card cartitem shadow w-100">
+            <div class="card-body">
+              <h4>芬兰特惠 Mini</h4>
+            </div>
+            <div class="price-row">
+              ¥ <a class="cart-num DINCondensed-Bold">59.88</a> 元 / 年
+            </div>
+            <div class="card-footer">
+              <a href="/cart?action=configureproduct&pid=188">立即购买</a>
+            </div>
+          </div>
+        </body></html>
+        "#;
+        let configs = parse_configs("11", Some("81"), html);
+        assert!(!configs.is_empty());
+        assert_eq!(configs[0].price.period, "year");
+    }
+
+    #[test]
+    fn parse_configs_does_not_use_yearly_promo_text_without_billing_marker() {
+        let html = r#"
+        <html><body>
+          <div class="card cartitem shadow w-100">
+            <div class="card-body">
+              <h4>芬兰特惠 Mini</h4>
+            </div>
+            <div class="price-row">
+              ¥ <a class="cart-num DINCondensed-Bold">4.99</a> 元（每年可省 20%）
             </div>
             <div class="card-footer">
               <a href="/cart?action=configureproduct&pid=188">立即购买</a>
