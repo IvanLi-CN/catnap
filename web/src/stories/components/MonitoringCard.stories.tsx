@@ -4,8 +4,13 @@ import { countriesById, demoConfigs, demoNowMs } from "../fixtures";
 
 const demoCountriesById = countriesById();
 const usConfig = demoConfigs.find((c) => c.countryId === "us") ?? demoConfigs[1];
-const toOrderUrl = (sourcePid?: string) =>
-  sourcePid ? `https://lxc.lazycat.wiki/cart?action=configureproduct&pid=${sourcePid}` : null;
+const toOrderLink = (cfg: { sourcePid?: string; sourceFid?: string; sourceGid?: string }) =>
+  cfg.sourcePid
+    ? {
+        url: `https://lxc.lazycat.wiki/cart?action=configureproduct&pid=${cfg.sourcePid}`,
+        mode: "configureproduct" as const,
+      }
+    : null;
 
 const meta = {
   title: "Components/MonitoringCard",
@@ -25,7 +30,7 @@ export const Available: Story = {
     cfg: demoConfigs[1],
     countriesById: demoCountriesById,
     nowMs: demoNowMs,
-    orderUrl: toOrderUrl(demoConfigs[1].sourcePid),
+    orderLink: toOrderLink(demoConfigs[1]),
   },
 };
 
@@ -34,7 +39,7 @@ export const Unknown: Story = {
     cfg: demoConfigs[3],
     countriesById: demoCountriesById,
     nowMs: demoNowMs,
-    orderUrl: toOrderUrl(demoConfigs[3].sourcePid),
+    orderLink: toOrderLink(demoConfigs[3]),
   },
 };
 
@@ -43,6 +48,6 @@ export const UnitedStates: Story = {
     cfg: usConfig,
     countriesById: demoCountriesById,
     nowMs: demoNowMs,
-    orderUrl: toOrderUrl(usConfig.sourcePid),
+    orderLink: toOrderLink(usConfig),
   },
 };

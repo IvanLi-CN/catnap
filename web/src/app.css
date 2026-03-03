@@ -518,6 +518,38 @@ select {
   color: var(--text);
 }
 
+.panel-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.panel-title-link {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.panel-title-link:hover {
+  color: var(--text);
+  background: color-mix(in oklab, var(--surface2) 75%, transparent);
+}
+
+.panel-title-link:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.panel-title-link-icon {
+  width: 16px;
+  height: 16px;
+}
+
 .panel-subtitle {
   margin-top: 8px;
   font-size: 14px;
@@ -805,21 +837,6 @@ select {
   cursor: default;
 }
 
-.card-order-overlay {
-  position: absolute;
-  inset: 0;
-  z-index: 2;
-  border: 0;
-  border-radius: inherit;
-  background: transparent;
-  cursor: pointer;
-}
-
-.card-order-overlay:focus-visible {
-  outline: 2px solid var(--badge-on-border);
-  outline-offset: 2px;
-}
-
 .card-content {
   position: relative;
   z-index: 1;
@@ -1043,6 +1060,11 @@ select {
   font-size: 12px;
   line-height: 1.2;
   color: var(--muted);
+}
+
+.cfg-order-hint.soft,
+.mon-order-hint.soft {
+  color: var(--text-dim);
 }
 
 .mon-pills {

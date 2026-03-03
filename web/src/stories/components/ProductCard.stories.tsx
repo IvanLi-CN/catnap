@@ -21,15 +21,18 @@ const cloudWithOrderConfig: Config = {
 
 function ProductCardDemo({ initial }: { initial: Config }) {
   const [cfg, setCfg] = useState<Config>(initial);
-  const orderUrl = cfg.sourcePid
-    ? `https://lxc.lazycat.wiki/cart?action=configureproduct&pid=${cfg.sourcePid}`
+  const orderLink = cfg.sourcePid
+    ? {
+        url: `https://lxc.lazycat.wiki/cart?action=configureproduct&pid=${cfg.sourcePid}`,
+        mode: "configureproduct" as const,
+      }
     : null;
   return (
     <div style={{ padding: 24 }}>
       <ProductCard
         cfg={cfg}
         countriesById={demoCountriesById}
-        orderUrl={orderUrl}
+        orderLink={orderLink}
         onToggle={(configId, enabled) => {
           setCfg((prev) => (prev.id === configId ? { ...prev, monitorEnabled: enabled } : prev));
         }}
@@ -78,8 +81,8 @@ export const KeyboardOpensOrder: Story = {
     }) as typeof window.open;
 
     try {
-      const orderButton = await canvas.findByRole("button", { name: "打开下单页（新标签页）" });
-      orderButton.focus();
+      const cardLink = await canvas.findByRole("link", { name: "打开下单页（新标签页）" });
+      cardLink.focus();
       await userEvent.keyboard("{Enter}");
       expect(openCalls.length).toBe(1);
       expect(openCalls[0]).toContain("action=configureproduct");
@@ -134,7 +137,7 @@ export const CloudBadgeAreaOpensOrder: Story = {
 
     try {
       expect(canvas.queryByRole("button", { name: "监控：禁用" })).toBeNull();
-      await userEvent.click(await canvas.findByRole("button", { name: "打开下单页（新标签页）" }));
+      await userEvent.click(await canvas.findByRole("link", { name: "打开下单页（新标签页）" }));
       expect(openCalls.length).toBe(1);
       expect(openCalls[0]).toContain("pid=117");
     } finally {

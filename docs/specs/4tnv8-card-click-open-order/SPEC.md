@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 部分完成（3/4）
+- Status: 已完成
 - Created: 2026-03-03
 - Last: 2026-03-03
 
@@ -32,6 +32,7 @@
 - API 字段扩展：`ConfigView.sourcePid`（可选）。
 - Products/Monitoring 卡片跳转行为、键盘可达性、focus-visible 样式。
 - Storybook 场景覆盖可跳转与不可跳转态。
+- Products 分组标题增加 Iconify link 图标，支持新标签页打开上游国家分组页（`cart?fid=<fid>`）。
 
 ### Out of scope
 
@@ -68,6 +69,10 @@
   When 用户使用键盘聚焦并按 `Enter` 或 `Space`
   Then 在新标签页打开下单链接，且焦点样式可见。
 
+- Given 用户点击“全部产品”分组标题旁的 link 图标
+  When 分组包含有效 `countryId(fid)`
+  Then 新标签页打开 `.../cart?fid=<fid>`（例如芬兰组 `fid=11`）。
+
 ## 非功能性验收 / 质量门槛（Quality Gates）
 
 - Backend: `cargo test --all-features`
@@ -79,7 +84,9 @@
 - [x] M1: `ConfigView` 新增可选 `sourcePid`，并在 `/api/bootstrap`、`/api/products`、`/api/monitoring` 返回
 - [x] M2: Products + Monitoring 卡片支持点击/键盘跳转；监控开关与跳转解耦
 - [x] M3: 缺失链接提示、样式与 Storybook 场景补齐
-- [ ] M4: 本地验证通过并进入 fast-track 收敛
+- [x] M4: 下单跳转严格收口到 `configureproduct&pid`，并补齐历史缺失 `sourcePid` 的恢复策略
+- [x] M5: “全部产品”分组标题新增 Iconify link 图标，点击新标签页打开 `cart?fid=<fid>`
+- [x] M6: 本地验证通过并完成提交（lint/typecheck/storybook + cargo tests）
 
 ## 风险 / 假设
 
@@ -90,3 +97,6 @@
 
 - 2026-03-03: 初始化规格，冻结“卡片跳转下单页”范围与验收口径。
 - 2026-03-03: 完成 API `sourcePid` 透传、Products/Monitoring 跳转交互、Storybook 交互用例与本地验证；待 PR 阶段收敛。
+- 2026-03-03: 用户反馈后将跳转口径严格收口为 `cart?action=configureproduct&pid=<pid>`，去除 `fid/gid` 作为下单页 fallback。
+- 2026-03-03: 后端新增 `sourcePid` 缺失恢复（configureproduct 页探测 + 缓存），并在 upsert 时保留既有非空 pid，提升卡片可跳转覆盖率。
+- 2026-03-03: 分组标题新增 Iconify link 图标（非按钮样式），支持新标签页直达上游 `cart?fid=<fid>` 页面。

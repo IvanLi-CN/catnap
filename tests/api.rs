@@ -238,12 +238,28 @@ async fn products_exposes_optional_source_pid() {
         with_pid.get("sourcePid").and_then(|v| v.as_str()),
         Some("128")
     );
+    assert_eq!(
+        with_pid.get("sourceFid").and_then(|v| v.as_str()),
+        Some("7")
+    );
+    assert_eq!(
+        with_pid.get("sourceGid").and_then(|v| v.as_str()),
+        Some("40")
+    );
 
     let without_pid = configs
         .iter()
         .find(|cfg| cfg.get("id").and_then(|v| v.as_str()) == Some("lc:7:40:127"))
         .expect("config without pid exists");
     assert!(without_pid.get("sourcePid").is_none());
+    assert_eq!(
+        without_pid.get("sourceFid").and_then(|v| v.as_str()),
+        Some("7")
+    );
+    assert_eq!(
+        without_pid.get("sourceGid").and_then(|v| v.as_str()),
+        Some("40")
+    );
 }
 
 #[tokio::test]

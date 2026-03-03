@@ -76,6 +76,10 @@ pub struct ConfigView {
     pub monitor_enabled: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_pid: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_fid: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_gid: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

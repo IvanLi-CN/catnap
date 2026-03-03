@@ -26,7 +26,7 @@
 
 | ID   | Title | Status | Spec | Last | Notes |
 |-----:|-------|--------|------|------|-------|
-| 4tnv8 | 配置卡片点击打开下单页 | 部分完成（3/4） | `4tnv8-card-click-open-order/SPEC.md` | 2026-03-03 | 本地实现与验证通过，待 PR 收敛 |
+| 4tnv8 | 配置卡片点击打开下单页 | 已完成 | `4tnv8-card-click-open-order/SPEC.md` | 2026-03-03 | strict pid 下单页 + sourcePid 恢复 + 分组标题 Iconify link 图标（spec-sync） |
 | pgnnw | 发布链路修复与 GHCR 回填闭环（Dockrev 无候选） | 已完成 | `pgnnw-release-ghcr-chain-fix/SPEC.md` | 2026-02-26 | fast-track + 验证闭环完成 |
 | 7ey9f | 懒猫云购物车库存监控 | 已完成 | `7ey9f-lazycats-cart-inventory-monitor/SPEC.md` | 2026-01-20 | UI 对齐 wireframes + 监控页重新同步（Playwright 复验）  |
 | hrjpv | Storybook 展示与主题切换（含亮色主题） | 已完成 | `hrjpv-storybook-theme-switching/SPEC.md` | 2026-01-20 | 补齐 stories 覆盖（components/pages/layout）  |

@@ -77,6 +77,8 @@ export type Config = {
   countryId: string;
   regionId: string | null;
   sourcePid?: string;
+  sourceFid?: string;
+  sourceGid?: string;
   name: string;
   specs: Spec[];
   price: Money;
@@ -273,14 +275,34 @@ function routeSubtitle(route: Route): string {
   return "按国家地区 / 可用区分组展示；支持折叠，默认展开（折叠状态可记忆）";
 }
 
-function buildOrderUrl(baseCartUrl: string, sourcePid: string | undefined): string | null {
-  const pid = sourcePid?.trim();
+type OrderLinkMode = "configureproduct";
+type OrderLink = { url: string; mode: OrderLinkMode };
+
+function buildOrderLink(
+  baseCartUrl: string,
+  cfg: Pick<Config, "sourcePid" | "sourceFid" | "sourceGid">,
+): OrderLink | null {
+  const pid = cfg.sourcePid?.trim();
   if (!pid) return null;
   try {
     const url = new URL(baseCartUrl, window.location.origin);
     if (url.protocol !== "http:" && url.protocol !== "https:") return null;
     url.searchParams.set("action", "configureproduct");
     url.searchParams.set("pid", pid);
+    return { url: url.toString(), mode: "configureproduct" };
+  } catch {
+    return null;
+  }
+}
+
+function buildCountryCatalogLink(baseCartUrl: string, fid: string): string | null {
+  const normalizedFid = fid.trim();
+  if (!normalizedFid) return null;
+  try {
+    const url = new URL(baseCartUrl, window.location.origin);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    url.search = "";
+    url.searchParams.set("fid", normalizedFid);
     return url.toString();
   } catch {
     return null;
@@ -1294,19 +1316,19 @@ export function ProductCard({
   cfg,
   countriesById,
   onToggle,
-  orderUrl = null,
+  orderLink = null,
   historyWindow = null,
   historyPoints,
 }: {
   cfg: Config;
   countriesById: Map<string, Country>;
   onToggle: (configId: string, enabled: boolean) => void;
-  orderUrl?: string | null;
+  orderLink?: OrderLink | null;
   historyWindow?: InventoryHistoryResponse["window"] | null;
   historyPoints?: InventoryHistoryPoint[];
 }) {
   const isCloud = !cfg.monitorSupported;
-  const canOpenOrder = Boolean(orderUrl);
+  const canOpenOrder = Boolean(orderLink?.url);
   const flagIcon = resolveCountryFlagWatermarkIcon(countriesById.get(cfg.countryId)?.name ?? null);
   const capTone =
     isCloud || (cfg.inventory.status !== "unknown" && cfg.inventory.quantity > 0) ? "" : "warn";
@@ -1328,16 +1350,30 @@ export function ProductCard({
         return c ? { key, ...c } : { key, empty: true };
       });
   const openOrder = () => {
-    if (!orderUrl) return;
-    window.open(orderUrl, "_blank", "noopener,noreferrer");
+    if (!orderLink?.url) return;
+    window.open(orderLink.url, "_blank", "noopener,noreferrer");
   };
+  const onCardKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (!canOpenOrder) return;
+    if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") {
+      e.preventDefault();
+      openOrder();
+    }
+  };
+  const orderOpenLabel = "打开下单页（新标签页）";
+  const orderTitle = canOpenOrder ? `点击${orderOpenLabel}` : "暂无下单链接";
 
   return (
     <div
       className={`cfg-card ${isCloud ? "cloud" : "product"} ${
         canOpenOrder ? "card-linkable" : "card-link-disabled"
       }`}
-      title={canOpenOrder ? "点击打开下单页（新标签页）" : "暂无下单链接"}
+      role={canOpenOrder ? "link" : undefined}
+      tabIndex={canOpenOrder ? 0 : undefined}
+      aria-label={canOpenOrder ? orderOpenLabel : undefined}
+      title={orderTitle}
+      onClick={canOpenOrder ? openOrder : undefined}
+      onKeyDown={canOpenOrder ? onCardKeyDown : undefined}
     >
       {flagIcon ? (
         <span className="card-flag-watermark" aria-hidden="true">
@@ -1346,14 +1382,6 @@ export function ProductCard({
       ) : null}
       <TrendBackground points={historyPoints} window={historyWindow} />
       {capText ? <div className={`cfg-cap ${capTone}`}>{capText}</div> : null}
-      {canOpenOrder ? (
-        <button
-          type="button"
-          className="card-order-overlay"
-          aria-label="打开下单页（新标签页）"
-          onClick={openOrder}
-        />
-      ) : null}
       <div className="card-content">
         <div className="cfg-title">
           <span className="title-text">{cfg.name}</span>
@@ -1405,18 +1433,18 @@ export function MonitoringCard({
   cfg,
   countriesById,
   nowMs,
-  orderUrl = null,
+  orderLink = null,
   historyWindow = null,
   historyPoints,
 }: {
   cfg: Config;
   countriesById: Map<string, Country>;
   nowMs: number;
-  orderUrl?: string | null;
+  orderLink?: OrderLink | null;
   historyWindow?: InventoryHistoryResponse["window"] | null;
   historyPoints?: InventoryHistoryPoint[];
 }) {
-  const canOpenOrder = Boolean(orderUrl);
+  const canOpenOrder = Boolean(orderLink?.url);
   const flagIcon = resolveCountryFlagWatermarkIcon(countriesById.get(cfg.countryId)?.name ?? null);
   const capTone = cfg.inventory.status === "unknown" || cfg.inventory.quantity === 0 ? "warn" : "";
   const capText =
@@ -1431,8 +1459,8 @@ export function MonitoringCard({
     return c ? { key, ...c } : { key, empty: true };
   });
   const openOrder = () => {
-    if (!orderUrl) return;
-    window.open(orderUrl, "_blank", "noopener,noreferrer");
+    if (!orderLink?.url) return;
+    window.open(orderLink.url, "_blank", "noopener,noreferrer");
   };
   const onCardKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (!canOpenOrder) return;
@@ -1441,12 +1469,15 @@ export function MonitoringCard({
       openOrder();
     }
   };
+  const orderOpenLabel = "打开下单页（新标签页）";
+  const orderTitle = canOpenOrder ? `点击${orderOpenLabel}` : "暂无下单链接";
   return (
     <div
       className={`mon-card ${canOpenOrder ? "card-linkable" : "card-link-disabled"}`}
       role={canOpenOrder ? "link" : undefined}
       tabIndex={canOpenOrder ? 0 : undefined}
-      title={canOpenOrder ? "点击打开下单页（新标签页）" : "暂无下单链接"}
+      aria-label={canOpenOrder ? orderOpenLabel : undefined}
+      title={orderTitle}
       onClick={canOpenOrder ? openOrder : undefined}
       onKeyDown={canOpenOrder ? onCardKeyDown : undefined}
     >
@@ -1619,6 +1650,7 @@ export function ProductsView({
         const [countryId, regionId] = k.split("::");
         const country = countriesById.get(countryId)?.name ?? countryId;
         const isCloud = country.includes("云服务器");
+        const countryCatalogLink = buildCountryCatalogLink(orderBaseUrl, countryId);
         const title = isCloud
           ? country
           : `${country} / ${regionId ? (regionsById.get(regionId)?.name ?? regionId) : "默认"}`;
@@ -1627,7 +1659,25 @@ export function ProductsView({
           : "配置卡片：规格 / 价格 / 库存 / 监控开关";
         return (
           <div className="panel-section" key={k}>
-            <div className="panel-title">{title}</div>
+            <div className="panel-title-row">
+              <div className="panel-title">{title}</div>
+              {countryCatalogLink ? (
+                <a
+                  className="panel-title-link"
+                  href={countryCatalogLink}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={`打开上游分组页（新标签页）fid=${countryId}`}
+                  title={`打开上游分组页（新标签页）\n${countryCatalogLink}`}
+                >
+                  <Icon
+                    className="panel-title-link-icon"
+                    icon="mdi:open-in-new"
+                    aria-hidden="true"
+                  />
+                </a>
+              ) : null}
+            </div>
             <div className="panel-subtitle">{subtitle}</div>
             <div className="divider-bleed" />
             <div className="grid">
@@ -1636,7 +1686,7 @@ export function ProductsView({
                   cfg={cfg}
                   countriesById={countriesById}
                   key={cfg.id}
-                  orderUrl={buildOrderUrl(orderBaseUrl, cfg.sourcePid)}
+                  orderLink={buildOrderLink(orderBaseUrl, cfg)}
                   onToggle={onToggle}
                   historyWindow={historyWindow}
                   historyPoints={historyById.get(cfg.id)}
@@ -1718,7 +1768,7 @@ export function MonitoringView({
                 countriesById={countriesById}
                 key={cfg.id}
                 nowMs={nowMs}
-                orderUrl={buildOrderUrl(orderBaseUrl, cfg.sourcePid)}
+                orderLink={buildOrderLink(orderBaseUrl, cfg)}
               />
             ))}
           </div>
@@ -1831,7 +1881,7 @@ export function MonitoringSection({
                 countriesById={countriesById}
                 key={cfg.id}
                 nowMs={nowMs}
-                orderUrl={buildOrderUrl(orderBaseUrl, cfg.sourcePid)}
+                orderLink={buildOrderLink(orderBaseUrl, cfg)}
                 historyWindow={historyWindow}
                 historyPoints={historyById.get(cfg.id)}
               />

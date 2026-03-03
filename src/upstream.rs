@@ -1,7 +1,10 @@
 use crate::models::{Country, Inventory, Money, Region, Spec};
 use scraper::{Html, Selector};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
+use std::sync::Arc;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
+use tokio::sync::Mutex;
 
 #[derive(Debug, Clone)]
 pub struct CatalogSnapshot {
@@ -57,6 +60,8 @@ impl CatalogSnapshot {
             monitor_supported: c.monitor_supported,
             monitor_enabled,
             source_pid: c.source_pid.clone(),
+            source_fid: c.source_fid.clone(),
+            source_gid: c.source_gid.clone(),
         }
     }
 }
@@ -71,6 +76,7 @@ fn now_rfc3339() -> String {
 pub struct UpstreamClient {
     client: reqwest::Client,
     cart_url: String,
+    pid_name_cache: Arc<Mutex<HashMap<String, String>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -88,7 +94,11 @@ impl UpstreamClient {
         let client = reqwest::Client::builder()
             .user_agent("catnap/0.1 (+https://example.invalid)")
             .build()?;
-        Ok(Self { client, cart_url })
+        Ok(Self {
+            client,
+            cart_url,
+            pid_name_cache: Arc::new(Mutex::new(HashMap::new())),
+        })
     }
 
     pub async fn fetch_html_raw(&self, url: &str) -> anyhow::Result<String> {
@@ -133,6 +143,7 @@ impl UpstreamClient {
         for c in &mut configs {
             c.inventory.checked_at = fetched_at.clone();
         }
+        self.resolve_missing_source_pids(&mut configs).await;
 
         Ok(CatalogSnapshot {
             countries,
@@ -207,25 +218,142 @@ impl UpstreamClient {
         }
         Ok(res.text().await?)
     }
+
+    async fn resolve_missing_source_pids(&self, configs: &mut [ConfigBase]) {
+        let mut unresolved_by_name: HashMap<String, Vec<usize>> = HashMap::new();
+        let mut max_known_pid: u32 = 0;
+        for (idx, cfg) in configs.iter().enumerate() {
+            if let Some(pid) = cfg
+                .source_pid
+                .as_deref()
+                .and_then(|v| v.parse::<u32>().ok())
+            {
+                max_known_pid = max_known_pid.max(pid);
+                continue;
+            }
+            unresolved_by_name
+                .entry(cfg.name.clone())
+                .or_default()
+                .push(idx);
+        }
+        if unresolved_by_name.is_empty() {
+            return;
+        }
+        for (name, idxs) in &unresolved_by_name {
+            if let Some(pid) = known_pid_fallback(name) {
+                for idx in idxs {
+                    configs[*idx].source_pid = Some(pid.to_string());
+                }
+            }
+        }
+        unresolved_by_name
+            .retain(|_, idxs| idxs.iter().any(|idx| configs[*idx].source_pid.is_none()));
+        if unresolved_by_name.is_empty() {
+            return;
+        }
+        {
+            let cache = self.pid_name_cache.lock().await;
+            for (name, idxs) in &unresolved_by_name {
+                if let Some(pid) = cache.get(name) {
+                    for idx in idxs {
+                        configs[*idx].source_pid = Some(pid.clone());
+                    }
+                }
+            }
+        }
+        unresolved_by_name
+            .retain(|_, idxs| idxs.iter().any(|idx| configs[*idx].source_pid.is_none()));
+        if unresolved_by_name.is_empty() {
+            return;
+        }
+
+        // Probe configureproduct pages to recover pids hidden on sold-out cards.
+        // Keep this bounded and conservative to avoid overloading upstream.
+        let probe_max = max_known_pid.max(200);
+        let mut recovered: HashMap<String, String> = HashMap::new();
+        for pid in 1..=probe_max {
+            if unresolved_by_name
+                .keys()
+                .all(|name| recovered.contains_key(name))
+            {
+                break;
+            }
+            let url = format!("{}?action=configureproduct&pid={pid}", self.cart_url);
+            let Ok(html) = self.fetch_html(&url).await else {
+                continue;
+            };
+            let Some(title) = parse_configureproduct_title(&html) else {
+                continue;
+            };
+            if unresolved_by_name.contains_key(&title) {
+                recovered.entry(title).or_insert_with(|| pid.to_string());
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(40)).await;
+        }
+
+        for (name, idxs) in unresolved_by_name {
+            if let Some(pid) = recovered.get(&name) {
+                for idx in idxs {
+                    configs[idx].source_pid = Some(pid.clone());
+                }
+            }
+        }
+        if !recovered.is_empty() {
+            let mut cache = self.pid_name_cache.lock().await;
+            for (name, pid) in recovered {
+                cache.insert(name, pid);
+            }
+        }
+    }
 }
 
 fn extract_query_number(s: &str, key: &str) -> Option<String> {
-    let idx = s.find(key)?;
-    let s = &s[idx + key.len()..];
-    let s = s.strip_prefix('=')?;
-    let mut out = String::new();
-    for ch in s.chars() {
-        if ch.is_ascii_digit() {
-            out.push(ch);
-        } else {
-            break;
+    let bytes = s.as_bytes();
+    let key_bytes = key.as_bytes();
+    if key_bytes.is_empty() {
+        return None;
+    }
+
+    let mut start = 0usize;
+    while start < bytes.len() {
+        let rel = s[start..].find(key)?;
+        let idx = start + rel;
+        let after = idx + key_bytes.len();
+
+        // Match whole token so keys like `pid` don't match `rapid`.
+        let left_ok =
+            idx == 0 || !(bytes[idx - 1].is_ascii_alphanumeric() || bytes[idx - 1] == b'_');
+        let right_ok =
+            after >= bytes.len() || !(bytes[after].is_ascii_alphanumeric() || bytes[after] == b'_');
+        if !(left_ok && right_ok) {
+            start = after;
+            continue;
         }
+
+        let mut i = after;
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if i >= bytes.len() || bytes[i] != b'=' {
+            start = after;
+            continue;
+        }
+        i += 1;
+        while i < bytes.len()
+            && (bytes[i].is_ascii_whitespace() || bytes[i] == b'\'' || bytes[i] == b'"')
+        {
+            i += 1;
+        }
+        let begin = i;
+        while i < bytes.len() && bytes[i].is_ascii_digit() {
+            i += 1;
+        }
+        if i > begin {
+            return Some(s[begin..i].to_string());
+        }
+        start = after;
     }
-    if out.is_empty() {
-        None
-    } else {
-        Some(out)
-    }
+    None
 }
 
 pub fn parse_countries(html: &str) -> Vec<Country> {
@@ -352,8 +480,14 @@ pub fn parse_configs(fid: &str, gid: Option<&str>, html: &str) -> Vec<ConfigBase
         let mut source_pid: Option<String> = None;
         for a in el.select(&a_tag) {
             let href = a.value().attr("href").unwrap_or_default();
-            if href.contains("configureproduct&pid=") {
-                source_pid = extract_query_number(href, "pid");
+            source_pid = extract_query_number(href, "pid")
+                .or_else(|| {
+                    extract_query_number(a.value().attr("onclick").unwrap_or_default(), "pid")
+                })
+                .or_else(|| {
+                    extract_query_number(a.value().attr("data-pid").unwrap_or_default(), "pid")
+                });
+            if source_pid.is_some() {
                 break;
             }
         }
@@ -444,6 +578,28 @@ fn split_kv(s: &str) -> Option<(String, String)> {
     }
 }
 
+fn parse_configureproduct_title(html: &str) -> Option<String> {
+    let doc = Html::parse_document(html);
+    let h4 = Selector::parse("h4").ok()?;
+    for node in doc.select(&h4) {
+        let text = normalize_text(&node.text().collect::<String>());
+        if text.is_empty() || text == "产品配置" || text == "订单汇总：" || text == "订单汇总:"
+        {
+            continue;
+        }
+        return Some(text);
+    }
+    None
+}
+
+fn known_pid_fallback(name: &str) -> Option<&'static str> {
+    match name {
+        "新加坡优化 Mini" => Some("48"),
+        "新加坡优化 Basic" => Some("49"),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -479,5 +635,35 @@ mod tests {
         assert!(!configs.is_empty());
         assert!(!configs[0].monitor_supported);
         assert_eq!(configs[0].inventory.quantity, 1);
+    }
+
+    #[test]
+    fn extract_query_number_supports_reordered_query_and_quoted_values() {
+        assert_eq!(
+            extract_query_number(
+                "javascript:window.location='/cart?pid=321&action=configureproduct'",
+                "pid"
+            ),
+            Some("321".to_string())
+        );
+        assert_eq!(
+            extract_query_number(r#"data-pid="456""#, "pid"),
+            Some("456".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_configureproduct_title_ignores_generic_headers() {
+        let html = r#"
+        <html><body>
+          <h4>产品配置</h4>
+          <h4>订单汇总：</h4>
+          <h4>芬兰特惠年付 Mini</h4>
+        </body></html>
+        "#;
+        assert_eq!(
+            parse_configureproduct_title(html),
+            Some("芬兰特惠年付 Mini".to_string())
+        );
     }
 }
