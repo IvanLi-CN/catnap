@@ -1295,8 +1295,6 @@ export function App() {
             nowMs={nowMs}
             syncAlert={syncAlert}
             recentListed24h={recentListed24h}
-            archiveFilterMode={archiveFilterMode}
-            onArchiveFilterModeChange={setArchiveFilterMode}
             onDismissSyncAlert={() => setSyncAlert(null)}
             onOpenOrder={guardAndOpenOrder}
           />
@@ -2050,8 +2048,6 @@ export function MonitoringView({
   nowMs,
   syncAlert,
   recentListed24h,
-  archiveFilterMode,
-  onArchiveFilterModeChange,
   onDismissSyncAlert,
   onOpenOrder,
 }: {
@@ -2062,8 +2058,6 @@ export function MonitoringView({
   nowMs: number;
   syncAlert: string | null;
   recentListed24h: Config[];
-  archiveFilterMode: ArchiveFilterMode;
-  onArchiveFilterModeChange: (mode: ArchiveFilterMode) => void;
   onDismissSyncAlert: () => void;
   onOpenOrder: (cfg: Config, orderLink: OrderLink) => void;
 }) {
@@ -2071,13 +2065,10 @@ export function MonitoringView({
     () => bootstrap.catalog.configs.filter((c) => c.monitorEnabled),
     [bootstrap],
   );
-  const enabled = useMemo(
-    () => filterConfigsByArchiveMode(enabledAll, archiveFilterMode),
-    [enabledAll, archiveFilterMode],
-  );
+  const enabled = useMemo(() => filterConfigsByArchiveMode(enabledAll, "active"), [enabledAll]);
   const recentListedFiltered = useMemo(
-    () => filterConfigsByArchiveMode(recentListed24h, archiveFilterMode),
-    [recentListed24h, archiveFilterMode],
+    () => filterConfigsByArchiveMode(recentListed24h, "active"),
+    [recentListed24h],
   );
 
   const visibleIds = useMemo(() => enabled.map((c) => c.id), [enabled]);
@@ -2099,21 +2090,6 @@ export function MonitoringView({
 
   return (
     <div className="panel">
-      <div className="panel-section">
-        <div className="controls">
-          <div className="pill select" style={{ width: "216px" }}>
-            <span className="pill-prefix">下架归档：</span>
-            <select
-              value={archiveFilterMode}
-              onChange={(e) => onArchiveFilterModeChange(e.target.value as ArchiveFilterMode)}
-            >
-              <option value="active">仅正常</option>
-              <option value="all">全部</option>
-              <option value="archived">仅归档</option>
-            </select>
-          </div>
-        </div>
-      </div>
       {syncAlert ? (
         <div className="alert alert-error">
           <span className="sync-icon err" aria-hidden="true">
@@ -2151,7 +2127,7 @@ export function MonitoringView({
           <div className="empty">
             {enabledAll.length === 0
               ? "还没有启用监控的配置。去“全部产品”里点选需要监控的配置。"
-              : "当前筛选条件下没有匹配的监控配置。"}
+              : "当前暂无可展示的监控配置（已归档下架项默认隐藏）。"}
           </div>
         </div>
       ) : null}

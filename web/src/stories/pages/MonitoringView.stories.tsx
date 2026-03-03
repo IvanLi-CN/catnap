@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react";
-import { type ComponentProps, useState } from "react";
+import type { ComponentProps } from "react";
 import { MonitoringView } from "../../App";
 import { countriesById, demoBootstrap, demoNowMs, regionsById } from "../fixtures";
 
@@ -14,9 +14,7 @@ const meta = {
     nowMs: demoNowMs,
     syncAlert: null,
     recentListed24h: demoBootstrap.catalog.configs.slice(0, 3),
-    archiveFilterMode: "active",
     onDismissSyncAlert: () => {},
-    onArchiveFilterModeChange: () => {},
     onOpenOrder: () => {},
   },
   argTypes: {
@@ -32,20 +30,11 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 function MonitoringViewDemo(args: Story["args"]) {
-  const [archiveFilterMode, setArchiveFilterMode] = useState<"active" | "all" | "archived">(
-    "active",
-  );
   const mergedArgs = {
     ...(meta.args ?? {}),
     ...(args ?? {}),
   } as ComponentProps<typeof MonitoringView>;
-  return (
-    <MonitoringView
-      {...mergedArgs}
-      archiveFilterMode={archiveFilterMode}
-      onArchiveFilterModeChange={setArchiveFilterMode}
-    />
-  );
+  return <MonitoringView {...mergedArgs} />;
 }
 
 export const Default: Story = {
