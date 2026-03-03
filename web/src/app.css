@@ -1659,6 +1659,8 @@ select {
 
 .ops-modal {
   margin: 0;
+  position: static;
+  inset: auto;
   width: 640px;
   max-width: 100%;
   border-radius: 16px;
