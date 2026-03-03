@@ -2,7 +2,7 @@ import type { Meta, StoryObj } from "@storybook/react";
 import { useState } from "react";
 import { expect, userEvent, within } from "storybook/test";
 import { type Config, ProductCard } from "../../App";
-import { countriesById, demoConfigs } from "../fixtures";
+import { countriesById, demoConfigs, demoYearlyCnyConfig } from "../fixtures";
 
 const demoCountriesById = countriesById();
 
@@ -17,6 +17,13 @@ const cloudWithOrderConfig: Config = {
   ...demoConfigs[0],
   id: "cfg-cloud-with-order",
   sourcePid: "117",
+};
+
+const monthlyCnyConfig: Config = {
+  ...demoYearlyCnyConfig,
+  id: "cfg-monthly-cny",
+  name: "芬兰特惠月付 Mini",
+  price: { ...demoYearlyCnyConfig.price, period: "month" },
 };
 
 function ProductCardDemo({ initial }: { initial: Config }) {
@@ -143,5 +150,21 @@ export const CloudBadgeAreaOpensOrder: Story = {
     } finally {
       window.open = originalOpen;
     }
+  },
+};
+
+export const YearlyCnyPeriodLabel: Story = {
+  args: { initial: demoYearlyCnyConfig },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    expect(await canvas.findByText("¥4.99 / 年")).toBeTruthy();
+  },
+};
+
+export const MonthlyCnyPeriodLabel: Story = {
+  args: { initial: monthlyCnyConfig },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    expect(await canvas.findByText("¥4.99 / 月")).toBeTruthy();
   },
 };

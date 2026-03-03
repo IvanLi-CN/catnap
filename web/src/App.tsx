@@ -377,9 +377,13 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 function formatMoney(m: Money): string {
+  const periodLabel = (() => {
+    if (m.period === "month") return "月";
+    if (m.period === "year") return "年";
+    return m.period;
+  })();
   if (m.currency === "CNY") {
-    const period = m.period === "month" ? "月" : m.period;
-    return `¥${m.amount.toFixed(2)} / ${period}`;
+    return `¥${m.amount.toFixed(2)} / ${periodLabel}`;
   }
   return `${m.amount.toFixed(2)} ${m.currency}/${m.period}`;
 }
