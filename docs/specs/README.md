@@ -26,6 +26,7 @@
 
 | ID   | Title | Status | Spec | Last | Notes |
 |-----:|-------|--------|------|------|-------|
+| 35uke | 修复付费周期识别：年付被误判为月付 | 部分完成（3/4） | `35uke-billing-period-detection-fix/SPEC.md` | 2026-03-03 | 后端周期识别 + 前端映射 + tests/storybook + 本地门禁通过 |
 | 4tnv8 | 配置卡片点击打开下单页 | 已完成 | `4tnv8-card-click-open-order/SPEC.md` | 2026-03-03 | strict pid 下单页 + sourcePid 恢复 + 分组标题 Iconify link 图标 + 库存为 0 弹窗拦截（spec-sync） |
 | pgnnw | 发布链路修复与 GHCR 回填闭环（Dockrev 无候选） | 已完成 | `pgnnw-release-ghcr-chain-fix/SPEC.md` | 2026-02-26 | fast-track + 验证闭环完成 |
 | 7ey9f | 懒猫云购物车库存监控 | 已完成 | `7ey9f-lazycats-cart-inventory-monitor/SPEC.md` | 2026-01-20 | UI 对齐 wireframes + 监控页重新同步（Playwright 复验）  |
