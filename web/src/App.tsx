@@ -975,8 +975,13 @@ export function App() {
     const archived = await api<ArchiveDelistedResponse>("/api/products/archive/delisted", {
       method: "POST",
     });
-    const products = await api<ProductsResponse>("/api/products");
-    applyProductsResponse(products);
+    try {
+      const products = await api<ProductsResponse>("/api/products");
+      applyProductsResponse(products);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setSyncAlert(`归档已完成，但产品列表刷新失败：${msg}`);
+    }
     void refreshMonitoringSilently();
     return archived;
   }, [applyProductsResponse, refreshMonitoringSilently]);

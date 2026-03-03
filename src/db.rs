@@ -785,52 +785,29 @@ pub async fn archive_all_delisted_configs(
     db: &SqlitePool,
     user_id: &str,
 ) -> anyhow::Result<ArchiveDelistedResult> {
-    let candidate_ids = sqlx::query(
+    let archived_at = now_rfc3339();
+    let mut tx = db.begin().await?;
+    let archived_ids = sqlx::query(
         r#"
-SELECT c.id
+INSERT INTO user_config_archives (user_id, config_id, cleaned_at)
+SELECT ?, c.id, ?
 FROM catalog_configs c
 LEFT JOIN user_config_archives a
   ON a.user_id = ? AND a.config_id = c.id
 WHERE c.lifecycle_state = 'delisted'
   AND a.config_id IS NULL
 ORDER BY c.id ASC
+RETURNING config_id
 "#,
     )
     .bind(user_id)
-    .fetch_all(db)
+    .bind(&archived_at)
+    .bind(user_id)
+    .fetch_all(&mut *tx)
     .await?
     .into_iter()
     .map(|r| r.get::<String, _>(0))
     .collect::<Vec<_>>();
-
-    if candidate_ids.is_empty() {
-        return Ok(ArchiveDelistedResult {
-            archived_count: 0,
-            archived_at: None,
-            archived_ids: Vec::new(),
-        });
-    }
-
-    let archived_at = now_rfc3339();
-    let mut tx = db.begin().await?;
-    let mut archived_ids = Vec::new();
-    for id in candidate_ids {
-        let result = sqlx::query(
-            r#"
-INSERT INTO user_config_archives (user_id, config_id, cleaned_at)
-VALUES (?, ?, ?)
-ON CONFLICT(user_id, config_id) DO NOTHING
-"#,
-        )
-        .bind(user_id)
-        .bind(&id)
-        .bind(&archived_at)
-        .execute(&mut *tx)
-        .await?;
-        if result.rows_affected() > 0 {
-            archived_ids.push(id);
-        }
-    }
     tx.commit().await?;
 
     if archived_ids.is_empty() {
