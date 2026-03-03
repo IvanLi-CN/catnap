@@ -277,6 +277,16 @@ function routeSubtitle(route: Route): string {
 
 type OrderLinkMode = "configureproduct";
 type OrderLink = { url: string; mode: OrderLinkMode };
+type OrderGuardDialog = {
+  configId: string;
+  configName: string;
+  orderUrl: string;
+  checking: boolean;
+  initialQty: number;
+  latestQty: number | null;
+  latestCheckedAt: string | null;
+  checkError: string | null;
+};
 
 function buildOrderLink(
   baseCartUrl: string,
@@ -307,6 +317,20 @@ function buildCountryCatalogLink(baseCartUrl: string, fid: string): string | nul
   } catch {
     return null;
   }
+}
+
+function findConfigInSnapshot(snapshot: Config[], target: Config): Config | null {
+  const byId = snapshot.find((cfg) => cfg.id === target.id);
+  if (byId) return byId;
+  const targetRegion = target.regionId ?? "";
+  return (
+    snapshot.find(
+      (cfg) =>
+        cfg.name === target.name &&
+        cfg.countryId === target.countryId &&
+        (cfg.regionId ?? "") === targetRegion,
+    ) ?? null
+  );
 }
 
 function formatVersionDisplay(version: string | null | undefined): string {
@@ -562,6 +586,7 @@ export function App() {
   const [opsRange, setOpsRange] = useState<OpsRange>("24h");
   const [opsFollow, setOpsFollow] = useState<boolean>(true);
   const [opsHelpOpen, setOpsHelpOpen] = useState<boolean>(false);
+  const [orderGuardDialog, setOrderGuardDialog] = useState<OrderGuardDialog | null>(null);
   const [opsSseUi, setOpsSseUi] = useState<OpsSseUi>({
     status: "reconnecting",
     replayWindowSeconds: null,
@@ -569,6 +594,7 @@ export function App() {
     lastReset: null,
   });
   const lastTerminalJobIdRef = useRef<string | null>(null);
+  const orderGuardReqSeqRef = useRef<number>(0);
 
   const applyProductsResponse = useCallback((res: ProductsResponse) => {
     setBootstrap((prev) =>
@@ -931,6 +957,82 @@ export function App() {
     });
   }
 
+  const openOrderUrl = useCallback((url: string) => {
+    window.open(url, "_blank", "noopener,noreferrer");
+  }, []);
+
+  const dismissOrderGuardDialog = useCallback(() => {
+    orderGuardReqSeqRef.current += 1;
+    setOrderGuardDialog(null);
+  }, []);
+
+  const guardAndOpenOrder = useCallback(
+    async (cfg: Config, orderLink: OrderLink) => {
+      const isOutOfStock = cfg.monitorSupported && cfg.inventory.quantity <= 0;
+      if (!isOutOfStock) {
+        openOrderUrl(orderLink.url);
+        return;
+      }
+
+      const reqSeq = orderGuardReqSeqRef.current + 1;
+      orderGuardReqSeqRef.current = reqSeq;
+
+      setOrderGuardDialog({
+        configId: cfg.id,
+        configName: cfg.name,
+        orderUrl: orderLink.url,
+        checking: true,
+        initialQty: cfg.inventory.quantity,
+        latestQty: null,
+        latestCheckedAt: cfg.inventory.checkedAt,
+        checkError: null,
+      });
+
+      try {
+        const res = await api<ProductsResponse>("/api/products");
+        if (orderGuardReqSeqRef.current !== reqSeq) return;
+        applyProductsResponse(res);
+
+        const fresh = findConfigInSnapshot(res.configs, cfg);
+        const latestQty = fresh?.inventory.quantity ?? null;
+        const latestCheckedAt = fresh?.inventory.checkedAt ?? res.fetchedAt;
+        const hasStockNow =
+          (fresh?.inventory.status ?? "unknown") === "available" && (latestQty ?? 0) > 0;
+
+        if (hasStockNow) {
+          setOrderGuardDialog(null);
+          openOrderUrl(orderLink.url);
+          return;
+        }
+
+        setOrderGuardDialog((prev) =>
+          prev && prev.configId === cfg.id
+            ? {
+                ...prev,
+                checking: false,
+                latestQty,
+                latestCheckedAt,
+                checkError: null,
+              }
+            : prev,
+        );
+      } catch (e) {
+        if (orderGuardReqSeqRef.current !== reqSeq) return;
+        const msg = e instanceof Error ? e.message : String(e);
+        setOrderGuardDialog((prev) =>
+          prev && prev.configId === cfg.id
+            ? {
+                ...prev,
+                checking: false,
+                checkError: msg,
+              }
+            : prev,
+        );
+      }
+    },
+    [applyProductsResponse, openOrderUrl],
+  );
+
   const title = `Catnap • ${routeTitle(route)}`;
   const subtitle = route === "monitoring" ? null : routeSubtitle(route);
   const repoUrl = about?.repoUrl?.trim() ? about.repoUrl.trim() : null;
@@ -1143,6 +1245,7 @@ export function App() {
             regionsById={regionsById}
             orderBaseUrl={bootstrap.catalog.source.url}
             onToggle={toggleMonitoring}
+            onOpenOrder={guardAndOpenOrder}
           />
         ) : route === "settings" ? (
           <SettingsViewPanel
@@ -1165,8 +1268,57 @@ export function App() {
             syncAlert={syncAlert}
             recentListed24h={recentListed24h}
             onDismissSyncAlert={() => setSyncAlert(null)}
+            onOpenOrder={guardAndOpenOrder}
           />
         )
+      ) : null}
+
+      {orderGuardDialog ? (
+        <div
+          className="ops-modal-backdrop"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) dismissOrderGuardDialog();
+          }}
+          role="presentation"
+        >
+          <dialog className="ops-modal order-guard-modal" open aria-label="库存拦截">
+            <div className="ops-modal-title">库存拦截</div>
+            <div className="ops-modal-body">
+              <div className="muted">
+                {`「${orderGuardDialog.configName}」当前库存为 ${orderGuardDialog.initialQty}，可能无法下单。`}
+              </div>
+              {orderGuardDialog.checking ? (
+                <div className="muted">正在查询最新库存...</div>
+              ) : orderGuardDialog.latestQty !== null ? (
+                <div className="muted">
+                  {`最新库存：${orderGuardDialog.latestQty}（更新时间：${
+                    orderGuardDialog.latestCheckedAt
+                      ? formatRelativeTime(orderGuardDialog.latestCheckedAt, nowMs)
+                      : "—"
+                  }）`}
+                </div>
+              ) : null}
+              {orderGuardDialog.checkError ? (
+                <div className="error order-guard-error">{`库存查询失败：${orderGuardDialog.checkError}`}</div>
+              ) : null}
+            </div>
+            <div className="ops-modal-actions">
+              <button type="button" className="pill" onClick={dismissOrderGuardDialog}>
+                取消
+              </button>
+              <button
+                type="button"
+                className="pill warn"
+                onClick={() => {
+                  openOrderUrl(orderGuardDialog.orderUrl);
+                  dismissOrderGuardDialog();
+                }}
+              >
+                仍然打开
+              </button>
+            </div>
+          </dialog>
+        </div>
       ) : null}
     </AppShell>
   );
@@ -1317,6 +1469,7 @@ export function ProductCard({
   countriesById,
   onToggle,
   orderLink = null,
+  onOpenOrder,
   historyWindow = null,
   historyPoints,
 }: {
@@ -1324,6 +1477,7 @@ export function ProductCard({
   countriesById: Map<string, Country>;
   onToggle: (configId: string, enabled: boolean) => void;
   orderLink?: OrderLink | null;
+  onOpenOrder?: (cfg: Config, orderLink: OrderLink) => void;
   historyWindow?: InventoryHistoryResponse["window"] | null;
   historyPoints?: InventoryHistoryPoint[];
 }) {
@@ -1351,6 +1505,10 @@ export function ProductCard({
       });
   const openOrder = () => {
     if (!orderLink?.url) return;
+    if (onOpenOrder) {
+      onOpenOrder(cfg, orderLink);
+      return;
+    }
     window.open(orderLink.url, "_blank", "noopener,noreferrer");
   };
   const onCardKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
@@ -1434,6 +1592,7 @@ export function MonitoringCard({
   countriesById,
   nowMs,
   orderLink = null,
+  onOpenOrder,
   historyWindow = null,
   historyPoints,
 }: {
@@ -1441,6 +1600,7 @@ export function MonitoringCard({
   countriesById: Map<string, Country>;
   nowMs: number;
   orderLink?: OrderLink | null;
+  onOpenOrder?: (cfg: Config, orderLink: OrderLink) => void;
   historyWindow?: InventoryHistoryResponse["window"] | null;
   historyPoints?: InventoryHistoryPoint[];
 }) {
@@ -1460,6 +1620,10 @@ export function MonitoringCard({
   });
   const openOrder = () => {
     if (!orderLink?.url) return;
+    if (onOpenOrder) {
+      onOpenOrder(cfg, orderLink);
+      return;
+    }
     window.open(orderLink.url, "_blank", "noopener,noreferrer");
   };
   const onCardKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
@@ -1527,12 +1691,14 @@ export function ProductsView({
   regionsById,
   orderBaseUrl,
   onToggle,
+  onOpenOrder,
 }: {
   bootstrap: BootstrapResponse;
   countriesById: Map<string, Country>;
   regionsById: Map<string, Region>;
   orderBaseUrl: string;
   onToggle: (configId: string, enabled: boolean) => void;
+  onOpenOrder: (cfg: Config, orderLink: OrderLink) => void;
 }) {
   const [countryFilter, setCountryFilter] = useState<string>("all");
   const [regionFilter, setRegionFilter] = useState<string>("all");
@@ -1687,6 +1853,7 @@ export function ProductsView({
                   countriesById={countriesById}
                   key={cfg.id}
                   orderLink={buildOrderLink(orderBaseUrl, cfg)}
+                  onOpenOrder={onOpenOrder}
                   onToggle={onToggle}
                   historyWindow={historyWindow}
                   historyPoints={historyById.get(cfg.id)}
@@ -1709,6 +1876,7 @@ export function MonitoringView({
   syncAlert,
   recentListed24h,
   onDismissSyncAlert,
+  onOpenOrder,
 }: {
   bootstrap: BootstrapResponse;
   countriesById: Map<string, Country>;
@@ -1718,6 +1886,7 @@ export function MonitoringView({
   syncAlert: string | null;
   recentListed24h: Config[];
   onDismissSyncAlert: () => void;
+  onOpenOrder: (cfg: Config, orderLink: OrderLink) => void;
 }) {
   const enabled = useMemo(
     () => bootstrap.catalog.configs.filter((c) => c.monitorEnabled),
@@ -1769,6 +1938,7 @@ export function MonitoringView({
                 key={cfg.id}
                 nowMs={nowMs}
                 orderLink={buildOrderLink(orderBaseUrl, cfg)}
+                onOpenOrder={onOpenOrder}
               />
             ))}
           </div>
@@ -1792,6 +1962,7 @@ export function MonitoringView({
             countriesById={countriesById}
             orderBaseUrl={orderBaseUrl}
             nowMs={nowMs}
+            onOpenOrder={onOpenOrder}
             historyWindow={historyWindow}
             historyById={historyById}
           />
@@ -1815,6 +1986,7 @@ export function MonitoringSection({
   countriesById,
   orderBaseUrl,
   nowMs,
+  onOpenOrder,
   historyWindow = null,
   historyById = EMPTY_HISTORY_BY_ID,
 }: {
@@ -1824,6 +1996,7 @@ export function MonitoringSection({
   countriesById: Map<string, Country>;
   orderBaseUrl: string;
   nowMs: number;
+  onOpenOrder: (cfg: Config, orderLink: OrderLink) => void;
   historyWindow?: InventoryHistoryResponse["window"] | null;
   historyById?: Map<string, InventoryHistoryPoint[]>;
 }) {
@@ -1882,6 +2055,7 @@ export function MonitoringSection({
                 key={cfg.id}
                 nowMs={nowMs}
                 orderLink={buildOrderLink(orderBaseUrl, cfg)}
+                onOpenOrder={onOpenOrder}
                 historyWindow={historyWindow}
                 historyPoints={historyById.get(cfg.id)}
               />

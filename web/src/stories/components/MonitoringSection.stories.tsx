@@ -27,5 +27,6 @@ export const Default: Story = {
     countriesById: demoCountriesById,
     orderBaseUrl: "https://lxc.lazycat.wiki/cart",
     nowMs: demoNowMs,
+    onOpenOrder: () => {},
   },
 };

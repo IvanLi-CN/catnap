@@ -1658,12 +1658,21 @@ select {
 }
 
 .ops-modal {
+  margin: 0;
   width: 640px;
   max-width: 100%;
   border-radius: 16px;
   background: var(--surface);
   border: 1px solid var(--line);
   padding: 18px 18px 16px;
+}
+
+.order-guard-modal {
+  width: 560px;
+}
+
+.order-guard-error {
+  margin: 0;
 }
 
 .ops-modal-title {
@@ -1682,4 +1691,5 @@ select {
   margin-top: 14px;
   display: flex;
   justify-content: flex-end;
+  gap: 10px;
 }
