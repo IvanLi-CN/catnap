@@ -599,7 +599,11 @@ fn detect_period_from_price_text(raw: &str) -> Option<&'static str> {
         .min();
     match (month_explicit_pos, year_explicit_pos) {
         (Some(month_pos), Some(year_pos)) => {
-            return Some(if month_pos <= year_pos { "month" } else { "year" });
+            return Some(if month_pos <= year_pos {
+                "month"
+            } else {
+                "year"
+            });
         }
         (Some(_), None) => return Some("month"),
         (None, Some(_)) => return Some("year"),
@@ -615,7 +619,11 @@ fn detect_period_from_price_text(raw: &str) -> Option<&'static str> {
         .chain(first_match_pos(&lower, &["monthly"]))
         .min();
     match (month_keyword_pos, year_keyword_pos) {
-        (Some(month_pos), Some(year_pos)) => Some(if month_pos <= year_pos { "month" } else { "year" }),
+        (Some(month_pos), Some(year_pos)) => Some(if month_pos <= year_pos {
+            "month"
+        } else {
+            "year"
+        }),
         (Some(_), None) => Some("month"),
         (None, Some(_)) => Some("year"),
         (None, None) => None,
@@ -649,7 +657,10 @@ fn detect_period_from_name(name: &str) -> Option<&'static str> {
 }
 
 fn first_match_pos(text: &str, patterns: &[&str]) -> Option<usize> {
-    patterns.iter().filter_map(|pattern| text.find(pattern)).min()
+    patterns
+        .iter()
+        .filter_map(|pattern| text.find(pattern))
+        .min()
 }
 
 fn extract_price_line_from_price_anchor(card: &ElementRef<'_>, price_anchor: &Selector) -> String {
