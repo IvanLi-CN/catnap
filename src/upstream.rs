@@ -591,22 +591,18 @@ fn detect_period_from_price_text(raw: &str) -> Option<&'static str> {
     }
     let lower = compact.to_ascii_lowercase();
 
-    if compact.contains("/年")
-        || compact.contains("／年")
-        || compact.contains("每年")
-        || lower.contains("/year")
-        || lower.contains("/yr")
-        || lower.contains("peryear")
-    {
+    // Explicit bill-cycle markers in price rows are authoritative.
+    if compact.contains("/年") || compact.contains("／年") || lower.contains("/year") || lower.contains("/yr") {
         return Some("year");
     }
-    if compact.contains("/月")
-        || compact.contains("／月")
-        || compact.contains("每月")
-        || lower.contains("/month")
-        || lower.contains("/mo")
-        || lower.contains("permonth")
-    {
+    if compact.contains("/月") || compact.contains("／月") || lower.contains("/month") || lower.contains("/mo") {
+        return Some("month");
+    }
+
+    if compact.contains("每年") || lower.contains("peryear") {
+        return Some("year");
+    }
+    if compact.contains("每月") || lower.contains("permonth") {
         return Some("month");
     }
     None
@@ -765,6 +761,28 @@ mod tests {
             </div>
             <div class="price-row">
               ¥ <a class="cart-num DINCondensed-Bold">4.99</a> 元
+            </div>
+            <div class="card-footer">
+              <a href="/cart?action=configureproduct&pid=188">立即购买</a>
+            </div>
+          </div>
+        </body></html>
+        "#;
+        let configs = parse_configs("11", Some("81"), html);
+        assert!(!configs.is_empty());
+        assert_eq!(configs[0].price.period, "month");
+    }
+
+    #[test]
+    fn parse_configs_prefers_explicit_month_over_yearly_promo_text() {
+        let html = r#"
+        <html><body>
+          <div class="card cartitem shadow w-100">
+            <div class="card-body">
+              <h4>芬兰特惠 Mini</h4>
+            </div>
+            <div class="text-right">
+              ¥ <a class="cart-num DINCondensed-Bold">4.99</a> 元 / 月（每年可省 20%）
             </div>
             <div class="card-footer">
               <a href="/cart?action=configureproduct&pid=188">立即购买</a>
