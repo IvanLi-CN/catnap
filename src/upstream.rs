@@ -591,21 +591,39 @@ fn detect_period_from_price_text(raw: &str) -> Option<&'static str> {
     }
     let lower = compact.to_ascii_lowercase();
 
-    // Explicit bill-cycle markers in price rows are authoritative.
-    if compact.contains("/年") || compact.contains("／年") || lower.contains("/year") || lower.contains("/yr") {
-        return Some("year");
-    }
-    if compact.contains("/月") || compact.contains("／月") || lower.contains("/month") || lower.contains("/mo") {
-        return Some("month");
+    // Explicit bill-cycle markers in price rows are authoritative. If both exist,
+    // choose the earliest marker in the price text instead of fixed year-first.
+    let year_explicit_pos = first_match_pos(&compact, &["/年", "／年"])
+        .into_iter()
+        .chain(first_match_pos(&lower, &["/year", "/yr"]))
+        .min();
+    let month_explicit_pos = first_match_pos(&compact, &["/月", "／月"])
+        .into_iter()
+        .chain(first_match_pos(&lower, &["/month", "/mo"]))
+        .min();
+    match (month_explicit_pos, year_explicit_pos) {
+        (Some(month_pos), Some(year_pos)) => {
+            return Some(if month_pos <= year_pos { "month" } else { "year" });
+        }
+        (Some(_), None) => return Some("month"),
+        (None, Some(_)) => return Some("year"),
+        (None, None) => {}
     }
 
-    if compact.contains("每年") || lower.contains("peryear") {
-        return Some("year");
+    let year_keyword_pos = first_match_pos(&compact, &["每年"])
+        .into_iter()
+        .chain(first_match_pos(&lower, &["peryear"]))
+        .min();
+    let month_keyword_pos = first_match_pos(&compact, &["每月"])
+        .into_iter()
+        .chain(first_match_pos(&lower, &["permonth"]))
+        .min();
+    match (month_keyword_pos, year_keyword_pos) {
+        (Some(month_pos), Some(year_pos)) => Some(if month_pos <= year_pos { "month" } else { "year" }),
+        (Some(_), None) => Some("month"),
+        (None, Some(_)) => Some("year"),
+        (None, None) => None,
     }
-    if compact.contains("每月") || lower.contains("permonth") {
-        return Some("month");
-    }
-    None
 }
 
 fn detect_period_from_name(name: &str) -> Option<&'static str> {
@@ -632,6 +650,10 @@ fn detect_period_from_name(name: &str) -> Option<&'static str> {
         return Some("month");
     }
     None
+}
+
+fn first_match_pos(text: &str, patterns: &[&str]) -> Option<usize> {
+    patterns.iter().filter_map(|pattern| text.find(pattern)).min()
 }
 
 fn split_kv(s: &str) -> Option<(String, String)> {
@@ -783,6 +805,28 @@ mod tests {
             </div>
             <div class="text-right">
               ¥ <a class="cart-num DINCondensed-Bold">4.99</a> 元 / 月（每年可省 20%）
+            </div>
+            <div class="card-footer">
+              <a href="/cart?action=configureproduct&pid=188">立即购买</a>
+            </div>
+          </div>
+        </body></html>
+        "#;
+        let configs = parse_configs("11", Some("81"), html);
+        assert!(!configs.is_empty());
+        assert_eq!(configs[0].price.period, "month");
+    }
+
+    #[test]
+    fn parse_configs_uses_earliest_explicit_period_marker_when_both_exist() {
+        let html = r#"
+        <html><body>
+          <div class="card cartitem shadow w-100">
+            <div class="card-body">
+              <h4>芬兰特惠 Mini</h4>
+            </div>
+            <div class="text-right">
+              ¥ <a class="cart-num DINCondensed-Bold">4.99</a> 元 / 月（折合 ¥59.88 / 年）
             </div>
             <div class="card-footer">
               <a href="/cart?action=configureproduct&pid=188">立即购买</a>
