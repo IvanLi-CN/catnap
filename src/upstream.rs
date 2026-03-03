@@ -458,7 +458,12 @@ pub fn parse_configs(fid: &str, gid: Option<&str>, html: &str) -> Vec<ConfigBase
             .select(&price_block)
             .next()
             .map(|v| normalize_text(&v.text().collect::<String>()))
-            .unwrap_or_else(|| normalize_text(&el.text().collect::<String>()));
+            .or_else(|| {
+                el.select(&a_price)
+                    .next()
+                    .map(|v| normalize_text(&v.text().collect::<String>()))
+            })
+            .unwrap_or_default();
         let price = Money {
             amount,
             currency: "CNY".to_string(),
@@ -735,6 +740,31 @@ mod tests {
             </div>
             <div class="text-right">
               ¥ <a class="cart-num DINCondensed-Bold">4.99</a> 元 / 月
+            </div>
+            <div class="card-footer">
+              <a href="/cart?action=configureproduct&pid=188">立即购买</a>
+            </div>
+          </div>
+        </body></html>
+        "#;
+        let configs = parse_configs("11", Some("81"), html);
+        assert!(!configs.is_empty());
+        assert_eq!(configs[0].price.period, "month");
+    }
+
+    #[test]
+    fn parse_configs_ignores_non_price_period_words_when_price_block_is_missing() {
+        let html = r#"
+        <html><body>
+          <div class="card cartitem shadow w-100">
+            <div class="card-body">
+              <h4>芬兰特惠 Mini</h4>
+              <div class="card-text">
+                <p>备份：每年一次</p>
+              </div>
+            </div>
+            <div class="price-row">
+              ¥ <a class="cart-num DINCondensed-Bold">4.99</a> 元
             </div>
             <div class="card-footer">
               <a href="/cart?action=configureproduct&pid=188">立即购买</a>
