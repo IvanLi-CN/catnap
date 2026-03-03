@@ -456,7 +456,7 @@ pub fn parse_configs(fid: &str, gid: Option<&str>, html: &str) -> Vec<ConfigBase
             .unwrap_or(0.0);
         let price_line_text = el
             .select(&price_block)
-            .next()
+            .find(|node| node.select(&a_price).next().is_some())
             .map(|v| normalize_text(&v.text().collect::<String>()))
             .filter(|v| !v.is_empty())
             .unwrap_or_else(|| extract_price_line_from_price_anchor(&el, &a_price));
@@ -880,6 +880,29 @@ mod tests {
             </div>
             <div class="price-row">
               ¥ <a class="cart-num DINCondensed-Bold">4.99</a> 元（每年可省 20%）
+            </div>
+            <div class="card-footer">
+              <a href="/cart?action=configureproduct&pid=188">立即购买</a>
+            </div>
+          </div>
+        </body></html>
+        "#;
+        let configs = parse_configs("11", Some("81"), html);
+        assert!(!configs.is_empty());
+        assert_eq!(configs[0].price.period, "month");
+    }
+
+    #[test]
+    fn parse_configs_uses_text_right_block_that_contains_price_anchor() {
+        let html = r#"
+        <html><body>
+          <div class="card cartitem shadow w-100">
+            <div class="card-body">
+              <h4>芬兰特惠 Mini</h4>
+            </div>
+            <div class="text-right">促销：按年折算更划算 / 年</div>
+            <div class="text-right">
+              ¥ <a class="cart-num DINCondensed-Bold">4.99</a> 元 / 月
             </div>
             <div class="card-footer">
               <a href="/cart?action=configureproduct&pid=188">立即购买</a>
