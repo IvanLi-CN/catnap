@@ -822,10 +822,13 @@ select {
 
 .card-linkable {
   cursor: pointer;
+  transition: border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
 }
 
 .card-linkable:hover {
   border-color: var(--ops-card-border);
+  box-shadow: var(--ops-card-shadow);
+  transform: translateY(-1px);
 }
 
 .card-linkable:focus-visible {
