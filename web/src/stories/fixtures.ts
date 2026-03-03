@@ -63,6 +63,7 @@ export const demoConfigs: Config[] = [
     id: "cfg-1",
     countryId: "jp",
     regionId: "jp-tokyo",
+    sourcePid: "128",
     name: "VPS • 2C/4G",
     specs: [
       { key: "CPU", value: "2C" },
@@ -82,6 +83,7 @@ export const demoConfigs: Config[] = [
     id: "cfg-4",
     countryId: "jp",
     regionId: "jp-tokyo",
+    sourcePid: "129",
     name: "VPS • 1C/2G",
     specs: [
       { key: "CPU", value: "1C" },
@@ -101,6 +103,7 @@ export const demoConfigs: Config[] = [
     id: "cfg-5",
     countryId: "jp",
     regionId: "jp-tokyo",
+    sourcePid: "130",
     name: "VPS • 2C/8G",
     specs: [
       { key: "CPU", value: "2C" },
@@ -120,6 +123,7 @@ export const demoConfigs: Config[] = [
     id: "cfg-2",
     countryId: "jp",
     regionId: "jp-osaka",
+    sourcePid: "131",
     name: "VPS • 4C/8G",
     specs: [
       { key: "CPU", value: "4C" },
@@ -138,6 +142,7 @@ export const demoConfigs: Config[] = [
     id: "cfg-2b",
     countryId: "jp",
     regionId: "jp-osaka",
+    sourcePid: "132",
     name: "VPS • 2C/2G",
     specs: [
       { key: "CPU", value: "2C" },
@@ -157,6 +162,7 @@ export const demoConfigs: Config[] = [
     id: "cfg-2c",
     countryId: "jp",
     regionId: "jp-osaka",
+    sourcePid: "133",
     name: "VPS • 2C/4G",
     specs: [
       { key: "CPU", value: "2C" },

@@ -56,6 +56,7 @@ impl CatalogSnapshot {
             },
             monitor_supported: c.monitor_supported,
             monitor_enabled,
+            source_pid: c.source_pid.clone(),
         }
     }
 }

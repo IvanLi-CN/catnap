@@ -9,6 +9,7 @@ const meta = {
     bootstrap: demoBootstrap,
     countriesById: countriesById(),
     regionsById: regionsById(),
+    orderBaseUrl: demoBootstrap.catalog.source.url,
     nowMs: demoNowMs,
     syncAlert: null,
     recentListed24h: demoBootstrap.catalog.configs.slice(0, 3),

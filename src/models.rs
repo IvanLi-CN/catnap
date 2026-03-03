@@ -74,6 +74,8 @@ pub struct ConfigView {
     pub lifecycle: ConfigLifecycleView,
     pub monitor_supported: bool,
     pub monitor_enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_pid: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

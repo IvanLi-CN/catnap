@@ -788,6 +788,38 @@ select {
   padding-bottom: 22px;
 }
 
+.card-linkable {
+  cursor: pointer;
+}
+
+.card-linkable:hover {
+  border-color: var(--ops-card-border);
+}
+
+.card-linkable:focus-visible {
+  outline: 2px solid var(--badge-on-border);
+  outline-offset: 2px;
+}
+
+.card-link-disabled {
+  cursor: default;
+}
+
+.card-order-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+
+.card-order-overlay:focus-visible {
+  outline: 2px solid var(--badge-on-border);
+  outline-offset: 2px;
+}
+
 .card-content {
   position: relative;
   z-index: 1;
@@ -994,10 +1026,23 @@ select {
   display: flex;
   align-items: center;
   gap: 12px;
+  position: relative;
+}
+
+.cfg-pills button {
+  position: relative;
+  z-index: 3;
 }
 
 .cfg-pills > :last-child {
   margin-left: auto;
+}
+
+.cfg-order-hint,
+.mon-order-hint {
+  font-size: 12px;
+  line-height: 1.2;
+  color: var(--muted);
 }
 
 .mon-pills {

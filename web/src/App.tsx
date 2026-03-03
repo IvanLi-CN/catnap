@@ -20,7 +20,15 @@ import flagUa from "@iconify-icons/flagpack/ua";
 import flagUs from "@iconify-icons/flagpack/us";
 import flagVn from "@iconify-icons/flagpack/vn";
 import { Icon } from "@iconify/react";
-import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  type KeyboardEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { AppShell } from "./ui/layout/AppShell";
 import { ThemeMenu } from "./ui/nav/ThemeMenu";
 import "./app.css";
@@ -68,6 +76,7 @@ export type Config = {
   id: string;
   countryId: string;
   regionId: string | null;
+  sourcePid?: string;
   name: string;
   specs: Spec[];
   price: Money;
@@ -256,12 +265,26 @@ function routeTitle(route: Route): string {
 }
 
 function routeSubtitle(route: Route): string {
-  if (route === "products") return "分组：国家地区 → 可用区域 → 配置 • 点击切换监控（用户隔离）";
+  if (route === "products") return "分组：国家地区 → 可用区域 → 配置 • 点击卡片下单（新标签页）";
   if (route === "settings") return "按用户隔离 • 保存后立即生效（下次轮询使用新频率 + 抖动）";
   if (route === "logs") return "按用户隔离 • 支持过滤与分页（cursor）";
   if (route === "ops")
     return "全局共享 • 队列/worker/成功率/推送成功率 • SSE 实时 tail（断线自动续传/重置）";
   return "按国家地区 / 可用区分组展示；支持折叠，默认展开（折叠状态可记忆）";
+}
+
+function buildOrderUrl(baseCartUrl: string, sourcePid: string | undefined): string | null {
+  const pid = sourcePid?.trim();
+  if (!pid) return null;
+  try {
+    const url = new URL(baseCartUrl, window.location.origin);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    url.searchParams.set("action", "configureproduct");
+    url.searchParams.set("pid", pid);
+    return url.toString();
+  } catch {
+    return null;
+  }
 }
 
 function formatVersionDisplay(version: string | null | undefined): string {
@@ -1096,6 +1119,7 @@ export function App() {
             bootstrap={bootstrap}
             countriesById={countriesById}
             regionsById={regionsById}
+            orderBaseUrl={bootstrap.catalog.source.url}
             onToggle={toggleMonitoring}
           />
         ) : route === "settings" ? (
@@ -1114,6 +1138,7 @@ export function App() {
             bootstrap={bootstrap}
             countriesById={countriesById}
             regionsById={regionsById}
+            orderBaseUrl={bootstrap.catalog.source.url}
             nowMs={nowMs}
             syncAlert={syncAlert}
             recentListed24h={recentListed24h}
@@ -1269,16 +1294,19 @@ export function ProductCard({
   cfg,
   countriesById,
   onToggle,
+  orderUrl = null,
   historyWindow = null,
   historyPoints,
 }: {
   cfg: Config;
   countriesById: Map<string, Country>;
   onToggle: (configId: string, enabled: boolean) => void;
+  orderUrl?: string | null;
   historyWindow?: InventoryHistoryResponse["window"] | null;
   historyPoints?: InventoryHistoryPoint[];
 }) {
   const isCloud = !cfg.monitorSupported;
+  const canOpenOrder = Boolean(orderUrl);
   const flagIcon = resolveCountryFlagWatermarkIcon(countriesById.get(cfg.countryId)?.name ?? null);
   const capTone =
     isCloud || (cfg.inventory.status !== "unknown" && cfg.inventory.quantity > 0) ? "" : "warn";
@@ -1299,9 +1327,18 @@ export function ProductCard({
         const c = rawSpecCells[i];
         return c ? { key, ...c } : { key, empty: true };
       });
+  const openOrder = () => {
+    if (!orderUrl) return;
+    window.open(orderUrl, "_blank", "noopener,noreferrer");
+  };
 
   return (
-    <div className={`cfg-card ${isCloud ? "cloud" : "product"}`}>
+    <div
+      className={`cfg-card ${isCloud ? "cloud" : "product"} ${
+        canOpenOrder ? "card-linkable" : "card-link-disabled"
+      }`}
+      title={canOpenOrder ? "点击打开下单页（新标签页）" : "暂无下单链接"}
+    >
       {flagIcon ? (
         <span className="card-flag-watermark" aria-hidden="true">
           <Icon className="card-flag-icon" icon={flagIcon} />
@@ -1309,6 +1346,14 @@ export function ProductCard({
       ) : null}
       <TrendBackground points={historyPoints} window={historyWindow} />
       {capText ? <div className={`cfg-cap ${capTone}`}>{capText}</div> : null}
+      {canOpenOrder ? (
+        <button
+          type="button"
+          className="card-order-overlay"
+          aria-label="打开下单页（新标签页）"
+          onClick={openOrder}
+        />
+      ) : null}
       <div className="card-content">
         <div className="cfg-title">
           <span className="title-text">{cfg.name}</span>
@@ -1334,14 +1379,22 @@ export function ProductCard({
         <div className="cfg-price">{formatMoney(cfg.price)}</div>
         {foot ? <div className="cfg-foot">{foot}</div> : null}
         <div className="cfg-pills">
-          <button
-            type="button"
-            className={`pill badge ${monitorTone}`}
-            disabled={!cfg.monitorSupported}
-            onClick={() => onToggle(cfg.id, !cfg.monitorEnabled)}
-          >
-            {monitorText}
-          </button>
+          {!canOpenOrder ? <div className="cfg-order-hint">暂无下单链接</div> : null}
+          {cfg.monitorSupported ? (
+            <button
+              type="button"
+              className={`pill badge ${monitorTone}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggle(cfg.id, !cfg.monitorEnabled);
+              }}
+              onKeyDown={(e) => e.stopPropagation()}
+            >
+              {monitorText}
+            </button>
+          ) : (
+            <span className={`pill badge ${monitorTone}`}>{monitorText}</span>
+          )}
         </div>
       </div>
     </div>
@@ -1352,15 +1405,18 @@ export function MonitoringCard({
   cfg,
   countriesById,
   nowMs,
+  orderUrl = null,
   historyWindow = null,
   historyPoints,
 }: {
   cfg: Config;
   countriesById: Map<string, Country>;
   nowMs: number;
+  orderUrl?: string | null;
   historyWindow?: InventoryHistoryResponse["window"] | null;
   historyPoints?: InventoryHistoryPoint[];
 }) {
+  const canOpenOrder = Boolean(orderUrl);
   const flagIcon = resolveCountryFlagWatermarkIcon(countriesById.get(cfg.countryId)?.name ?? null);
   const capTone = cfg.inventory.status === "unknown" || cfg.inventory.quantity === 0 ? "warn" : "";
   const capText =
@@ -1374,8 +1430,26 @@ export function MonitoringCard({
     const c = rawSpecCells[i];
     return c ? { key, ...c } : { key, empty: true };
   });
+  const openOrder = () => {
+    if (!orderUrl) return;
+    window.open(orderUrl, "_blank", "noopener,noreferrer");
+  };
+  const onCardKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (!canOpenOrder) return;
+    if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") {
+      e.preventDefault();
+      openOrder();
+    }
+  };
   return (
-    <div className="mon-card">
+    <div
+      className={`mon-card ${canOpenOrder ? "card-linkable" : "card-link-disabled"}`}
+      role={canOpenOrder ? "link" : undefined}
+      tabIndex={canOpenOrder ? 0 : undefined}
+      title={canOpenOrder ? "点击打开下单页（新标签页）" : "暂无下单链接"}
+      onClick={canOpenOrder ? openOrder : undefined}
+      onKeyDown={canOpenOrder ? onCardKeyDown : undefined}
+    >
       {flagIcon ? (
         <span className="card-flag-watermark" aria-hidden="true">
           <Icon className="card-flag-icon" icon={flagIcon} />
@@ -1405,6 +1479,7 @@ export function MonitoringCard({
         </div>
         <div className="mon-price">{formatMoney(cfg.price)}</div>
         <div className="mon-pills">
+          {!canOpenOrder ? <div className="mon-order-hint">暂无下单链接</div> : null}
           <div className="mon-update">{`更新：${formatRelativeTime(
             cfg.inventory.checkedAt,
             nowMs,
@@ -1419,11 +1494,13 @@ export function ProductsView({
   bootstrap,
   countriesById,
   regionsById,
+  orderBaseUrl,
   onToggle,
 }: {
   bootstrap: BootstrapResponse;
   countriesById: Map<string, Country>;
   regionsById: Map<string, Region>;
+  orderBaseUrl: string;
   onToggle: (configId: string, enabled: boolean) => void;
 }) {
   const [countryFilter, setCountryFilter] = useState<string>("all");
@@ -1559,6 +1636,7 @@ export function ProductsView({
                   cfg={cfg}
                   countriesById={countriesById}
                   key={cfg.id}
+                  orderUrl={buildOrderUrl(orderBaseUrl, cfg.sourcePid)}
                   onToggle={onToggle}
                   historyWindow={historyWindow}
                   historyPoints={historyById.get(cfg.id)}
@@ -1576,6 +1654,7 @@ export function MonitoringView({
   bootstrap,
   countriesById,
   regionsById,
+  orderBaseUrl,
   nowMs,
   syncAlert,
   recentListed24h,
@@ -1584,6 +1663,7 @@ export function MonitoringView({
   bootstrap: BootstrapResponse;
   countriesById: Map<string, Country>;
   regionsById: Map<string, Region>;
+  orderBaseUrl: string;
   nowMs: number;
   syncAlert: string | null;
   recentListed24h: Config[];
@@ -1633,7 +1713,13 @@ export function MonitoringView({
           <div className="divider-bleed" />
           <div className="grid">
             {recentListed24h.slice(0, 12).map((cfg) => (
-              <MonitoringCard cfg={cfg} countriesById={countriesById} key={cfg.id} nowMs={nowMs} />
+              <MonitoringCard
+                cfg={cfg}
+                countriesById={countriesById}
+                key={cfg.id}
+                nowMs={nowMs}
+                orderUrl={buildOrderUrl(orderBaseUrl, cfg.sourcePid)}
+              />
             ))}
           </div>
         </div>
@@ -1654,6 +1740,7 @@ export function MonitoringView({
             title={`${country} / ${region}`}
             items={items}
             countriesById={countriesById}
+            orderBaseUrl={orderBaseUrl}
             nowMs={nowMs}
             historyWindow={historyWindow}
             historyById={historyById}
@@ -1676,6 +1763,7 @@ export function MonitoringSection({
   title,
   items,
   countriesById,
+  orderBaseUrl,
   nowMs,
   historyWindow = null,
   historyById = EMPTY_HISTORY_BY_ID,
@@ -1684,6 +1772,7 @@ export function MonitoringSection({
   title: string;
   items: Config[];
   countriesById: Map<string, Country>;
+  orderBaseUrl: string;
   nowMs: number;
   historyWindow?: InventoryHistoryResponse["window"] | null;
   historyById?: Map<string, InventoryHistoryPoint[]>;
@@ -1742,6 +1831,7 @@ export function MonitoringSection({
                 countriesById={countriesById}
                 key={cfg.id}
                 nowMs={nowMs}
+                orderUrl={buildOrderUrl(orderBaseUrl, cfg.sourcePid)}
                 historyWindow={historyWindow}
                 historyPoints={historyById.get(cfg.id)}
               />
