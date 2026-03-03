@@ -118,6 +118,13 @@ CREATE TABLE IF NOT EXISTS monitoring_configs (
   PRIMARY KEY (user_id, config_id)
 );
 
+CREATE TABLE IF NOT EXISTS user_config_archives (
+  user_id TEXT NOT NULL,
+  config_id TEXT NOT NULL,
+  cleaned_at TEXT NOT NULL,
+  PRIMARY KEY (user_id, config_id)
+);
+
 CREATE TABLE IF NOT EXISTS settings (
   user_id TEXT PRIMARY KEY,
   poll_interval_minutes INTEGER NOT NULL,
@@ -189,6 +196,8 @@ CREATE INDEX IF NOT EXISTS idx_event_logs_user_ts ON event_logs (user_id, ts DES
 CREATE INDEX IF NOT EXISTS idx_event_logs_ts ON event_logs (ts DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_inventory_samples_1m_ts ON inventory_samples_1m (ts_minute);
 CREATE INDEX IF NOT EXISTS idx_catalog_url_cache_last_success_at ON catalog_url_cache (last_success_at DESC, url_key);
+CREATE INDEX IF NOT EXISTS idx_user_config_archives_user_cleaned_at ON user_config_archives (user_id, cleaned_at DESC);
+CREATE INDEX IF NOT EXISTS idx_user_config_archives_config_id ON user_config_archives (config_id);
 
 CREATE INDEX IF NOT EXISTS idx_ops_events_ts ON ops_events (ts DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_ops_task_runs_ended_at ON ops_task_runs (ended_at DESC, id DESC);
@@ -530,6 +539,7 @@ fn config_view_from_row(row: &sqlx::sqlite::SqliteRow) -> anyhow::Result<ConfigV
     let lifecycle_state = row.get::<String, _>("lifecycle_state").trim().to_string();
     let listed_at = row.get::<String, _>("lifecycle_listed_at");
     let delisted_at = row.get::<Option<String>, _>("lifecycle_delisted_at");
+    let cleanup_at = row.get::<Option<String>, _>("cleanup_at");
 
     Ok(ConfigView {
         id: row.get::<String, _>("id"),
@@ -552,6 +562,7 @@ fn config_view_from_row(row: &sqlx::sqlite::SqliteRow) -> anyhow::Result<ConfigV
             state: lifecycle_state,
             listed_at,
             delisted_at,
+            cleanup_at,
         },
         monitor_supported: monitor_supported_for_country(&country_id),
         monitor_enabled: row.get::<i64, _>("monitor_enabled") != 0,
@@ -584,6 +595,7 @@ SELECT
   c.lifecycle_state,
   c.lifecycle_listed_at,
   c.lifecycle_delisted_at,
+  a.cleaned_at AS cleanup_at,
   c.source_pid,
   c.source_fid,
   c.source_gid,
@@ -591,6 +603,8 @@ SELECT
 FROM catalog_configs c
 LEFT JOIN monitoring_configs m
   ON m.user_id = ? AND m.config_id = c.id
+LEFT JOIN user_config_archives a
+  ON a.user_id = ? AND a.config_id = c.id
 WHERE 1 = 1
 "#
     .to_string();
@@ -604,7 +618,7 @@ WHERE 1 = 1
 
     sql.push_str(" ORDER BY c.country_id ASC, c.region_id ASC, c.price_amount ASC, c.id ASC");
 
-    let mut q = sqlx::query(&sql).bind(user_id);
+    let mut q = sqlx::query(&sql).bind(user_id).bind(user_id);
     if let Some(v) = country_id {
         q = q.bind(v);
     }
@@ -638,6 +652,7 @@ SELECT
   c.lifecycle_state,
   c.lifecycle_listed_at,
   c.lifecycle_delisted_at,
+  a.cleaned_at AS cleanup_at,
   c.source_pid,
   c.source_fid,
   c.source_gid,
@@ -645,9 +660,12 @@ SELECT
 FROM catalog_configs c
 JOIN monitoring_configs m
   ON m.user_id = ? AND m.config_id = c.id AND m.enabled = 1
+LEFT JOIN user_config_archives a
+  ON a.user_id = ? AND a.config_id = c.id
 ORDER BY c.country_id ASC, c.region_id ASC, c.price_amount ASC, c.id ASC
 "#,
     )
+    .bind(user_id)
     .bind(user_id)
     .fetch_all(db)
     .await?;
@@ -680,6 +698,7 @@ SELECT
   c.lifecycle_state,
   c.lifecycle_listed_at,
   c.lifecycle_delisted_at,
+  a.cleaned_at AS cleanup_at,
   c.source_pid,
   c.source_fid,
   c.source_gid,
@@ -687,11 +706,14 @@ SELECT
 FROM catalog_configs c
 LEFT JOIN monitoring_configs m
   ON m.user_id = ? AND m.config_id = c.id
+LEFT JOIN user_config_archives a
+  ON a.user_id = ? AND a.config_id = c.id
 WHERE c.lifecycle_listed_at >= ?
 ORDER BY c.lifecycle_listed_at DESC, c.id DESC
 LIMIT 200
 "#,
     )
+    .bind(user_id)
     .bind(user_id)
     .bind(cutoff)
     .fetch_all(db)
@@ -750,6 +772,80 @@ pub struct ApplyCatalogUrlResult {
     pub listed_ids: Vec<String>,
     pub delisted_ids: Vec<String>,
     pub fetched_at: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ArchiveDelistedResult {
+    pub archived_count: i64,
+    pub archived_at: Option<String>,
+    pub archived_ids: Vec<String>,
+}
+
+pub async fn archive_all_delisted_configs(
+    db: &SqlitePool,
+    user_id: &str,
+) -> anyhow::Result<ArchiveDelistedResult> {
+    let candidate_ids = sqlx::query(
+        r#"
+SELECT c.id
+FROM catalog_configs c
+LEFT JOIN user_config_archives a
+  ON a.user_id = ? AND a.config_id = c.id
+WHERE c.lifecycle_state = 'delisted'
+  AND a.config_id IS NULL
+ORDER BY c.id ASC
+"#,
+    )
+    .bind(user_id)
+    .fetch_all(db)
+    .await?
+    .into_iter()
+    .map(|r| r.get::<String, _>(0))
+    .collect::<Vec<_>>();
+
+    if candidate_ids.is_empty() {
+        return Ok(ArchiveDelistedResult {
+            archived_count: 0,
+            archived_at: None,
+            archived_ids: Vec::new(),
+        });
+    }
+
+    let archived_at = now_rfc3339();
+    let mut tx = db.begin().await?;
+    let mut archived_ids = Vec::new();
+    for id in candidate_ids {
+        let result = sqlx::query(
+            r#"
+INSERT INTO user_config_archives (user_id, config_id, cleaned_at)
+VALUES (?, ?, ?)
+ON CONFLICT(user_id, config_id) DO NOTHING
+"#,
+        )
+        .bind(user_id)
+        .bind(&id)
+        .bind(&archived_at)
+        .execute(&mut *tx)
+        .await?;
+        if result.rows_affected() > 0 {
+            archived_ids.push(id);
+        }
+    }
+    tx.commit().await?;
+
+    if archived_ids.is_empty() {
+        return Ok(ArchiveDelistedResult {
+            archived_count: 0,
+            archived_at: None,
+            archived_ids,
+        });
+    }
+
+    Ok(ArchiveDelistedResult {
+        archived_count: archived_ids.len() as i64,
+        archived_at: Some(archived_at),
+        archived_ids,
+    })
 }
 
 pub async fn apply_catalog_url_fetch_success(
@@ -896,6 +992,18 @@ ON CONFLICT(config_id, ts_minute) DO UPDATE SET
         }
     }
 
+    if !fetched_ids.is_empty() {
+        let placeholders = std::iter::repeat_n("?", fetched_ids.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!("DELETE FROM user_config_archives WHERE config_id IN ({placeholders})");
+        let mut q = sqlx::query(&sql);
+        for id in &fetched_ids {
+            q = q.bind(id);
+        }
+        q.execute(&mut *tx).await?;
+    }
+
     if !delisted_ids.is_empty() {
         // Mark configs as delisted (one success-miss = delist).
         let placeholders = std::iter::repeat_n("?", delisted_ids.len())
@@ -952,7 +1060,9 @@ pub async fn upsert_catalog_configs(
     configs: &[crate::upstream::ConfigBase],
 ) -> anyhow::Result<()> {
     let mut tx = db.begin().await?;
+    let mut active_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
     for c in configs {
+        active_ids.insert(c.id.clone());
         sqlx::query(
             r#"
 INSERT INTO catalog_configs (
@@ -1025,6 +1135,19 @@ ON CONFLICT(config_id, ts_minute) DO UPDATE SET
             .await;
         }
     }
+
+    if !active_ids.is_empty() {
+        let placeholders = std::iter::repeat_n("?", active_ids.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!("DELETE FROM user_config_archives WHERE config_id IN ({placeholders})");
+        let mut q = sqlx::query(&sql);
+        for id in &active_ids {
+            q = q.bind(id);
+        }
+        q.execute(&mut *tx).await?;
+    }
+
     tx.commit().await?;
     Ok(())
 }

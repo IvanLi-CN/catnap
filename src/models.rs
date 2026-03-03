@@ -89,6 +89,8 @@ pub struct ConfigLifecycleView {
     pub listed_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub delisted_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cleanup_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -280,6 +282,15 @@ pub struct WebPushSettingsUpdate {
 pub struct ProductsResponse {
     pub configs: Vec<ConfigView>,
     pub fetched_at: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArchiveDelistedResponse {
+    pub archived_count: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub archived_at: Option<String>,
+    pub archived_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
