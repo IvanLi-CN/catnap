@@ -176,7 +176,42 @@ fn redact_token(text: &str, token: &str) -> String {
 
     let mut redacted = text.replace(&format!("bot{t}"), "bot[REDACTED]");
     redacted = redact_with_optional_whitespace(&redacted, t);
+    redacted = redact_url_encoded_token(&redacted, t);
     redacted
+}
+
+fn redact_url_encoded_token(text: &str, token: &str) -> String {
+    let encoded_upper = percent_encode_url_component(token, b"0123456789ABCDEF");
+    let encoded_lower = percent_encode_url_component(token, b"0123456789abcdef");
+    if encoded_upper == token && encoded_lower == token {
+        return text.to_string();
+    }
+
+    let mut redacted = text.replace(&format!("bot{encoded_upper}"), "bot[REDACTED]");
+    if encoded_lower != encoded_upper {
+        redacted = redacted.replace(&format!("bot{encoded_lower}"), "bot[REDACTED]");
+    }
+
+    redacted = redact_with_optional_whitespace(&redacted, &encoded_upper);
+    if encoded_lower != encoded_upper {
+        redacted = redact_with_optional_whitespace(&redacted, &encoded_lower);
+    }
+    redacted
+}
+
+fn percent_encode_url_component(value: &str, hex: &[u8; 16]) -> String {
+    let mut out = String::with_capacity(value.len().saturating_mul(3));
+    for b in value.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
+            out.push(b as char);
+            continue;
+        }
+        out.push('%');
+        out.push(hex[(b >> 4) as usize] as char);
+        out.push(hex[(b & 0x0f) as usize] as char);
+    }
+
+    out
 }
 
 fn redact_with_optional_whitespace(text: &str, token: &str) -> String {

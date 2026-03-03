@@ -794,6 +794,52 @@ async fn telegram_test_redacts_token_with_newline_after_bot_prefix() {
 }
 
 #[tokio::test]
+async fn telegram_test_redacts_url_encoded_token() {
+    let token = "123456:abcDEF_sensitive";
+    let token_encoded = token.replace(':', "%3a");
+    let token_encoded_for_resp = token_encoded.clone();
+    let tg = axum::Router::new().route(
+        "/*path",
+        axum::routing::post(move || {
+            let token_encoded = token_encoded_for_resp.clone();
+            async move {
+                (
+                    StatusCode::BAD_REQUEST,
+                    axum::Json(serde_json::json!({
+                        "ok": false,
+                        "error_code": 400,
+                        "description": format!(
+                            "Bad Request: bot{token_encoded}/sendMessage rejected token={token_encoded}"
+                        ),
+                    })),
+                )
+            }
+        }),
+    );
+    let base = spawn_stub_server(tg).await;
+
+    let mut cfg = test_config();
+    cfg.telegram_api_base_url = base;
+    let t = make_app_with_config(cfg).await;
+
+    ensure_user_exists(&t, "u_1").await;
+    save_telegram_settings(&t, "u_1", token, "@c").await;
+
+    let (status, json) = post_telegram_test(
+        &t,
+        "u_1",
+        serde_json::json!({ "botToken": null, "target": null, "text": "hi" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    let msg = json["error"]["message"].as_str().unwrap_or_default();
+    assert!(!msg.contains(token));
+    assert!(!msg.contains(&token_encoded));
+    assert!(msg.contains("bot[REDACTED]/sendMessage"));
+    assert!(msg.contains("token=[REDACTED]"));
+}
+
+#[tokio::test]
 async fn telegram_test_redacts_token_with_uppercase_bot_prefix() {
     let token = "123456:abcDEF_sensitive";
     let tg = axum::Router::new().route(
