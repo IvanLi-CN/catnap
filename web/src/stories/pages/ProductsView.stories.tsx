@@ -1,11 +1,17 @@
 import type { Meta, StoryObj } from "@storybook/react";
 import { useMemo, useState } from "react";
-import { type BootstrapResponse, type Config, ProductsView } from "../../App";
+import {
+  type ArchiveFilterMode,
+  type BootstrapResponse,
+  type Config,
+  ProductsView,
+} from "../../App";
 import { AppShell } from "../../ui/layout/AppShell";
 import { countriesById, demoBootstrap, regionsById } from "../fixtures";
 
 function ProductsViewDemo() {
   const [bootstrap, setBootstrap] = useState<BootstrapResponse>(demoBootstrap);
+  const [archiveFilterMode, setArchiveFilterMode] = useState<ArchiveFilterMode>("active");
   const countries = useMemo(() => countriesById(), []);
   const regions = useMemo(() => regionsById(), []);
 
@@ -15,6 +21,32 @@ function ProductsViewDemo() {
       countriesById={countries}
       regionsById={regions}
       orderBaseUrl={bootstrap.catalog.source.url}
+      archiveFilterMode={archiveFilterMode}
+      onArchiveFilterModeChange={setArchiveFilterMode}
+      onArchiveDelisted={async () => {
+        const now = new Date().toISOString();
+        const archivedIds = bootstrap.catalog.configs
+          .filter((cfg) => cfg.lifecycle.state === "delisted" && !cfg.lifecycle.cleanupAt)
+          .map((cfg) => cfg.id);
+        setBootstrap((prev) => ({
+          ...prev,
+          catalog: {
+            ...prev.catalog,
+            configs: prev.catalog.configs.map((cfg) =>
+              archivedIds.includes(cfg.id)
+                ? ({
+                    ...cfg,
+                    lifecycle: {
+                      ...cfg.lifecycle,
+                      cleanupAt: now,
+                    },
+                  } satisfies Config)
+                : cfg,
+            ),
+          },
+        }));
+        return { archivedCount: archivedIds.length, archivedAt: now, archivedIds };
+      }}
       onToggle={(configId, enabled) => {
         setBootstrap((prev) => {
           const nextConfigs = prev.catalog.configs.map((c) =>

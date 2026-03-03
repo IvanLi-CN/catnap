@@ -786,6 +786,7 @@ select {
   margin-top: 16px;
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--gap);
 }
 
@@ -1674,6 +1675,39 @@ select {
 
 .order-guard-modal {
   width: 560px;
+}
+
+.archive-modal {
+  width: 920px;
+}
+
+.archive-preview-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  max-height: 360px;
+  overflow: auto;
+  padding: 4px 2px;
+}
+
+.archive-preview-card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px;
+  background: var(--surface2);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.archive-preview-title {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.archive-preview-meta {
+  font-size: 12px;
+  color: var(--muted);
 }
 
 .order-guard-error {

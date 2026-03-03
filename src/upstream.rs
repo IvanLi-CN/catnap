@@ -56,6 +56,7 @@ impl CatalogSnapshot {
                 state: "active".to_string(),
                 listed_at: c.inventory.checked_at.clone(),
                 delisted_at: None,
+                cleanup_at: None,
             },
             monitor_supported: c.monitor_supported,
             monitor_enabled,
