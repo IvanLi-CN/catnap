@@ -263,6 +263,183 @@ async fn products_exposes_optional_source_pid() {
 }
 
 #[tokio::test]
+async fn archive_delisted_products_is_per_user_and_idempotent() {
+    let t = make_app().await;
+    let delisted_id = "lc:7:40:127";
+    let delisted_at = "2026-03-03T08:00:00Z";
+
+    sqlx::query(
+        "UPDATE catalog_configs SET lifecycle_state = 'delisted', lifecycle_delisted_at = ? WHERE id = ?",
+    )
+    .bind(delisted_at)
+    .bind(delisted_id)
+    .execute(&t.db)
+    .await
+    .unwrap();
+
+    let res = t
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/products/archive/delisted")
+                .header("host", "example.com")
+                .header("x-user", "u_1")
+                .header("origin", "http://example.com")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(json["archivedCount"].as_i64(), Some(1));
+    assert_eq!(json["archivedIds"].as_array().map(Vec::len), Some(1));
+    assert!(json["archivedAt"].as_str().is_some());
+
+    let res = t
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/products/archive/delisted")
+                .header("host", "example.com")
+                .header("x-user", "u_1")
+                .header("origin", "http://example.com")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(json["archivedCount"].as_i64(), Some(0));
+    assert_eq!(json["archivedIds"].as_array().map(Vec::len), Some(0));
+    assert!(json.get("archivedAt").is_none());
+
+    let res = t
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/products")
+                .header("host", "example.com")
+                .header("x-user", "u_1")
+                .header("origin", "http://example.com")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let cfg = json["configs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["id"].as_str() == Some(delisted_id))
+        .unwrap();
+    assert!(cfg["lifecycle"]["cleanupAt"].as_str().is_some());
+
+    let res = t
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/products")
+                .header("host", "example.com")
+                .header("x-user", "u_2")
+                .header("origin", "http://example.com")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let cfg = json["configs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["id"].as_str() == Some(delisted_id))
+        .unwrap();
+    assert!(cfg["lifecycle"].get("cleanupAt").is_none());
+}
+
+#[tokio::test]
+async fn relisted_config_clears_archive_cleanup_at() {
+    let t = make_app().await;
+    let relisted_id = "lc:7:40:127";
+
+    sqlx::query(
+        "UPDATE catalog_configs SET lifecycle_state = 'delisted', lifecycle_delisted_at = ? WHERE id = ?",
+    )
+    .bind("2026-03-03T08:00:00Z")
+    .bind(relisted_id)
+    .execute(&t.db)
+    .await
+    .unwrap();
+
+    let res = t
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/products/archive/delisted")
+                .header("host", "example.com")
+                .header("x-user", "u_1")
+                .header("origin", "http://example.com")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let relisted_cfg =
+        catnap::upstream::parse_configs("7", Some("40"), include_str!("fixtures/cart-fid-7.html"))
+            .into_iter()
+            .find(|cfg| cfg.id == relisted_id)
+            .unwrap();
+    catnap::db::upsert_catalog_configs(&t.db, &[relisted_cfg])
+        .await
+        .unwrap();
+
+    let res = t
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/products")
+                .header("host", "example.com")
+                .header("x-user", "u_1")
+                .header("origin", "http://example.com")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let cfg = json["configs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["id"].as_str() == Some(relisted_id))
+        .unwrap();
+    assert_eq!(cfg["lifecycle"]["state"].as_str(), Some("active"));
+    assert!(cfg["lifecycle"].get("cleanupAt").is_none());
+}
+
+#[tokio::test]
 async fn about_returns_repo_and_version() {
     let t = make_app().await;
     let res = t

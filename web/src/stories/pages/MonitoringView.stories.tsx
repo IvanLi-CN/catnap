@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react";
+import type { ComponentProps } from "react";
 import { MonitoringView } from "../../App";
 import { countriesById, demoBootstrap, demoNowMs, regionsById } from "../fixtures";
 
@@ -28,8 +29,19 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const Default: Story = {};
+function MonitoringViewDemo(args: Story["args"]) {
+  const mergedArgs = {
+    ...(meta.args ?? {}),
+    ...(args ?? {}),
+  } as ComponentProps<typeof MonitoringView>;
+  return <MonitoringView {...mergedArgs} />;
+}
+
+export const Default: Story = {
+  render: (args) => <MonitoringViewDemo {...args} />,
+};
 
 export const WithSyncAlert: Story = {
   args: { syncAlert: "同步失败：上游超时（demo）" },
+  render: (args) => <MonitoringViewDemo {...args} />,
 };

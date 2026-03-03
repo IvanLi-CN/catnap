@@ -70,6 +70,7 @@ export type ConfigLifecycle = {
   state: "active" | "delisted";
   listedAt: string;
   delistedAt?: string | null;
+  cleanupAt?: string | null;
 };
 
 export type Config = {
@@ -137,6 +138,14 @@ export type ProductsResponse = {
   configs: Config[];
   fetchedAt: string;
 };
+
+export type ArchiveDelistedResponse = {
+  archivedCount: number;
+  archivedAt?: string | null;
+  archivedIds: string[];
+};
+
+export type ArchiveFilterMode = "active" | "all" | "archived";
 
 export type InventoryHistoryPoint = { tsMinute: string; quantity: number };
 export type InventoryHistorySeries = {
@@ -582,6 +591,7 @@ export function App() {
   const [syncAlert, setSyncAlert] = useState<string | null>(null);
   const [catalogRefresh, setCatalogRefresh] = useState<CatalogRefreshStatus | null>(null);
   const [recentListed24h, setRecentListed24h] = useState<Config[]>([]);
+  const [archiveFilterMode, setArchiveFilterMode] = useState<ArchiveFilterMode>("active");
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
   const [opsRange, setOpsRange] = useState<OpsRange>("24h");
   const [opsFollow, setOpsFollow] = useState<boolean>(true);
@@ -961,6 +971,21 @@ export function App() {
     window.open(url, "_blank", "noopener,noreferrer");
   }, []);
 
+  const archiveDelistedConfigs = useCallback(async () => {
+    const archived = await api<ArchiveDelistedResponse>("/api/products/archive/delisted", {
+      method: "POST",
+    });
+    try {
+      const products = await api<ProductsResponse>("/api/products");
+      applyProductsResponse(products);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setSyncAlert(`归档已完成，但产品列表刷新失败：${msg}`);
+    }
+    void refreshMonitoringSilently();
+    return archived;
+  }, [applyProductsResponse, refreshMonitoringSilently]);
+
   const dismissOrderGuardDialog = useCallback(() => {
     orderGuardReqSeqRef.current += 1;
     setOrderGuardDialog(null);
@@ -1244,6 +1269,9 @@ export function App() {
             countriesById={countriesById}
             regionsById={regionsById}
             orderBaseUrl={bootstrap.catalog.source.url}
+            archiveFilterMode={archiveFilterMode}
+            onArchiveFilterModeChange={setArchiveFilterMode}
+            onArchiveDelisted={archiveDelistedConfigs}
             onToggle={toggleMonitoring}
             onOpenOrder={guardAndOpenOrder}
           />
@@ -1326,6 +1354,16 @@ export function App() {
 
 function groupKey(c: Config): string {
   return `${c.countryId}::${c.regionId ?? ""}`;
+}
+
+function isArchivedDelisted(cfg: Config): boolean {
+  return cfg.lifecycle.state === "delisted" && Boolean(cfg.lifecycle.cleanupAt);
+}
+
+function filterConfigsByArchiveMode(configs: Config[], mode: ArchiveFilterMode): Config[] {
+  if (mode === "all") return configs;
+  if (mode === "archived") return configs.filter((cfg) => isArchivedDelisted(cfg));
+  return configs.filter((cfg) => !isArchivedDelisted(cfg));
 }
 
 type SpecCell = { label: string; value: string } | null;
@@ -1690,6 +1728,9 @@ export function ProductsView({
   countriesById,
   regionsById,
   orderBaseUrl,
+  archiveFilterMode,
+  onArchiveFilterModeChange,
+  onArchiveDelisted,
   onToggle,
   onOpenOrder,
 }: {
@@ -1697,6 +1738,9 @@ export function ProductsView({
   countriesById: Map<string, Country>;
   regionsById: Map<string, Region>;
   orderBaseUrl: string;
+  archiveFilterMode: ArchiveFilterMode;
+  onArchiveFilterModeChange: (mode: ArchiveFilterMode) => void;
+  onArchiveDelisted: () => Promise<ArchiveDelistedResponse>;
   onToggle: (configId: string, enabled: boolean) => void;
   onOpenOrder: (cfg: Config, orderLink: OrderLink) => void;
 }) {
@@ -1704,6 +1748,10 @@ export function ProductsView({
   const [regionFilter, setRegionFilter] = useState<string>("all");
   const [search, setSearch] = useState<string>("");
   const [onlyMonitored, setOnlyMonitored] = useState<boolean>(false);
+  const [archiveDialogOpen, setArchiveDialogOpen] = useState<boolean>(false);
+  const [archiveSubmitting, setArchiveSubmitting] = useState<boolean>(false);
+  const [archiveError, setArchiveError] = useState<string | null>(null);
+  const [archiveResult, setArchiveResult] = useState<ArchiveDelistedResponse | null>(null);
 
   const regionOptions = useMemo(() => {
     const out: Array<{ id: string; label: string }> = [];
@@ -1718,19 +1766,33 @@ export function ProductsView({
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return bootstrap.catalog.configs.filter((cfg) => {
-      if (onlyMonitored && !cfg.monitorEnabled) return false;
-      if (countryFilter !== "all" && cfg.countryId !== countryFilter) return false;
-      if (regionFilter !== "all" && (cfg.regionId ?? "") !== regionFilter) return false;
-      if (!q) return true;
-      if (cfg.name.toLowerCase().includes(q)) return true;
-      const specText = cfg.specs
-        .map((s) => `${s.key} ${s.value}`.trim())
-        .join(" ")
-        .toLowerCase();
-      return specText.includes(q);
-    });
-  }, [bootstrap, onlyMonitored, countryFilter, regionFilter, search]);
+    return filterConfigsByArchiveMode(bootstrap.catalog.configs, archiveFilterMode).filter(
+      (cfg) => {
+        if (onlyMonitored && !cfg.monitorEnabled) return false;
+        if (countryFilter !== "all" && cfg.countryId !== countryFilter) return false;
+        if (regionFilter !== "all" && (cfg.regionId ?? "") !== regionFilter) return false;
+        if (!q) return true;
+        if (cfg.name.toLowerCase().includes(q)) return true;
+        const specText = cfg.specs
+          .map((s) => `${s.key} ${s.value}`.trim())
+          .join(" ")
+          .toLowerCase();
+        return specText.includes(q);
+      },
+    );
+  }, [bootstrap, archiveFilterMode, onlyMonitored, countryFilter, regionFilter, search]);
+
+  const archiveCandidates = useMemo(
+    () =>
+      bootstrap.catalog.configs.filter(
+        (cfg) => cfg.lifecycle.state === "delisted" && !cfg.lifecycle.cleanupAt,
+      ),
+    [bootstrap],
+  );
+  const previewArchiveCandidates = useMemo(
+    () => archiveCandidates.slice(0, 24),
+    [archiveCandidates],
+  );
 
   const groups = useMemo(() => {
     const m = new Map<string, Config[]>();
@@ -1756,6 +1818,31 @@ export function ProductsView({
     visibleIds,
     bootstrap.catalog.fetchedAt,
   );
+
+  const openArchiveDialog = () => {
+    setArchiveError(null);
+    setArchiveDialogOpen(true);
+  };
+
+  const closeArchiveDialog = () => {
+    if (archiveSubmitting) return;
+    setArchiveDialogOpen(false);
+  };
+
+  const confirmArchiveDelisted = async () => {
+    if (archiveSubmitting) return;
+    setArchiveSubmitting(true);
+    setArchiveError(null);
+    try {
+      const res = await onArchiveDelisted();
+      setArchiveResult(res);
+      setArchiveDialogOpen(false);
+    } catch (e) {
+      setArchiveError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setArchiveSubmitting(false);
+    }
+  };
 
   return (
     <div className="panel">
@@ -1807,7 +1894,36 @@ export function ProductsView({
           >
             仅看已监控
           </button>
+
+          <div className="pill select" style={{ width: "216px" }}>
+            <span className="pill-prefix">下架归档：</span>
+            <select
+              value={archiveFilterMode}
+              onChange={(e) => onArchiveFilterModeChange(e.target.value as ArchiveFilterMode)}
+            >
+              <option value="active">仅正常</option>
+              <option value="all">全部</option>
+              <option value="archived">仅归档</option>
+            </select>
+          </div>
+
+          <button
+            type="button"
+            className={`pill ${archiveCandidates.length > 0 ? "warn" : "disabled"}`}
+            style={{ width: "272px" }}
+            onClick={openArchiveDialog}
+            disabled={archiveCandidates.length === 0}
+          >
+            {`一键归档下架（${archiveCandidates.length}）`}
+          </button>
         </div>
+        {archiveResult ? (
+          <div className="muted">
+            {archiveResult.archivedCount > 0
+              ? `已归档 ${archiveResult.archivedCount} 项下架配置。`
+              : "没有可归档的下架配置。"}
+          </div>
+        ) : null}
       </div>
 
       {groups.length === 0 ? <div className="empty">没有匹配的配置。</div> : null}
@@ -1863,6 +1979,63 @@ export function ProductsView({
           </div>
         );
       })}
+
+      {archiveDialogOpen ? (
+        <div
+          className="ops-modal-backdrop"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) closeArchiveDialog();
+          }}
+          role="presentation"
+        >
+          <dialog className="ops-modal archive-modal" open aria-label="归档下架配置">
+            <div className="ops-modal-title">归档全部下架配置</div>
+            <div className="ops-modal-body">
+              <div className="muted">
+                {`将归档 ${archiveCandidates.length} 项“下架且未归档”配置，归档后默认视图会隐藏这些项。`}
+              </div>
+              {previewArchiveCandidates.length > 0 ? (
+                <div className="archive-preview-grid">
+                  {previewArchiveCandidates.map((cfg) => {
+                    const country = countriesById.get(cfg.countryId)?.name ?? cfg.countryId;
+                    const region = cfg.regionId
+                      ? (regionsById.get(cfg.regionId)?.name ?? cfg.regionId)
+                      : "默认";
+                    return (
+                      <div className="archive-preview-card" key={cfg.id}>
+                        <div className="archive-preview-title">{cfg.name}</div>
+                        <div className="archive-preview-meta">{`${country} / ${region}`}</div>
+                        <div className="archive-preview-meta">{formatMoney(cfg.price)}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="muted">当前没有可归档的下架配置。</div>
+              )}
+              {archiveCandidates.length > previewArchiveCandidates.length ? (
+                <div className="muted">
+                  {`仅预览前 ${previewArchiveCandidates.length} 项，确认后会归档全部 ${archiveCandidates.length} 项。`}
+                </div>
+              ) : null}
+              {archiveError ? <div className="error">{archiveError}</div> : null}
+            </div>
+            <div className="ops-modal-actions">
+              <button type="button" className="pill" onClick={closeArchiveDialog}>
+                取消
+              </button>
+              <button
+                type="button"
+                className="pill warn"
+                onClick={() => void confirmArchiveDelisted()}
+                disabled={archiveSubmitting || archiveCandidates.length === 0}
+              >
+                {archiveSubmitting ? "归档中..." : "确认归档"}
+              </button>
+            </div>
+          </dialog>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1888,9 +2061,14 @@ export function MonitoringView({
   onDismissSyncAlert: () => void;
   onOpenOrder: (cfg: Config, orderLink: OrderLink) => void;
 }) {
-  const enabled = useMemo(
+  const enabledAll = useMemo(
     () => bootstrap.catalog.configs.filter((c) => c.monitorEnabled),
     [bootstrap],
+  );
+  const enabled = useMemo(() => filterConfigsByArchiveMode(enabledAll, "active"), [enabledAll]);
+  const recentListedFiltered = useMemo(
+    () => filterConfigsByArchiveMode(recentListed24h, "active"),
+    [recentListed24h],
   );
 
   const visibleIds = useMemo(() => enabled.map((c) => c.id), [enabled]);
@@ -1925,13 +2103,13 @@ export function MonitoringView({
           </button>
         </div>
       ) : null}
-      {recentListed24h.length > 0 ? (
+      {recentListedFiltered.length > 0 ? (
         <div className="panel-section">
           <div className="panel-title">最近 24 小时上架</div>
           <div className="panel-subtitle">listed（含重新上架）</div>
           <div className="divider-bleed" />
           <div className="grid">
-            {recentListed24h.slice(0, 12).map((cfg) => (
+            {recentListedFiltered.slice(0, 12).map((cfg) => (
               <MonitoringCard
                 cfg={cfg}
                 countriesById={countriesById}
@@ -1946,7 +2124,11 @@ export function MonitoringView({
       ) : null}
       {enabled.length === 0 ? (
         <div className="panel-section">
-          <div className="empty">还没有启用监控的配置。去“全部产品”里点选需要监控的配置。</div>
+          <div className="empty">
+            {enabledAll.length === 0
+              ? "还没有启用监控的配置。去“全部产品”里点选需要监控的配置。"
+              : "当前暂无可展示的监控配置（已归档下架项默认隐藏）。"}
+          </div>
         </div>
       ) : null}
       {groups.map(([k, items]) => {

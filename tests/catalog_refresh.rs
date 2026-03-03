@@ -277,6 +277,16 @@ async fn lifecycle_marks_delisted_and_relisted() {
     assert_eq!(row.get::<String, _>(0), "delisted");
     assert!(row.get::<Option<String>, _>(1).is_some());
 
+    sqlx::query(
+        "INSERT INTO user_config_archives (user_id, config_id, cleaned_at) VALUES (?, ?, ?)",
+    )
+    .bind("u_1")
+    .bind(&configs[1].id)
+    .bind("2026-03-03T08:00:00Z")
+    .execute(&db)
+    .await
+    .unwrap();
+
     // Apply a success that includes it again => relist (active + clear delisted_at).
     let both = configs.clone();
     let res2 = catnap::db::apply_catalog_url_fetch_success(
@@ -300,4 +310,14 @@ async fn lifecycle_marks_delisted_and_relisted() {
     .unwrap();
     assert_eq!(row2.get::<String, _>(0), "active");
     assert!(row2.get::<Option<String>, _>(1).is_none());
+
+    let archive_row = sqlx::query(
+        "SELECT cleaned_at FROM user_config_archives WHERE user_id = ? AND config_id = ?",
+    )
+    .bind("u_1")
+    .bind(&configs[1].id)
+    .fetch_optional(&db)
+    .await
+    .unwrap();
+    assert!(archive_row.is_none());
 }

@@ -28,6 +28,10 @@ pub fn router(state: AppState) -> Router {
         .route("/about", get(get_about))
         .route("/bootstrap", get(get_bootstrap))
         .route("/products", get(get_products))
+        .route(
+            "/products/archive/delisted",
+            post(post_archive_delisted_products),
+        )
         .route("/inventory/history", post(post_inventory_history))
         .route("/catalog/refresh", post(post_catalog_refresh))
         .route("/catalog/refresh/events", get(get_catalog_refresh_events))
@@ -625,6 +629,20 @@ async fn get_products(
     Ok(Json(ProductsResponse {
         configs,
         fetched_at: snapshot.fetched_at,
+    }))
+}
+
+async fn post_archive_delisted_products(
+    State(state): State<AppState>,
+    user: axum::extract::Extension<UserView>,
+) -> Result<Json<ArchiveDelistedResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let archived = db::archive_all_delisted_configs(&state.db, &user.0.id)
+        .await
+        .map_err(|_| json_internal_error())?;
+    Ok(Json(ArchiveDelistedResponse {
+        archived_count: archived.archived_count,
+        archived_at: archived.archived_at,
+        archived_ids: archived.archived_ids,
     }))
 }
 
