@@ -36,7 +36,7 @@
 | 8btwa | CI/CD：自动发版意图标签与版本号策略（防止 docs-only 发版） | 已完成 | `8btwa-release-intent-label-gating/SPEC.md` | 2026-01-21 | PR label gate：`type:docs\|skip\|patch\|minor\|major`；无关联 PR 的 `push main`=跳过；base=语义版本最大 tag（无 tag fallback `Cargo.toml`）；按标签 bump  |
 | xrv7y | CI/CD：GitHub Actions 构建提速（PR：跳过 arm64 + gating + cache） | 已完成 | `xrv7y-github-actions-performance/SPEC.md` | 2026-01-22 | PR ≤ 10 分钟（baseline Actions run `21235535755`）；PR smoke job 输出 timings summary（key steps）  |
 | yghay | CI/CD：修复 Release job 失败（Determine release version/tag） | 已完成 | `yghay-release-job-unblock/SPEC.md` | 2026-01-24 | M3 证据：run `21313516531`（main，tag `v0.1.9`）+ `21313516840`（tag `v0.1.8`）；`Determine release version/tag` step 成功  |
-| uqe6j | 系统设置：通知测试按钮（Telegram + Web Push） | 已完成 | `uqe6j-settings-notifications-test-button/SPEC.md` | 2026-01-24 | Telegram：可用已保存配置或临时覆盖（不保存）；Web Push：补齐发送链路（VAPID private/subject）用于测试  |
+| uqe6j | 系统设置：通知测试按钮（Telegram + Web Push） | 已完成 | `uqe6j-settings-notifications-test-button/SPEC.md` | 2026-03-04 | Telegram：错误信息增强（description + migrate_to_chat_id/retry_after）并补充 URL-encoded token 脱敏；Web Push：补齐发送链路（VAPID private/subject）用于测试  |
 | 2vjvb | 全量刷新：SSE 进度 + 缓存复用 + 配置上下架 | 已完成 | `2vjvb-catalog-full-refresh-sse/SPEC.md` | 2026-01-25 | 全局调度=最小间隔；缺失一次即下架；监控页展示最近 24h 上架（含重新上架）  |
 | 6b675 | 配置卡片：国家国旗水印背景 | 已完成 | `6b675-card-country-flag-watermark/SPEC.md` | 2026-01-26 | 实现：国旗水印（Iconify `flagpack`）  |
 | ynjyv | 采集观测台：全局采集队列 + SSE 日志订阅 | 已完成 | `ynjyv-ops-collection-dashboard/SPEC.md` | 2026-01-27 | -  |
