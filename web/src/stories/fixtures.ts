@@ -14,8 +14,8 @@ export const demoRegions: Region[] = [
   { id: "us-ca", countryId: "us", name: "加州", locationName: "US-West" },
 ];
 
-function money(amount: number, currency: string) {
-  return { amount, currency, period: "month" };
+function money(amount: number, currency: string, period: "month" | "year" = "month") {
+  return { amount, currency, period };
 }
 
 function inv(quantity: number, checkedAtIso: string, status?: Config["inventory"]["status"]) {
@@ -197,6 +197,13 @@ export const demoConfigs: Config[] = [
     monitorEnabled: true,
   },
 ];
+
+export const demoYearlyCnyConfig: Config = {
+  ...demoConfigs[1],
+  id: "cfg-yearly-cny",
+  name: "芬兰特惠年付 Mini",
+  price: money(4.99, "CNY", "year"),
+};
 
 export const demoBootstrap: BootstrapResponse = {
   user: { id: "u-demo", displayName: "Demo" },

@@ -1,5 +1,5 @@
 use crate::models::{Country, Inventory, Money, Region, Spec};
-use scraper::{Html, Selector};
+use scraper::{ElementRef, Html, Selector};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -418,6 +418,7 @@ pub fn parse_configs(fid: &str, gid: Option<&str>, html: &str) -> Vec<ConfigBase
     let h4 = Selector::parse("h4").unwrap();
     let specs_block = Selector::parse(".card-text").unwrap();
     let a_price = Selector::parse("a.cart-num").unwrap();
+    let price_block = Selector::parse(".text-right").unwrap();
     let p_tag = Selector::parse("p").unwrap();
     let li_tag = Selector::parse("li").unwrap();
     let a_tag = Selector::parse("a").unwrap();
@@ -454,10 +455,16 @@ pub fn parse_configs(fid: &str, gid: Option<&str>, html: &str) -> Vec<ConfigBase
                     .ok()
             })
             .unwrap_or(0.0);
+        let price_line_text = el
+            .select(&price_block)
+            .find(|node| node.select(&a_price).next().is_some())
+            .map(|v| normalize_text(&v.text().collect::<String>()))
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| extract_price_line_from_price_anchor(&el, &a_price));
         let price = Money {
             amount,
             currency: "CNY".to_string(),
-            period: "month".to_string(),
+            period: detect_price_period(&price_line_text, &name).to_string(),
         };
 
         let mut inventory_quantity: Option<i64> = None;
@@ -568,6 +575,108 @@ fn normalize_text(s: &str) -> String {
         .to_string()
 }
 
+fn detect_price_period(price_text: &str, name: &str) -> &'static str {
+    detect_period_from_price_text(price_text)
+        .or_else(|| detect_period_from_name(name))
+        .unwrap_or("month")
+}
+
+fn detect_period_from_price_text(raw: &str) -> Option<&'static str> {
+    let compact: String = raw.chars().filter(|ch| !ch.is_whitespace()).collect();
+    if compact.is_empty() {
+        return None;
+    }
+    let lower = compact.to_ascii_lowercase();
+
+    // Explicit bill-cycle markers in price rows are authoritative. If both exist,
+    // choose the earliest marker in the price text instead of fixed year-first.
+    let year_explicit_pos = first_match_pos(&compact, &["/年", "／年"])
+        .into_iter()
+        .chain(first_match_pos(&lower, &["/year", "/yr"]))
+        .min();
+    let month_explicit_pos = first_match_pos(&compact, &["/月", "／月"])
+        .into_iter()
+        .chain(first_match_pos(&lower, &["/month", "/mo"]))
+        .min();
+    match (month_explicit_pos, year_explicit_pos) {
+        (Some(month_pos), Some(year_pos)) => {
+            return Some(if month_pos <= year_pos {
+                "month"
+            } else {
+                "year"
+            });
+        }
+        (Some(_), None) => return Some("month"),
+        (None, Some(_)) => return Some("year"),
+        (None, None) => {}
+    }
+
+    let year_keyword_pos = first_match_pos(&compact, &["年付", "按年", "年缴", "年费"])
+        .into_iter()
+        .chain(first_match_pos(&lower, &["annual", "yearly"]))
+        .min();
+    let month_keyword_pos = first_match_pos(&compact, &["月付", "按月", "月缴", "月费"])
+        .into_iter()
+        .chain(first_match_pos(&lower, &["monthly"]))
+        .min();
+    match (month_keyword_pos, year_keyword_pos) {
+        (Some(month_pos), Some(year_pos)) => Some(if month_pos <= year_pos {
+            "month"
+        } else {
+            "year"
+        }),
+        (Some(_), None) => Some("month"),
+        (None, Some(_)) => Some("year"),
+        (None, None) => None,
+    }
+}
+
+fn detect_period_from_name(name: &str) -> Option<&'static str> {
+    let compact: String = name.chars().filter(|ch| !ch.is_whitespace()).collect();
+    if compact.is_empty() {
+        return None;
+    }
+    let lower = compact.to_ascii_lowercase();
+
+    if compact.contains("年付")
+        || compact.contains("年缴")
+        || compact.contains("按年")
+        || compact.contains("包年")
+        || lower.contains("annual")
+        || lower.contains("yearly")
+    {
+        return Some("year");
+    }
+    if compact.contains("月付")
+        || compact.contains("月缴")
+        || compact.contains("按月")
+        || lower.contains("monthly")
+    {
+        return Some("month");
+    }
+    None
+}
+
+fn first_match_pos(text: &str, patterns: &[&str]) -> Option<usize> {
+    patterns
+        .iter()
+        .filter_map(|pattern| text.find(pattern))
+        .min()
+}
+
+fn extract_price_line_from_price_anchor(card: &ElementRef<'_>, price_anchor: &Selector) -> String {
+    let Some(anchor) = card.select(price_anchor).next() else {
+        return String::new();
+    };
+    if let Some(parent) = anchor.parent().and_then(ElementRef::wrap) {
+        let parent_text = normalize_text(&parent.text().collect::<String>());
+        if !parent_text.is_empty() {
+            return parent_text;
+        }
+    }
+    normalize_text(&anchor.text().collect::<String>())
+}
+
 fn split_kv(s: &str) -> Option<(String, String)> {
     let (key, value) = s.split_once('：').or_else(|| s.split_once(':'))?;
     let key = key.trim();
@@ -627,6 +736,195 @@ mod tests {
         let cfg = configs.iter().find(|c| c.name.contains("Basic")).unwrap();
         assert!(cfg.monitor_supported);
         assert!(cfg.inventory.quantity >= 0);
+        assert_eq!(cfg.price.period, "month");
+    }
+
+    #[test]
+    fn parses_configs_detects_year_period_from_price_line() {
+        let html = include_str!("../tests/fixtures/cart-fid-11-year.html");
+        let configs = parse_configs("11", Some("81"), html);
+        assert!(!configs.is_empty());
+        assert_eq!(configs[0].price.period, "year");
+    }
+
+    #[test]
+    fn parse_configs_fallbacks_to_name_period_when_price_line_has_no_period() {
+        let html = r#"
+        <html><body>
+          <div class="card cartitem shadow w-100">
+            <div class="card-body">
+              <h4>芬兰特惠年付 Mini</h4>
+            </div>
+            <div class="text-right">
+              ¥ <a class="cart-num DINCondensed-Bold">4.99</a> 元
+            </div>
+            <div class="card-footer">
+              <a href="/cart?action=configureproduct&pid=188">立即购买</a>
+            </div>
+          </div>
+        </body></html>
+        "#;
+        let configs = parse_configs("11", Some("81"), html);
+        assert!(!configs.is_empty());
+        assert_eq!(configs[0].price.period, "year");
+    }
+
+    #[test]
+    fn parse_configs_prefers_price_period_over_name_keyword() {
+        let html = r#"
+        <html><body>
+          <div class="card cartitem shadow w-100">
+            <div class="card-body">
+              <h4>芬兰特惠年付 Mini</h4>
+            </div>
+            <div class="text-right">
+              ¥ <a class="cart-num DINCondensed-Bold">4.99</a> 元 / 月
+            </div>
+            <div class="card-footer">
+              <a href="/cart?action=configureproduct&pid=188">立即购买</a>
+            </div>
+          </div>
+        </body></html>
+        "#;
+        let configs = parse_configs("11", Some("81"), html);
+        assert!(!configs.is_empty());
+        assert_eq!(configs[0].price.period, "month");
+    }
+
+    #[test]
+    fn parse_configs_ignores_non_price_period_words_when_price_block_is_missing() {
+        let html = r#"
+        <html><body>
+          <div class="card cartitem shadow w-100">
+            <div class="card-body">
+              <h4>芬兰特惠 Mini</h4>
+              <div class="card-text">
+                <p>备份：每年一次</p>
+              </div>
+            </div>
+            <div class="price-row">
+              ¥ <a class="cart-num DINCondensed-Bold">4.99</a> 元
+            </div>
+            <div class="card-footer">
+              <a href="/cart?action=configureproduct&pid=188">立即购买</a>
+            </div>
+          </div>
+        </body></html>
+        "#;
+        let configs = parse_configs("11", Some("81"), html);
+        assert!(!configs.is_empty());
+        assert_eq!(configs[0].price.period, "month");
+    }
+
+    #[test]
+    fn parse_configs_prefers_explicit_month_over_yearly_promo_text() {
+        let html = r#"
+        <html><body>
+          <div class="card cartitem shadow w-100">
+            <div class="card-body">
+              <h4>芬兰特惠 Mini</h4>
+            </div>
+            <div class="text-right">
+              ¥ <a class="cart-num DINCondensed-Bold">4.99</a> 元 / 月（每年可省 20%）
+            </div>
+            <div class="card-footer">
+              <a href="/cart?action=configureproduct&pid=188">立即购买</a>
+            </div>
+          </div>
+        </body></html>
+        "#;
+        let configs = parse_configs("11", Some("81"), html);
+        assert!(!configs.is_empty());
+        assert_eq!(configs[0].price.period, "month");
+    }
+
+    #[test]
+    fn parse_configs_uses_earliest_explicit_period_marker_when_both_exist() {
+        let html = r#"
+        <html><body>
+          <div class="card cartitem shadow w-100">
+            <div class="card-body">
+              <h4>芬兰特惠 Mini</h4>
+            </div>
+            <div class="text-right">
+              ¥ <a class="cart-num DINCondensed-Bold">4.99</a> 元 / 月（折合 ¥59.88 / 年）
+            </div>
+            <div class="card-footer">
+              <a href="/cart?action=configureproduct&pid=188">立即购买</a>
+            </div>
+          </div>
+        </body></html>
+        "#;
+        let configs = parse_configs("11", Some("81"), html);
+        assert!(!configs.is_empty());
+        assert_eq!(configs[0].price.period, "month");
+    }
+
+    #[test]
+    fn parse_configs_detects_year_from_price_anchor_parent_without_text_right() {
+        let html = r#"
+        <html><body>
+          <div class="card cartitem shadow w-100">
+            <div class="card-body">
+              <h4>芬兰特惠 Mini</h4>
+            </div>
+            <div class="price-row">
+              ¥ <a class="cart-num DINCondensed-Bold">59.88</a> 元 / 年
+            </div>
+            <div class="card-footer">
+              <a href="/cart?action=configureproduct&pid=188">立即购买</a>
+            </div>
+          </div>
+        </body></html>
+        "#;
+        let configs = parse_configs("11", Some("81"), html);
+        assert!(!configs.is_empty());
+        assert_eq!(configs[0].price.period, "year");
+    }
+
+    #[test]
+    fn parse_configs_does_not_use_yearly_promo_text_without_billing_marker() {
+        let html = r#"
+        <html><body>
+          <div class="card cartitem shadow w-100">
+            <div class="card-body">
+              <h4>芬兰特惠 Mini</h4>
+            </div>
+            <div class="price-row">
+              ¥ <a class="cart-num DINCondensed-Bold">4.99</a> 元（每年可省 20%）
+            </div>
+            <div class="card-footer">
+              <a href="/cart?action=configureproduct&pid=188">立即购买</a>
+            </div>
+          </div>
+        </body></html>
+        "#;
+        let configs = parse_configs("11", Some("81"), html);
+        assert!(!configs.is_empty());
+        assert_eq!(configs[0].price.period, "month");
+    }
+
+    #[test]
+    fn parse_configs_uses_text_right_block_that_contains_price_anchor() {
+        let html = r#"
+        <html><body>
+          <div class="card cartitem shadow w-100">
+            <div class="card-body">
+              <h4>芬兰特惠 Mini</h4>
+            </div>
+            <div class="text-right">促销：按年折算更划算 / 年</div>
+            <div class="text-right">
+              ¥ <a class="cart-num DINCondensed-Bold">4.99</a> 元 / 月
+            </div>
+            <div class="card-footer">
+              <a href="/cart?action=configureproduct&pid=188">立即购买</a>
+            </div>
+          </div>
+        </body></html>
+        "#;
+        let configs = parse_configs("11", Some("81"), html);
+        assert!(!configs.is_empty());
+        assert_eq!(configs[0].price.period, "month");
     }
 
     #[test]
