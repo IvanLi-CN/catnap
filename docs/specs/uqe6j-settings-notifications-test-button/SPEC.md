@@ -4,7 +4,7 @@
 
 - Status: 已完成
 - Created: 2026-01-23
-- Last: 2026-01-24
+- Last: 2026-03-03
 
 ## 背景 / 问题陈述
 
@@ -161,3 +161,4 @@
 
 - 2026-01-23: 创建计划 #uqe6j（待设计）。
 - 2026-01-24: 完成实现：新增 2 个测试 endpoints；补齐 Web Push 发送链路（VAPID private/subject）；UI 增加测试按钮与状态提示；补齐集成测试与 README；Web Push endpoint 增加 SSRF 防护（不从请求体接收 endpoint）。
+- 2026-03-03: 排障增强：Telegram 测试失败时解析并透传上游 `description/parameters`（含 `migrate_to_chat_id`、`retry_after`），并补齐非 JSON 错误体兜底与集成测试。

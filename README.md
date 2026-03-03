@@ -109,6 +109,12 @@ curl -sS \
 
 保存后可点击「测试 Telegram」立即验证配置是否可用；测试请求不会在 API 响应或日志中泄漏 token 明文。
 
+常见排障建议：
+
+- `chat not found`：先确认 `target` 是否正确（频道用户名用 `@channelusername`，群/超级群通常是数字 id）。
+- 若错误里包含 `migrate_to_chat_id=<...>`：说明群已迁移到超级群，直接把 `target` 改为该值（通常以 `-100` 开头）。
+- 若报权限相关错误：确认 bot 已被拉入目标群/频道，并具备发送消息权限（频道通常需要管理员权限）。
+
 ### Web Push（可选）
 
 服务端需要提供 VAPID public key（base64url）：

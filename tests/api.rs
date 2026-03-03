@@ -115,6 +115,83 @@ async fn spawn_stub_server(app: axum::Router) -> String {
     format!("http://{}", addr)
 }
 
+async fn ensure_user_exists(t: &TestApp, user_id: &str) {
+    let res = t
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/bootstrap")
+                .header("host", "example.com")
+                .header("x-user", user_id)
+                .header("origin", "http://example.com")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+}
+
+async fn save_telegram_settings(t: &TestApp, user_id: &str, bot_token: &str, target: &str) {
+    let bytes = serde_json::to_vec(&serde_json::json!({
+        "poll": { "intervalMinutes": 1, "jitterPct": 0.1 },
+        "siteBaseUrl": null,
+        "notifications": {
+            "telegram": { "enabled": true, "botToken": bot_token, "target": target },
+            "webPush": { "enabled": false }
+        }
+    }))
+    .unwrap();
+
+    let res = t
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/settings")
+                .header("host", "example.com")
+                .header("x-user", user_id)
+                .header("origin", "http://example.com")
+                .header("content-type", "application/json")
+                .body(Body::from(bytes))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+}
+
+async fn post_telegram_test(
+    t: &TestApp,
+    user_id: &str,
+    body: serde_json::Value,
+) -> (StatusCode, serde_json::Value) {
+    let bytes = serde_json::to_vec(&body).unwrap();
+    let res = t
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/notifications/telegram/test")
+                .header("host", "example.com")
+                .header("x-user", user_id)
+                .header("origin", "http://example.com")
+                .header("content-type", "application/json")
+                .body(Body::from(bytes))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = res.status();
+    let bytes = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    (status, json)
+}
+
 #[tokio::test]
 async fn api_requires_user_header() {
     let t = make_app().await;
@@ -457,32 +534,17 @@ async fn monitoring_toggle_persists() {
 #[tokio::test]
 async fn telegram_test_returns_400_when_missing_token_or_target() {
     let t = make_app().await;
-    let bytes = serde_json::to_vec(&serde_json::json!({
-        "botToken": null,
-        "target": null,
-        "text": null,
-    }))
-    .unwrap();
-
-    let res = t
-        .app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/notifications/telegram/test")
-                .header("host", "example.com")
-                .header("x-user", "u_1")
-                .header("origin", "http://example.com")
-                .header("content-type", "application/json")
-                .body(Body::from(bytes))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
-    let bytes = to_bytes(res.into_body(), usize::MAX).await.unwrap();
-    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let (status, json) = post_telegram_test(
+        &t,
+        "u_1",
+        serde_json::json!({
+            "botToken": null,
+            "target": null,
+            "text": null,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(json["error"]["code"], "INVALID_ARGUMENT");
 }
 
@@ -490,7 +552,16 @@ async fn telegram_test_returns_400_when_missing_token_or_target() {
 async fn telegram_test_returns_5xx_when_upstream_fails() {
     let tg = axum::Router::new().route(
         "/*path",
-        axum::routing::post(|| async { StatusCode::UNAUTHORIZED }),
+        axum::routing::post(|| async {
+            (
+                StatusCode::BAD_REQUEST,
+                axum::Json(serde_json::json!({
+                    "ok": false,
+                    "error_code": 400,
+                    "description": "Bad Request: chat not found"
+                })),
+            )
+        }),
     );
     let base = spawn_stub_server(tg).await;
 
@@ -498,70 +569,302 @@ async fn telegram_test_returns_5xx_when_upstream_fails() {
     cfg.telegram_api_base_url = base;
     let t = make_app_with_config(cfg).await;
 
-    // Ensure user + default settings row exists.
-    let res = t
-        .app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/api/bootstrap")
-                .header("host", "example.com")
-                .header("x-user", "u_1")
-                .header("origin", "http://example.com")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
+    ensure_user_exists(&t, "u_1").await;
+    save_telegram_settings(&t, "u_1", "t", "@c").await;
 
-    // Save settings so request body can omit botToken/target.
-    let bytes = serde_json::to_vec(&serde_json::json!({
-        "poll": { "intervalMinutes": 1, "jitterPct": 0.1 },
-        "siteBaseUrl": null,
-        "notifications": {
-            "telegram": { "enabled": true, "botToken": "t", "target": "@c" },
-            "webPush": { "enabled": false }
-        }
-    }))
-    .unwrap();
-    let res = t
-        .app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("PUT")
-                .uri("/api/settings")
-                .header("host", "example.com")
-                .header("x-user", "u_1")
-                .header("origin", "http://example.com")
-                .header("content-type", "application/json")
-                .body(Body::from(bytes))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
+    let (status, json) = post_telegram_test(
+        &t,
+        "u_1",
+        serde_json::json!({ "botToken": null, "target": null, "text": "hi" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    let msg = json["error"]["message"].as_str().unwrap_or_default();
+    assert!(msg.contains("chat not found"));
+}
 
-    let bytes =
-        serde_json::to_vec(&serde_json::json!({ "botToken": null, "target": null, "text": "hi" }))
-            .unwrap();
-    let res = t
-        .app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/notifications/telegram/test")
-                .header("host", "example.com")
-                .header("x-user", "u_1")
-                .header("origin", "http://example.com")
-                .header("content-type", "application/json")
-                .body(Body::from(bytes))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(res.status(), StatusCode::INTERNAL_SERVER_ERROR);
+#[tokio::test]
+async fn telegram_test_surfaces_migrate_to_chat_id_hint() {
+    let tg = axum::Router::new().route(
+        "/*path",
+        axum::routing::post(|| async {
+            (
+                StatusCode::BAD_REQUEST,
+                axum::Json(serde_json::json!({
+                    "ok": false,
+                    "error_code": 400,
+                    "description": "Bad Request: group chat was upgraded to a supergroup chat",
+                    "parameters": { "migrate_to_chat_id": -1002233445566_i64 }
+                })),
+            )
+        }),
+    );
+    let base = spawn_stub_server(tg).await;
+
+    let mut cfg = test_config();
+    cfg.telegram_api_base_url = base;
+    let t = make_app_with_config(cfg).await;
+
+    ensure_user_exists(&t, "u_1").await;
+    save_telegram_settings(&t, "u_1", "t", "-12345").await;
+
+    let (status, json) = post_telegram_test(
+        &t,
+        "u_1",
+        serde_json::json!({ "botToken": null, "target": null, "text": "hi" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    let msg = json["error"]["message"].as_str().unwrap_or_default();
+    assert!(msg.contains("migrate_to_chat_id=-1002233445566"));
+}
+
+#[tokio::test]
+async fn telegram_test_surfaces_retry_after_hint() {
+    let tg = axum::Router::new().route(
+        "/*path",
+        axum::routing::post(|| async {
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                axum::Json(serde_json::json!({
+                    "ok": false,
+                    "error_code": 429,
+                    "description": "Too Many Requests: retry later",
+                    "parameters": { "retry_after": 17 }
+                })),
+            )
+        }),
+    );
+    let base = spawn_stub_server(tg).await;
+
+    let mut cfg = test_config();
+    cfg.telegram_api_base_url = base;
+    let t = make_app_with_config(cfg).await;
+
+    ensure_user_exists(&t, "u_1").await;
+    save_telegram_settings(&t, "u_1", "t", "@c").await;
+
+    let (status, json) = post_telegram_test(
+        &t,
+        "u_1",
+        serde_json::json!({ "botToken": null, "target": null, "text": "hi" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    let msg = json["error"]["message"].as_str().unwrap_or_default();
+    assert!(msg.contains("retry_after=17s"));
+}
+
+#[tokio::test]
+async fn telegram_test_surfaces_plain_text_error_body() {
+    let tg = axum::Router::new().route(
+        "/*path",
+        axum::routing::post(|| async {
+            (
+                StatusCode::BAD_REQUEST,
+                "Bad Request:\nchat not found\r\nPlease check bot permission.",
+            )
+        }),
+    );
+    let base = spawn_stub_server(tg).await;
+
+    let mut cfg = test_config();
+    cfg.telegram_api_base_url = base;
+    let t = make_app_with_config(cfg).await;
+
+    ensure_user_exists(&t, "u_1").await;
+    save_telegram_settings(&t, "u_1", "t", "@c").await;
+
+    let (status, json) = post_telegram_test(
+        &t,
+        "u_1",
+        serde_json::json!({ "botToken": null, "target": null, "text": "hi" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    let msg = json["error"]["message"].as_str().unwrap_or_default();
+    assert!(msg.contains("upstream returned non-json error body"));
+}
+
+#[tokio::test]
+async fn telegram_test_marks_truncated_upstream_body() {
+    let body = "X".repeat(20_000);
+    let tg = axum::Router::new().route(
+        "/*path",
+        axum::routing::post(move || {
+            let body = body.clone();
+            async move { (StatusCode::BAD_REQUEST, body) }
+        }),
+    );
+    let base = spawn_stub_server(tg).await;
+
+    let mut cfg = test_config();
+    cfg.telegram_api_base_url = base;
+    let t = make_app_with_config(cfg).await;
+
+    ensure_user_exists(&t, "u_1").await;
+    save_telegram_settings(&t, "u_1", "t", "@c").await;
+
+    let (status, json) = post_telegram_test(
+        &t,
+        "u_1",
+        serde_json::json!({ "botToken": null, "target": null, "text": "hi" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    let msg = json["error"]["message"].as_str().unwrap_or_default();
+    assert!(msg.contains("upstream_body_truncated"));
+}
+
+#[tokio::test]
+async fn telegram_test_redacts_token_from_upstream_description() {
+    let token = "123456:abcDEF_sensitive";
+    let token_with_newline = "123456:abc\nDEF_sensitive";
+    let tg = axum::Router::new().route(
+        "/*path",
+        axum::routing::post(move || async move {
+            (
+                StatusCode::BAD_REQUEST,
+                axum::Json(serde_json::json!({
+                    "ok": false,
+                    "error_code": 400,
+                    "description": format!(
+                        "Bad Request: bot{token_with_newline}/sendMessage rejected token={token_with_newline}"
+                    ),
+                })),
+            )
+        }),
+    );
+    let base = spawn_stub_server(tg).await;
+
+    let mut cfg = test_config();
+    cfg.telegram_api_base_url = base;
+    let t = make_app_with_config(cfg).await;
+
+    ensure_user_exists(&t, "u_1").await;
+    save_telegram_settings(&t, "u_1", token, "@c").await;
+
+    let (status, json) = post_telegram_test(
+        &t,
+        "u_1",
+        serde_json::json!({ "botToken": null, "target": null, "text": "hi" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    let msg = json["error"]["message"].as_str().unwrap_or_default();
+    assert!(!msg.contains(token));
+    assert!(msg.contains("[REDACTED]"));
+}
+
+#[tokio::test]
+async fn telegram_test_redacts_token_with_newline_after_bot_prefix() {
+    let token = "123456:abcDEF_sensitive";
+    let tg = axum::Router::new().route(
+        "/*path",
+        axum::routing::post(move || async move {
+            (
+                StatusCode::BAD_REQUEST,
+                axum::Json(serde_json::json!({
+                    "ok": false,
+                    "error_code": 400,
+                    "description": format!("Bad Request: bot\n{token}/sendMessage rejected"),
+                })),
+            )
+        }),
+    );
+    let base = spawn_stub_server(tg).await;
+
+    let mut cfg = test_config();
+    cfg.telegram_api_base_url = base;
+    let t = make_app_with_config(cfg).await;
+
+    ensure_user_exists(&t, "u_1").await;
+    save_telegram_settings(&t, "u_1", token, "@c").await;
+
+    let (status, json) = post_telegram_test(
+        &t,
+        "u_1",
+        serde_json::json!({ "botToken": null, "target": null, "text": "hi" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    let msg = json["error"]["message"].as_str().unwrap_or_default();
+    assert!(!msg.contains(token));
+    assert!(msg.contains("bot [REDACTED]/sendMessage"));
+}
+
+#[tokio::test]
+async fn telegram_test_redacts_token_with_uppercase_bot_prefix() {
+    let token = "123456:abcDEF_sensitive";
+    let tg = axum::Router::new().route(
+        "/*path",
+        axum::routing::post(move || async move {
+            (
+                StatusCode::BAD_REQUEST,
+                axum::Json(serde_json::json!({
+                    "ok": false,
+                    "error_code": 400,
+                    "description": format!("Bad Request: BOT{token}/sendMessage rejected"),
+                })),
+            )
+        }),
+    );
+    let base = spawn_stub_server(tg).await;
+
+    let mut cfg = test_config();
+    cfg.telegram_api_base_url = base;
+    let t = make_app_with_config(cfg).await;
+
+    ensure_user_exists(&t, "u_1").await;
+    save_telegram_settings(&t, "u_1", token, "@c").await;
+
+    let (status, json) = post_telegram_test(
+        &t,
+        "u_1",
+        serde_json::json!({ "botToken": null, "target": null, "text": "hi" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    let msg = json["error"]["message"].as_str().unwrap_or_default();
+    assert!(!msg.contains(token));
+    assert!(msg.contains("BOT[REDACTED]/sendMessage"));
+}
+
+#[tokio::test]
+async fn telegram_test_redacts_token_after_whitespace_boundary() {
+    let token = "123456:abcDEF_sensitive";
+    let tg = axum::Router::new().route(
+        "/*path",
+        axum::routing::post(move || async move {
+            (
+                StatusCode::BAD_REQUEST,
+                axum::Json(serde_json::json!({
+                    "ok": false,
+                    "error_code": 400,
+                    "description": format!("Bad Request: invalid token {token}"),
+                })),
+            )
+        }),
+    );
+    let base = spawn_stub_server(tg).await;
+
+    let mut cfg = test_config();
+    cfg.telegram_api_base_url = base;
+    let t = make_app_with_config(cfg).await;
+
+    ensure_user_exists(&t, "u_1").await;
+    save_telegram_settings(&t, "u_1", token, "@c").await;
+
+    let (status, json) = post_telegram_test(
+        &t,
+        "u_1",
+        serde_json::json!({ "botToken": null, "target": null, "text": "hi" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    let msg = json["error"]["message"].as_str().unwrap_or_default();
+    assert!(!msg.contains(token));
+    assert!(msg.contains("token [REDACTED]"));
 }
 
 #[tokio::test]
