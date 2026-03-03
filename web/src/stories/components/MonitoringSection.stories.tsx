@@ -25,6 +25,8 @@ export const Default: Story = {
     title: "日本 / 东京",
     items: demoConfigs.filter((c) => c.countryId === "jp").slice(0, 3),
     countriesById: demoCountriesById,
+    orderBaseUrl: "https://lxc.lazycat.wiki/cart",
     nowMs: demoNowMs,
+    onOpenOrder: () => {},
   },
 };

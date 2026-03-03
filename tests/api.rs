@@ -200,6 +200,69 @@ async fn bootstrap_returns_catalog_and_settings() {
 }
 
 #[tokio::test]
+async fn products_exposes_optional_source_pid() {
+    let t = make_app().await;
+    sqlx::query("UPDATE catalog_configs SET source_pid = NULL WHERE id = ?")
+        .bind("lc:7:40:127")
+        .execute(&t.db)
+        .await
+        .unwrap();
+
+    let res = t
+        .app
+        .oneshot(
+            Request::builder()
+                .uri("/api/products")
+                .header("host", "example.com")
+                .header("x-user", "u_1")
+                .header("origin", "http://example.com")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let bytes = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let configs = json
+        .get("configs")
+        .and_then(|v| v.as_array())
+        .expect("configs array");
+
+    let with_pid = configs
+        .iter()
+        .find(|cfg| cfg.get("id").and_then(|v| v.as_str()) == Some("lc:7:40:128"))
+        .expect("config with pid exists");
+    assert_eq!(
+        with_pid.get("sourcePid").and_then(|v| v.as_str()),
+        Some("128")
+    );
+    assert_eq!(
+        with_pid.get("sourceFid").and_then(|v| v.as_str()),
+        Some("7")
+    );
+    assert_eq!(
+        with_pid.get("sourceGid").and_then(|v| v.as_str()),
+        Some("40")
+    );
+
+    let without_pid = configs
+        .iter()
+        .find(|cfg| cfg.get("id").and_then(|v| v.as_str()) == Some("lc:7:40:127"))
+        .expect("config without pid exists");
+    assert!(without_pid.get("sourcePid").is_none());
+    assert_eq!(
+        without_pid.get("sourceFid").and_then(|v| v.as_str()),
+        Some("7")
+    );
+    assert_eq!(
+        without_pid.get("sourceGid").and_then(|v| v.as_str()),
+        Some("40")
+    );
+}
+
+#[tokio::test]
 async fn about_returns_repo_and_version() {
     let t = make_app().await;
     let res = t

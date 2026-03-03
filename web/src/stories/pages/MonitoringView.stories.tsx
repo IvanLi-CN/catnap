@@ -9,16 +9,19 @@ const meta = {
     bootstrap: demoBootstrap,
     countriesById: countriesById(),
     regionsById: regionsById(),
+    orderBaseUrl: demoBootstrap.catalog.source.url,
     nowMs: demoNowMs,
     syncAlert: null,
     recentListed24h: demoBootstrap.catalog.configs.slice(0, 3),
     onDismissSyncAlert: () => {},
+    onOpenOrder: () => {},
   },
   argTypes: {
     bootstrap: { control: false },
     countriesById: { control: false },
     regionsById: { control: false },
     onDismissSyncAlert: { control: false },
+    onOpenOrder: { control: false },
   },
 } satisfies Meta<typeof MonitoringView>;
 

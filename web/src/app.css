@@ -518,6 +518,38 @@ select {
   color: var(--text);
 }
 
+.panel-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.panel-title-link {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.panel-title-link:hover {
+  color: var(--text);
+  background: color-mix(in oklab, var(--surface2) 75%, transparent);
+}
+
+.panel-title-link:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.panel-title-link-icon {
+  width: 16px;
+  height: 16px;
+}
+
 .panel-subtitle {
   margin-top: 8px;
   font-size: 14px;
@@ -788,6 +820,26 @@ select {
   padding-bottom: 22px;
 }
 
+.card-linkable {
+  cursor: pointer;
+  transition: border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
+}
+
+.card-linkable:hover {
+  border-color: var(--ops-card-border);
+  box-shadow: var(--ops-card-shadow);
+  transform: translateY(-1px);
+}
+
+.card-linkable:focus-visible {
+  outline: 2px solid var(--badge-on-border);
+  outline-offset: 2px;
+}
+
+.card-link-disabled {
+  cursor: default;
+}
+
 .card-content {
   position: relative;
   z-index: 1;
@@ -994,10 +1046,28 @@ select {
   display: flex;
   align-items: center;
   gap: 12px;
+  position: relative;
+}
+
+.cfg-pills button {
+  position: relative;
+  z-index: 3;
 }
 
 .cfg-pills > :last-child {
   margin-left: auto;
+}
+
+.cfg-order-hint,
+.mon-order-hint {
+  font-size: 12px;
+  line-height: 1.2;
+  color: var(--muted);
+}
+
+.cfg-order-hint.soft,
+.mon-order-hint.soft {
+  color: var(--text-dim);
 }
 
 .mon-pills {
@@ -1591,12 +1661,23 @@ select {
 }
 
 .ops-modal {
+  margin: 0;
+  position: static;
+  inset: auto;
   width: 640px;
   max-width: 100%;
   border-radius: 16px;
   background: var(--surface);
   border: 1px solid var(--line);
   padding: 18px 18px 16px;
+}
+
+.order-guard-modal {
+  width: 560px;
+}
+
+.order-guard-error {
+  margin: 0;
 }
 
 .ops-modal-title {
@@ -1615,4 +1696,5 @@ select {
   margin-top: 14px;
   display: flex;
   justify-content: flex-end;
+  gap: 10px;
 }

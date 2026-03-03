@@ -223,6 +223,9 @@ CREATE INDEX IF NOT EXISTS idx_ops_notify_runs_channel_ts ON ops_notify_runs (ch
         "TEXT NOT NULL DEFAULT '1970-01-01T00:00:00Z'",
     )
     .await?;
+    add_column_if_missing(db, "catalog_configs", "source_pid", "TEXT NULL").await?;
+    add_column_if_missing(db, "catalog_configs", "source_fid", "TEXT NULL").await?;
+    add_column_if_missing(db, "catalog_configs", "source_gid", "TEXT NULL").await?;
 
     add_column_if_missing(
         db,
@@ -552,6 +555,9 @@ fn config_view_from_row(row: &sqlx::sqlite::SqliteRow) -> anyhow::Result<ConfigV
         },
         monitor_supported: monitor_supported_for_country(&country_id),
         monitor_enabled: row.get::<i64, _>("monitor_enabled") != 0,
+        source_pid: row.get::<Option<String>, _>("source_pid"),
+        source_fid: row.get::<Option<String>, _>("source_fid"),
+        source_gid: row.get::<Option<String>, _>("source_gid"),
     })
 }
 
@@ -578,6 +584,9 @@ SELECT
   c.lifecycle_state,
   c.lifecycle_listed_at,
   c.lifecycle_delisted_at,
+  c.source_pid,
+  c.source_fid,
+  c.source_gid,
   COALESCE(m.enabled, 0) AS monitor_enabled
 FROM catalog_configs c
 LEFT JOIN monitoring_configs m
@@ -629,6 +638,9 @@ SELECT
   c.lifecycle_state,
   c.lifecycle_listed_at,
   c.lifecycle_delisted_at,
+  c.source_pid,
+  c.source_fid,
+  c.source_gid,
   COALESCE(m.enabled, 0) AS monitor_enabled
 FROM catalog_configs c
 JOIN monitoring_configs m
@@ -668,6 +680,9 @@ SELECT
   c.lifecycle_state,
   c.lifecycle_listed_at,
   c.lifecycle_delisted_at,
+  c.source_pid,
+  c.source_fid,
+  c.source_gid,
   COALESCE(m.enabled, 0) AS monitor_enabled
 FROM catalog_configs c
 LEFT JOIN monitoring_configs m
@@ -837,7 +852,7 @@ ON CONFLICT(id) DO UPDATE SET
     WHEN catalog_configs.lifecycle_listed_at IS NULL OR catalog_configs.lifecycle_listed_at = '1970-01-01T00:00:00Z' THEN excluded.lifecycle_listed_at
     ELSE catalog_configs.lifecycle_listed_at
   END,
-  source_pid = excluded.source_pid,
+  source_pid = COALESCE(excluded.source_pid, catalog_configs.source_pid),
   source_fid = excluded.source_fid,
   source_gid = excluded.source_gid
 "#,
@@ -968,7 +983,7 @@ ON CONFLICT(id) DO UPDATE SET
     WHEN catalog_configs.lifecycle_listed_at IS NULL OR catalog_configs.lifecycle_listed_at = '1970-01-01T00:00:00Z' THEN excluded.checked_at
     ELSE catalog_configs.lifecycle_listed_at
   END,
-  source_pid = excluded.source_pid,
+  source_pid = COALESCE(excluded.source_pid, catalog_configs.source_pid),
   source_fid = excluded.source_fid,
   source_gid = excluded.source_gid
 "#,

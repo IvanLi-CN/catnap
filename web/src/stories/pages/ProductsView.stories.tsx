@@ -14,6 +14,7 @@ function ProductsViewDemo() {
       bootstrap={bootstrap}
       countriesById={countries}
       regionsById={regions}
+      orderBaseUrl={bootstrap.catalog.source.url}
       onToggle={(configId, enabled) => {
         setBootstrap((prev) => {
           const nextConfigs = prev.catalog.configs.map((c) =>
@@ -29,6 +30,7 @@ function ProductsViewDemo() {
           };
         });
       }}
+      onOpenOrder={() => {}}
     />
   );
 }
