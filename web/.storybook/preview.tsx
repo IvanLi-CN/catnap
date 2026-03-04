@@ -3,15 +3,32 @@ import { applyThemeMode, coerceThemeMode, saveThemeMode } from "../src/app/theme
 import { RESPONSIVE_BREAKPOINTS, RESPONSIVE_BREAKPOINTS_BY_ID } from "../src/stories/breakpoints";
 import "../src/app.css";
 
+const CONTAINER_STYLE = {
+  containerType: "inline-size" as const,
+  containerName: "app-shell",
+};
+
 const withTheme: Decorator = (Story, context) => {
   const mode = coerceThemeMode(context.globals.theme);
   saveThemeMode(mode);
   applyThemeMode(mode);
   const viewportPreset = String(context.globals.viewportPreset ?? "auto");
-  if (viewportPreset === "auto") return <Story />;
+  if (viewportPreset === "auto") {
+    return (
+      <div style={{ ...CONTAINER_STYLE, minHeight: "100vh" }}>
+        <Story />
+      </div>
+    );
+  }
 
   const selected = RESPONSIVE_BREAKPOINTS_BY_ID.get(viewportPreset);
-  if (!selected) return <Story />;
+  if (!selected) {
+    return (
+      <div style={{ ...CONTAINER_STYLE, minHeight: "100vh" }}>
+        <Story />
+      </div>
+    );
+  }
 
   return (
     <div style={{ padding: 12, background: "var(--bg)", minHeight: "100vh" }}>
@@ -27,6 +44,7 @@ const withTheme: Decorator = (Story, context) => {
           overflow: "auto",
           borderRadius: 16,
           border: "1px solid var(--line)",
+          ...CONTAINER_STYLE,
         }}
       >
         <Story />
