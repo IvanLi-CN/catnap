@@ -89,18 +89,20 @@ export async function expectResponsivePageCases(
     expect(content).toBeVisible();
     expect(viewportFrame.scrollWidth <= viewportFrame.clientWidth + 1).toBe(true);
     expect(content.scrollWidth <= content.clientWidth + 1).toBe(true);
-    if (Math.abs(appWidth - bp.width) > 2) {
+    if (Math.abs(appWidth - bp.width) > 1) {
       throw new Error(
         `viewport mismatch for ${bp.id}: expected width=${bp.width}, got app width=${appWidth}`,
       );
     }
 
     const navToggle = caseScope.getByTestId("app-shell-mobile-nav-toggle");
-    if (appWidth <= 1023) {
+    if (bp.width <= 1023) {
       expect(navToggle).toBeVisible();
       await userEvent.click(navToggle);
       const drawer = caseScope.getByTestId("app-shell-sidebar-drawer");
       expect(drawer).toHaveClass("open");
+      const drawerWidth = Math.round(drawer.getBoundingClientRect().width);
+      expect(drawerWidth <= appWidth + 1).toBe(true);
       await userEvent.click(caseScope.getByTestId("app-shell-sidebar-backdrop"));
       expect(drawer).not.toHaveClass("open");
     } else {
