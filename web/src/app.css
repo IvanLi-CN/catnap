@@ -2085,37 +2085,46 @@ select {
   }
 
   .logs-controls {
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    column-gap: 10px;
+    row-gap: 10px;
     align-items: center;
   }
 
   .logs-controls > * {
     min-width: 0;
     max-width: 100%;
+    margin-left: 0;
   }
 
   .logs-controls .w-168 {
-    width: auto;
-    flex: 0 1 132px;
+    width: 100%;
+    grid-column: 1;
+    grid-row: 1;
   }
 
   .logs-controls .w-520 {
-    width: auto;
-    flex: 1 1 160px;
+    width: 100%;
+    grid-column: 1;
+    grid-row: 2;
     min-width: 0;
   }
 
   .logs-controls .w-144 {
-    width: auto;
-    flex: 0 1 120px;
+    width: 112px;
+    grid-column: 2;
+    grid-row: 1;
+    justify-self: end;
   }
 
   .logs-controls .w-128 {
-    width: auto;
-    flex: 0 0 auto;
+    width: 72px;
+    grid-column: 2;
+    grid-row: 2;
     min-width: 72px;
     padding: 0 10px;
-    margin-left: auto;
+    justify-self: end;
   }
 
   .ops-surface {
