@@ -1923,9 +1923,19 @@ select {
   }
 
   .settings-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr) auto;
     row-gap: 8px;
-    column-gap: 0;
+    column-gap: 10px;
+    align-items: center;
+  }
+
+  .settings-grid > :nth-child(3n + 2) {
+    justify-self: end;
+  }
+
+  .settings-grid > :nth-child(3n) {
+    grid-column: 1 / -1;
+    margin-top: -2px;
   }
 
   .settings-row {
