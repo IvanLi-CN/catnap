@@ -2016,8 +2016,7 @@ select {
   .logs-footer .next,
   .logs-footer .cursor,
   .settings-actions > .btn,
-  .settings-actions > .pill,
-  .ops-log-headbar > .pill {
+  .settings-actions > .pill {
     width: 100% !important;
     max-width: 100%;
   }
@@ -2106,6 +2105,26 @@ select {
 
   .ops-task-state {
     display: none;
+  }
+
+  .ops-log-headbar {
+    flex-wrap: wrap;
+    align-items: center;
+    row-gap: 8px;
+  }
+
+  .ops-log-headbar > .ops-block-title {
+    flex-basis: 100%;
+  }
+
+  .ops-log-headbar > .pill {
+    width: auto !important;
+    max-width: 100%;
+  }
+
+  .ops-log-headbar > .ops-log-search {
+    flex: 1 1 140px;
+    min-width: 0;
   }
 
   .ops-log-row {
