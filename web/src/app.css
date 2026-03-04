@@ -2012,7 +2012,6 @@ select {
 
   .controls > .pill,
   .controls > button.pill,
-  .logs-controls > *,
   .logs-footer .next,
   .logs-footer .cursor,
   .settings-actions > .btn,
@@ -2083,6 +2082,40 @@ select {
   .logs-row > div {
     width: 100%;
     min-width: 0;
+  }
+
+  .logs-controls {
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .logs-controls > * {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .logs-controls .w-168 {
+    width: auto;
+    flex: 0 1 132px;
+  }
+
+  .logs-controls .w-520 {
+    width: auto;
+    flex: 1 1 160px;
+    min-width: 0;
+  }
+
+  .logs-controls .w-144 {
+    width: auto;
+    flex: 0 1 120px;
+  }
+
+  .logs-controls .w-128 {
+    width: auto;
+    flex: 0 0 auto;
+    min-width: 72px;
+    padding: 0 10px;
+    margin-left: auto;
   }
 
   .ops-surface {
