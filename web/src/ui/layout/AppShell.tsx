@@ -170,6 +170,11 @@ export function AppShell({
             data-testid="app-shell-sidebar-drawer"
           >
             {sidebar}
+            {actions ? (
+              <div className="drawer-actions" data-testid="app-shell-drawer-actions">
+                {actions}
+              </div>
+            ) : null}
           </nav>
         </div>
       ) : null}

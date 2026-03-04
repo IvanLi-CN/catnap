@@ -1825,8 +1825,8 @@ select {
     min-height: 0;
     padding: 12px 14px;
     gap: 10px;
-    align-items: flex-start;
-    flex-wrap: wrap;
+    align-items: center;
+    flex-wrap: nowrap;
   }
 
   .topbar-menu-btn {
@@ -1838,13 +1838,15 @@ select {
   }
 
   .topbar-left {
-    flex: 1 1 220px;
+    flex: 1 1 auto;
+    min-width: 0;
   }
 
   .topbar-right {
-    width: 100%;
-    justify-content: flex-start;
-    flex-wrap: wrap;
+    width: auto;
+    margin-left: auto;
+    justify-content: flex-end;
+    flex-wrap: nowrap;
     gap: 8px;
   }
 
@@ -1901,6 +1903,18 @@ select {
 
   .mobile-nav-drawer .sidebar-meta {
     margin-top: auto;
+  }
+
+  .mobile-nav-drawer .drawer-actions {
+    margin-top: 16px;
+    padding-top: 14px;
+    border-top: 1px solid var(--line);
+    display: grid;
+    gap: 10px;
+  }
+
+  .mobile-nav-drawer .drawer-actions > * {
+    min-width: 0;
   }
 
   .content {
@@ -2031,6 +2045,23 @@ select {
 
   .topbar-right > * {
     max-width: 100%;
+  }
+
+  .topbar-right {
+    display: none;
+  }
+
+  .mobile-nav-drawer .drawer-actions .pill,
+  .mobile-nav-drawer .drawer-actions button.pill,
+  .mobile-nav-drawer .drawer-actions .btn {
+    width: 100% !important;
+    max-width: 100%;
+    justify-content: flex-start;
+  }
+
+  .mobile-nav-drawer .drawer-actions .ops-sse {
+    width: 100%;
+    justify-content: flex-start;
   }
 
   .controls > .pill,
