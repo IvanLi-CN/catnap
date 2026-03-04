@@ -8,6 +8,7 @@ import {
 } from "../../App";
 import { AppShell } from "../../ui/layout/AppShell";
 import { countriesById, demoBootstrap, regionsById } from "../fixtures";
+import { ResponsivePageMatrix, expectResponsivePageCases } from "./responsivePageHelpers";
 
 function ProductsViewDemo() {
   const [bootstrap, setBootstrap] = useState<BootstrapResponse>(demoBootstrap);
@@ -136,4 +137,24 @@ export const Wide: Story = {
 
 export const Wider: Story = {
   render: () => <ProductsShell width={1680} />,
+};
+
+export const ResponsiveAllBreakpoints: Story = {
+  render: () => (
+    <ResponsivePageMatrix
+      route="products"
+      title="Catnap • 全部产品"
+      subtitle="响应式断点 DOM 验收矩阵"
+      actions={
+        <>
+          <span className="pill sm">同步中</span>
+          <span className="pill sm">立即刷新</span>
+        </>
+      }
+      renderPage={() => <ProductsViewDemo />}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    await expectResponsivePageCases(canvasElement, "page-products");
+  },
 };

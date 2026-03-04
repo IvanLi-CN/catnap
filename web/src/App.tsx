@@ -1849,7 +1849,7 @@ export function ProductsView({
   };
 
   return (
-    <div className="panel">
+    <div className="panel" data-testid="page-products">
       <div className="panel-section">
         <div className="panel-title">筛选与分组</div>
         <div className="controls">
@@ -2093,7 +2093,7 @@ export function MonitoringView({
   }, [enabled]);
 
   return (
-    <div className="panel">
+    <div className="panel" data-testid="page-monitoring">
       {syncAlert ? (
         <div className="alert alert-error">
           <span className="sync-icon err" aria-hidden="true">
@@ -2333,7 +2333,7 @@ export function SettingsViewPanel({
   }
 
   return (
-    <div className="panel">
+    <div className="panel" data-testid="page-settings">
       <div className="panel-section">
         <div className="panel-title">轮询（Polling）</div>
         <div className="settings-grid">
@@ -2885,7 +2885,7 @@ export function LogsView({ fetchLogs }: LogsViewProps = {}) {
   }, [fetchLogsImpl, level, limit]);
 
   return (
-    <div className="panel">
+    <div className="panel" data-testid="page-logs">
       <div className="panel-section">
         <div className="panel-title">过滤</div>
         <div className="logs-controls">
@@ -3394,7 +3394,7 @@ export function OpsView({
   const rangeText = opsRangeLabel(range);
 
   return (
-    <div className="panel ops-panel">
+    <div className="panel ops-panel" data-testid="page-ops">
       <div className="panel-section ops-surface">
         {err ? <p className="error">{err}</p> : null}
 

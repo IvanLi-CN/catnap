@@ -249,19 +249,24 @@ select {
 
 .app {
   min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   justify-content: center;
   align-items: stretch;
+  overflow-x: clip;
+  container-type: inline-size;
+  container-name: app-shell;
 }
 
 .shell {
   width: 100%;
   max-width: 1680px;
-  height: 100vh;
-  height: 100dvh;
+  min-height: 100vh;
+  min-height: 100dvh;
   padding: 24px;
   display: flex;
   flex-direction: column;
+  gap: 0;
 }
 
 .topbar {
@@ -273,6 +278,11 @@ select {
   display: flex;
   align-items: center;
   justify-content: space-between;
+}
+
+.topbar-menu-btn {
+  display: none !important;
+  flex: 0 0 auto;
 }
 
 .topbar-left {
@@ -322,6 +332,14 @@ select {
   padding: 24px;
   display: flex;
   flex-direction: column;
+}
+
+.mobile-nav-backdrop {
+  display: none;
+}
+
+.mobile-nav-drawer {
+  display: none;
 }
 
 .sidebar-title {
@@ -798,8 +816,8 @@ select {
 .grid {
   display: grid;
   gap: var(--gap);
-  /* Use auto-fill so groups with fewer cards don't stretch cards to full width. */
-  grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+  /* Keep cards readable on wide screens while allowing narrow containers. */
+  grid-template-columns: repeat(auto-fill, minmax(min(360px, 100%), 1fr));
 }
 
 .cfg-card,
@@ -1363,13 +1381,13 @@ select {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
-@media (max-width: 1220px) {
+@container app-shell (max-width: 1219px) {
   .ops-kpi-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
-@media (max-width: 720px) {
+@container app-shell (max-width: 767px) {
   .ops-kpi-grid {
     grid-template-columns: 1fr;
   }
@@ -1469,7 +1487,7 @@ select {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-@media (max-width: 1220px) {
+@container app-shell (max-width: 1219px) {
   .ops-block-grid {
     grid-template-columns: 1fr;
   }
@@ -1731,4 +1749,378 @@ select {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
+}
+
+/* Storybook responsive viewport wrappers (DOM tests). */
+.responsive-viewport-preview {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  overflow: auto;
+  background: var(--bg);
+}
+
+.responsive-viewport-preview .app {
+  min-height: 100%;
+}
+
+.responsive-viewport-preview .shell {
+  min-height: 100%;
+}
+
+/* Responsive contract (width): 360-479 / 480-767 / 768-1023 / 1024-1219 / 1220-1439 / 1440-1680 */
+
+@container app-shell (max-width: 1219px) {
+  .shell {
+    padding: 18px;
+  }
+
+  .topbar {
+    padding: 12px 18px;
+  }
+
+  .layout,
+  .panel,
+  .controls,
+  .logs-controls {
+    gap: 16px;
+  }
+
+  .settings-grid {
+    grid-template-columns: 160px 112px minmax(0, 1fr);
+  }
+
+  .logs-grid-head,
+  .logs-row {
+    grid-template-columns: 120px 96px 140px 1fr;
+  }
+}
+
+@container app-shell (max-width: 1023px) {
+  .app.mobile-nav-open {
+    overflow: hidden;
+  }
+
+  .shell {
+    padding: 14px;
+    max-width: 100%;
+  }
+
+  .topbar {
+    min-height: 0;
+    padding: 12px 14px;
+    gap: 10px;
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .topbar-menu-btn {
+    display: inline-flex !important;
+  }
+
+  .topbar-title {
+    font-size: 20px;
+  }
+
+  .topbar-left {
+    flex: 1 1 220px;
+  }
+
+  .topbar-right {
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .layout {
+    margin-top: 16px;
+    display: block;
+  }
+
+  .sidebar {
+    display: none;
+  }
+
+  .mobile-nav-backdrop {
+    position: fixed;
+    inset: 0;
+    display: block;
+    background: rgba(0, 0, 0, 0.46);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 180ms ease;
+    z-index: 60;
+  }
+
+  .mobile-nav-backdrop.open {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .mobile-nav-drawer {
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: min(320px, 84vw);
+    display: flex;
+    flex-direction: column;
+    background: var(--surface);
+    border-right: 1px solid var(--line);
+    padding: 18px 16px;
+    transform: translateX(-100%);
+    transition: transform 180ms ease;
+    overflow: auto;
+  }
+
+  .mobile-nav-drawer.open {
+    transform: translateX(0);
+  }
+
+  .mobile-nav-drawer .sidebar-title {
+    margin-bottom: 18px;
+  }
+
+  .mobile-nav-drawer .nav-item + .nav-item {
+    margin-top: 12px;
+  }
+
+  .mobile-nav-drawer .sidebar-meta {
+    margin-top: auto;
+  }
+
+  .content {
+    --content-pad-x: 14px;
+    --content-pad-y: 10px;
+    border-radius: 12px;
+  }
+
+  .panel-section {
+    padding: 16px;
+  }
+
+  .divider-bleed {
+    margin: 14px -16px 18px;
+  }
+
+  .grid {
+    gap: 16px;
+    grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr));
+  }
+
+  .settings-grid {
+    grid-template-columns: 1fr;
+    row-gap: 8px;
+    column-gap: 0;
+  }
+
+  .settings-row {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .settings-actions {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    gap: 10px;
+  }
+
+  .settings-actions .btn {
+    width: auto;
+    min-width: 140px;
+  }
+
+  .logs-controls {
+    gap: 12px;
+  }
+
+  .logs-grid-head,
+  .logs-row {
+    grid-template-columns: 100px 92px minmax(0, 128px) minmax(0, 1fr);
+  }
+
+  .logs-footer {
+    flex-wrap: wrap;
+  }
+
+  .logs-footer .cursor {
+    width: 100%;
+  }
+
+  .ops-task,
+  .ops-tasks-head {
+    grid-template-columns: 34px minmax(0, 120px) minmax(0, 1fr);
+  }
+
+  .ops-task > .ops-tasks-right,
+  .ops-tasks-head > .ops-tasks-right {
+    display: none;
+  }
+
+  .ops-log-row {
+    grid-template-columns: 88px 120px minmax(0, 1fr);
+    gap: 10px;
+  }
+}
+
+@container app-shell (max-width: 767px) {
+  .shell {
+    padding: 10px;
+  }
+
+  .topbar {
+    padding: 10px 12px;
+  }
+
+  .topbar-title {
+    font-size: 18px;
+  }
+
+  .topbar-subtitle {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+  }
+
+  .topbar-right > * {
+    max-width: 100%;
+  }
+
+  .controls > .pill,
+  .controls > button.pill,
+  .logs-controls > *,
+  .logs-footer .next,
+  .logs-footer .cursor,
+  .settings-actions > .btn,
+  .settings-actions > .pill,
+  .ops-log-headbar > .pill {
+    width: 100% !important;
+    max-width: 100%;
+  }
+
+  .group-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .collapse-btn {
+    width: 100%;
+  }
+
+  .grid {
+    gap: 12px;
+    grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr));
+  }
+
+  .cfg-card,
+  .mon-card {
+    padding: 16px;
+  }
+
+  .cfg-cap {
+    font-size: 56px;
+    right: 16px;
+    top: 14px;
+  }
+
+  .mon-cap {
+    font-size: 44px;
+    right: 16px;
+    top: 14px;
+  }
+
+  .cfg-card.product .cfg-title,
+  .cfg-card.product .cfg-specs,
+  .cfg-card.product .cfg-price,
+  .cfg-card.product .cfg-foot,
+  .mon-card .mon-title,
+  .mon-card .mon-specs,
+  .mon-card .mon-price {
+    padding-right: 68px;
+  }
+
+  .cfg-specs,
+  .mon-specs {
+    grid-template-columns: 1fr;
+    min-height: 0;
+  }
+
+  .logs-grid-head {
+    display: none;
+  }
+
+  .logs-row {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 14px 0;
+  }
+
+  .logs-row > div {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .ops-surface {
+    padding: 14px;
+  }
+
+  .ops-worker-line2 {
+    padding-left: 0;
+  }
+
+  .ops-tasks-head {
+    display: none;
+  }
+
+  .ops-task {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+    padding: 12px 0;
+  }
+
+  .ops-task-state {
+    display: none;
+  }
+
+  .ops-log-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+    padding: 10px 0;
+  }
+
+  .ops-modal-backdrop {
+    padding: 10px;
+  }
+
+  .archive-preview-grid {
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  }
+}
+
+@container app-shell (max-width: 479px) {
+  .shell {
+    padding: 8px;
+  }
+
+  .topbar {
+    padding: 10px;
+  }
+
+  .content {
+    --content-pad-x: 10px;
+    --content-pad-y: 10px;
+  }
+
+  .panel-section {
+    padding: 12px;
+  }
+
+  .divider-bleed {
+    margin: 12px -12px 14px;
+  }
+
+  .mobile-nav-drawer {
+    width: min(300px, 88vw);
+    padding: 16px 14px;
+  }
 }

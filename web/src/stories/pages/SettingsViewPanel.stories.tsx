@@ -2,6 +2,7 @@ import type { Meta, StoryObj } from "@storybook/react";
 import { useState } from "react";
 import { type AboutResponse, type BootstrapResponse, SettingsViewPanel } from "../../App";
 import { demoBootstrap } from "../fixtures";
+import { ResponsivePageMatrix, expectResponsivePageCases } from "./responsivePageHelpers";
 
 type DemoProps = {
   about: AboutResponse | null;
@@ -69,4 +70,20 @@ export const AboutOk: Story = {
 
 export const UpdateAvailable: Story = {
   args: { about: aboutUpdateAvailable },
+};
+
+export const ResponsiveAllBreakpoints: Story = {
+  args: { about: aboutUpdateAvailable },
+  render: (args) => (
+    <ResponsivePageMatrix
+      route="settings"
+      title="Catnap • 系统设置"
+      subtitle="响应式断点 DOM 验收矩阵"
+      actions={<span className="pill sm">主题切换</span>}
+      renderPage={() => <SettingsViewPanelDemo about={args.about ?? null} />}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    await expectResponsivePageCases(canvasElement, "page-settings");
+  },
 };

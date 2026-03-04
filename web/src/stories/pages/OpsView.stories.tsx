@@ -1,5 +1,6 @@
-import type { Meta } from "@storybook/react";
+import type { Meta, StoryObj } from "@storybook/react";
 import { type OpsStateResponse, OpsView } from "../../App";
+import { ResponsivePageMatrix, expectResponsivePageCases } from "./responsivePageHelpers";
 
 const demo: OpsStateResponse = {
   serverTime: "2026-01-26T00:00:00Z",
@@ -87,3 +88,25 @@ export default {
 } satisfies Meta<typeof NoopOpsView>;
 
 export const Default = { render: () => <NoopOpsView /> };
+
+type Story = StoryObj<typeof NoopOpsView>;
+
+export const ResponsiveAllBreakpoints: Story = {
+  render: () => (
+    <ResponsivePageMatrix
+      route="ops"
+      title="Catnap • 采集观测台"
+      subtitle="响应式断点 DOM 验收矩阵"
+      actions={
+        <>
+          <span className="pill sm">SSE</span>
+          <span className="pill sm">24h</span>
+        </>
+      }
+      renderPage={() => <NoopOpsView />}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    await expectResponsivePageCases(canvasElement, "page-ops");
+  },
+};
