@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { expect, userEvent, within } from "storybook/test";
+import { expect, userEvent, waitFor, within } from "storybook/test";
 import { AppShell } from "../../ui/layout/AppShell";
 import { RESPONSIVE_BREAKPOINTS, type ResponsiveBreakpoint } from "../breakpoints";
 
@@ -13,7 +13,7 @@ const ROUTE_LABELS: Array<{ key: RouteKey; label: string }> = [
   { key: "ops", label: "采集观测台" },
 ];
 
-export function ResponsivePageMatrix({
+export function ResponsivePageStory({
   route,
   title,
   subtitle,
@@ -24,90 +24,80 @@ export function ResponsivePageMatrix({
   title: string;
   subtitle: string;
   actions?: ReactNode;
-  renderPage: (bp: ResponsiveBreakpoint) => ReactNode;
+  renderPage: () => ReactNode;
 }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 24, overflowX: "auto" }}>
-      {RESPONSIVE_BREAKPOINTS.map((bp) => (
-        <section
-          key={bp.id}
-          data-testid={`viewport-case-${bp.id}`}
-          data-viewport-width={bp.width}
-          style={{ display: "flex", flexDirection: "column", gap: 10 }}
+    <div className="responsive-page-story" data-testid="responsive-page-story">
+      <div className="responsive-page-frame" data-testid="responsive-page-frame">
+        <AppShell
+          title={title}
+          subtitle={subtitle}
+          actions={actions ?? <span className="pill sm">demo</span>}
+          sidebar={
+            <>
+              <div className="sidebar-title">导航</div>
+              {ROUTE_LABELS.map((item) => (
+                <div className={item.key === route ? "nav-item active" : "nav-item"} key={item.key}>
+                  {item.label}
+                </div>
+              ))}
+            </>
+          }
         >
-          <div className="pill sm" style={{ width: "fit-content" }}>
-            {`${bp.width}x${bp.height} (${bp.range})`}
-          </div>
-          <div
-            className="responsive-viewport-preview"
-            data-testid={`viewport-frame-${bp.id}`}
-            style={{ width: bp.width, height: bp.height }}
-          >
-            <AppShell
-              title={title}
-              subtitle={subtitle}
-              actions={actions ?? <span className="pill sm">demo</span>}
-              sidebar={
-                <>
-                  <div className="sidebar-title">导航</div>
-                  {ROUTE_LABELS.map((item) => (
-                    <div
-                      className={item.key === route ? "nav-item active" : "nav-item"}
-                      key={item.key}
-                    >
-                      {item.label}
-                    </div>
-                  ))}
-                </>
-              }
-            >
-              {renderPage(bp)}
-            </AppShell>
-          </div>
-        </section>
-      ))}
+          {renderPage()}
+        </AppShell>
+      </div>
     </div>
   );
 }
 
-export async function expectResponsivePageCases(
+function setViewportSize(frame: HTMLElement, breakpoint: ResponsiveBreakpoint) {
+  frame.style.width = `${breakpoint.width}px`;
+  frame.style.height = `${breakpoint.height}px`;
+}
+
+export async function expectResponsiveBreakpoints(
   canvasElement: HTMLElement,
   pageTestId: string,
 ): Promise<void> {
   const canvas = within(canvasElement);
+  const frame = canvas.getByTestId("responsive-page-frame") as HTMLElement;
 
   for (const bp of RESPONSIVE_BREAKPOINTS) {
-    const caseEl = await canvas.findByTestId(`viewport-case-${bp.id}`);
-    const caseScope = within(caseEl);
+    setViewportSize(frame, bp);
 
-    const viewportFrame = caseScope.getByTestId(`viewport-frame-${bp.id}`) as HTMLElement;
-    const appRoot = caseScope.getByTestId("app-shell-root") as HTMLElement;
-    const content = caseScope.getByTestId("app-shell-content") as HTMLElement;
+    await waitFor(() => {
+      const appRoot = canvas.getByTestId("app-shell-root") as HTMLElement;
+      const appWidth = Math.round(appRoot.clientWidth);
+      expect(Math.abs(appWidth - bp.width) <= 1).toBe(true);
+    });
+
+    const pageRoot = canvas.getByTestId(pageTestId);
+    const content = canvas.getByTestId("app-shell-content") as HTMLElement;
+    const appRoot = canvas.getByTestId("app-shell-root") as HTMLElement;
+    const navToggle = canvas.getByTestId("app-shell-mobile-nav-toggle");
     const appWidth = Math.round(appRoot.clientWidth);
 
-    expect(caseScope.getByTestId(pageTestId)).toBeVisible();
+    expect(pageRoot).toBeVisible();
     expect(content).toBeVisible();
-    expect(viewportFrame.scrollWidth <= viewportFrame.clientWidth + 1).toBe(true);
+    expect(frame.scrollWidth <= frame.clientWidth + 1).toBe(true);
     expect(content.scrollWidth <= content.clientWidth + 1).toBe(true);
-    if (Math.abs(appWidth - bp.width) > 1) {
-      throw new Error(
-        `viewport mismatch for ${bp.id}: expected width=${bp.width}, got app width=${appWidth}`,
-      );
-    }
 
-    const navToggle = caseScope.getByTestId("app-shell-mobile-nav-toggle");
     if (bp.width <= 1023) {
       expect(navToggle).toBeVisible();
       await userEvent.click(navToggle);
-      const drawer = caseScope.getByTestId("app-shell-sidebar-drawer");
+      const drawer = canvas.getByTestId("app-shell-sidebar-drawer");
       expect(drawer).toHaveClass("open");
       const drawerWidth = Math.round(drawer.getBoundingClientRect().width);
       expect(drawerWidth <= appWidth + 1).toBe(true);
-      await userEvent.click(caseScope.getByTestId("app-shell-sidebar-backdrop"));
+      await userEvent.click(canvas.getByTestId("app-shell-sidebar-backdrop"));
       expect(drawer).not.toHaveClass("open");
     } else {
       expect(navToggle).not.toBeVisible();
-      expect(caseScope.getByTestId("app-shell-sidebar-desktop")).toBeVisible();
+      expect(canvas.getByTestId("app-shell-sidebar-desktop")).toBeVisible();
     }
   }
+
+  frame.style.removeProperty("width");
+  frame.style.removeProperty("height");
 }

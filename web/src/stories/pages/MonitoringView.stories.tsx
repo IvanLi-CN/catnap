@@ -2,7 +2,7 @@ import type { Meta, StoryObj } from "@storybook/react";
 import type { ComponentProps } from "react";
 import { MonitoringView } from "../../App";
 import { countriesById, demoBootstrap, demoNowMs, regionsById } from "../fixtures";
-import { ResponsivePageMatrix, expectResponsivePageCases } from "./responsivePageHelpers";
+import { ResponsivePageStory, expectResponsiveBreakpoints } from "./responsivePageHelpers";
 
 const meta = {
   title: "Pages/MonitoringView",
@@ -55,10 +55,10 @@ export const ResponsiveAllBreakpoints: Story = {
     } as ComponentProps<typeof MonitoringView>;
 
     return (
-      <ResponsivePageMatrix
+      <ResponsivePageStory
         route="monitoring"
         title="Catnap • 库存监控"
-        subtitle="响应式断点 DOM 验收矩阵"
+        subtitle="使用顶部 Viewport 选择断点进行验收"
         actions={
           <>
             <span className="pill sm">最近刷新：1 分钟前</span>
@@ -70,6 +70,6 @@ export const ResponsiveAllBreakpoints: Story = {
     );
   },
   play: async ({ canvasElement }) => {
-    await expectResponsivePageCases(canvasElement, "page-monitoring");
+    await expectResponsiveBreakpoints(canvasElement, "page-monitoring");
   },
 };

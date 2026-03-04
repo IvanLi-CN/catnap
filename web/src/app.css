@@ -1751,8 +1751,13 @@ select {
   gap: 10px;
 }
 
-/* Storybook responsive viewport wrappers (DOM tests). */
-.responsive-viewport-preview {
+/* Storybook responsive viewport frame (toolbar driven + DOM matrix assertions). */
+.responsive-page-story {
+  width: 100%;
+  overflow: auto;
+}
+
+.responsive-page-frame {
   position: relative;
   border-radius: 14px;
   overflow: hidden;
@@ -1760,20 +1765,20 @@ select {
   box-shadow: inset 0 0 0 1px var(--line);
 }
 
-.responsive-viewport-preview .app {
+.responsive-page-frame .app {
   min-height: 100%;
 }
 
-.responsive-viewport-preview .shell {
+.responsive-page-frame .shell {
   min-height: 100%;
 }
 
-/* Keep Storybook matrix drawer measurements bound to each mocked viewport frame. */
-.responsive-viewport-preview .mobile-nav-backdrop {
+/* Keep drawer measurements bound to the mocked viewport frame during test loops. */
+.responsive-page-frame .mobile-nav-backdrop {
   position: absolute;
 }
 
-.responsive-viewport-preview .mobile-nav-drawer {
+.responsive-page-frame .mobile-nav-drawer {
   width: min(320px, 84%);
   max-width: 100%;
 }
