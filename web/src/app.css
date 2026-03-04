@@ -1992,6 +1992,29 @@ select {
     padding: 10px;
   }
 
+  .content {
+    --content-bg: transparent;
+    --content-pad-x: 0;
+    --content-pad-y: 0;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .content::before,
+  .content::after {
+    display: none;
+  }
+
+  .panel {
+    gap: 12px;
+  }
+
+  .panel-section {
+    padding: 14px;
+    border-radius: 12px;
+  }
+
   .topbar {
     padding: 10px 12px;
   }
@@ -2186,16 +2209,16 @@ select {
 
 @container app-shell (max-width: 479px) {
   .shell {
-    padding: 8px;
+    padding: 6px;
   }
 
   .topbar {
-    padding: 10px;
+    padding: 10px 10px 9px;
   }
 
   .content {
-    --content-pad-x: 10px;
-    --content-pad-y: 10px;
+    --content-pad-x: 0;
+    --content-pad-y: 0;
   }
 
   .panel-section {
