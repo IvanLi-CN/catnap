@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 部分完成（4/5）
+- Status: 已完成
 - Created: 2026-03-04
 - Last: 2026-03-04
 
@@ -93,7 +93,7 @@
 - [x] M2: App Shell 小屏抽屉导航实现（含遮罩关闭与 Esc 关闭）
 - [x] M3: 五个主页面小屏兼容（无横向溢出）
 - [x] M4: 全页面全断点 DOM 自动化验收（5×7）接入 Storybook tests
-- [ ] M5: PR + checks + review-loop 收敛并回填索引状态
+- [x] M5: PR + checks + review-loop 收敛并回填索引状态
 
 ## 风险 / 假设
 
@@ -104,4 +104,4 @@
 
 - 2026-03-04: 创建规格，冻结支持范围、断点合同与验收矩阵。
 - 2026-03-04: 完成 App Shell 抽屉导航、页面适配、Storybook 断点预设与全页面 35 场景 DOM 测试。
-
+- 2026-03-04: PR #54（run #154）checks 全绿；review-loop 首轮识别的断点边界偏移问题已修复（commit `b9be4bf`），并完成规格索引回填。
