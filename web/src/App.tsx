@@ -2852,6 +2852,7 @@ export function SettingsViewPanel({
                 }}
               />
             </div>
+            {renderFieldError("siteBaseUrl")}
           </div>
           <button
             type="button"
@@ -2871,7 +2872,6 @@ export function SettingsViewPanel({
             自动填充
           </button>
         </div>
-        {renderFieldError("siteBaseUrl")}
       </div>
 
       <div className="panel-section">
