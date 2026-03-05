@@ -1250,6 +1250,24 @@ select {
   flex: 0 0 20px;
 }
 
+.settings-status-bubble {
+  margin-top: 12px;
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: min(460px, 100%);
+  padding: 10px 12px;
+  border-radius: var(--r10);
+  border: 1px solid var(--pill-err-border);
+  background: var(--pill-err);
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.14);
+  color: var(--fg);
+  font-size: 14px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
 .line-inner {
   height: 1px;
   background: var(--line);
