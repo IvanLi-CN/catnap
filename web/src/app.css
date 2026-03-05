@@ -1185,31 +1185,18 @@ select {
   display: inline-flex;
   align-items: flex-start;
   gap: 8px;
-  margin-top: 10px;
+  margin-top: 8px;
   max-width: min(460px, 100%);
   padding: 10px 12px;
   border-radius: var(--r10);
   border: 1px solid var(--pill-err-border);
   background: var(--pill-err);
-  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.18);
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.14);
   color: var(--fg);
   font-size: 14px;
   line-height: 1.35;
   overflow-wrap: anywhere;
   white-space: normal;
-}
-
-.settings-error-bubble::before {
-  content: "";
-  position: absolute;
-  bottom: calc(100% - 1px);
-  left: 18px;
-  width: 12px;
-  height: 12px;
-  border-top: 1px solid var(--pill-err-border);
-  border-left: 1px solid var(--pill-err-border);
-  background: var(--pill-err);
-  rotate: 45deg;
 }
 
 .settings-error-badge {
@@ -2024,10 +2011,6 @@ select {
     max-width: min(320px, 92vw);
     margin-top: 8px;
     white-space: normal;
-  }
-
-  .settings-error-bubble::before {
-    left: 20px;
   }
 
   .settings-grid > :nth-child(3n) {
