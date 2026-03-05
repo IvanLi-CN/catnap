@@ -1158,6 +1158,64 @@ select {
   width: 160px;
 }
 
+.settings-input-wrap {
+  position: relative;
+  display: inline-flex;
+  flex-direction: column;
+}
+
+.settings-input-wide {
+  width: 848px;
+}
+
+.settings-error-bubble {
+  position: absolute;
+  top: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 12;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(420px, 88vw);
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in oklab, var(--warn) 42%, transparent);
+  background: color-mix(in oklab, var(--panel) 86%, black 14%);
+  box-shadow: 0 12px 24px color-mix(in oklab, black 28%, transparent);
+  color: var(--fg);
+  font-size: 14px;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.settings-error-bubble::before {
+  content: "";
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 12px;
+  height: 12px;
+  border-top: 1px solid color-mix(in oklab, var(--warn) 42%, transparent);
+  border-left: 1px solid color-mix(in oklab, var(--warn) 42%, transparent);
+  background: color-mix(in oklab, var(--panel) 86%, black 14%);
+  rotate: 45deg;
+}
+
+.settings-error-badge {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  background: var(--warn);
+  color: #101016;
+  flex: 0 0 24px;
+}
+
 .line-inner {
   height: 1px;
   background: var(--line);
@@ -1945,6 +2003,22 @@ select {
 
   .settings-grid > :nth-child(3n + 2) {
     justify-self: end;
+  }
+
+  .settings-input-wide {
+    width: min(100%, 848px);
+  }
+
+  .settings-error-bubble {
+    left: 0;
+    transform: none;
+    max-width: min(320px, 92vw);
+    white-space: normal;
+  }
+
+  .settings-error-bubble::before {
+    left: 20px;
+    transform: none;
   }
 
   .settings-grid > :nth-child(3n) {

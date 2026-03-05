@@ -2437,14 +2437,11 @@ export function SettingsViewPanel({
   const [wpTestStatus, setWpTestStatus] = useState<string | null>(null);
   const [saving, setSaving] = useState<boolean>(false);
   const [saveState, setSaveState] = useState<SettingsSaveState>({ kind: "idle", message: null });
+  const [fieldErrors, setFieldErrors] = useState<Partial<Record<SettingsFieldKey, string>>>({});
   const [lastPersisted, setLastPersisted] = useState<SettingsPersistSnapshot>(() =>
     buildPersistedSnapshotFromSettings(bootstrap.settings),
   );
 
-  const intervalMinutesRef = useRef<HTMLInputElement>(null);
-  const jitterPctRef = useRef<HTMLInputElement>(null);
-  const siteBaseUrlRef = useRef<HTMLInputElement>(null);
-  const autoIntervalHoursRef = useRef<HTMLInputElement>(null);
   const autosaveTimerRef = useRef<number | null>(null);
   const saveSeqRef = useRef(0);
   const lastPersistedRef = useRef(lastPersisted);
@@ -2516,27 +2513,25 @@ export function SettingsViewPanel({
     ],
   );
 
-  const fieldInputByKey = useCallback((field: SettingsFieldKey): HTMLInputElement | null => {
-    if (field === "intervalMinutes") return intervalMinutesRef.current;
-    if (field === "jitterPct") return jitterPctRef.current;
-    if (field === "siteBaseUrl") return siteBaseUrlRef.current;
-    return autoIntervalHoursRef.current;
+  const setFieldError = useCallback((field: SettingsFieldKey, message: string | null) => {
+    setFieldErrors((prev) => {
+      const prevMessage = prev[field] ?? null;
+      if (prevMessage === message) return prev;
+      const next = { ...prev };
+      if (message) {
+        next[field] = message;
+      } else {
+        delete next[field];
+      }
+      return next;
+    });
   }, []);
-
-  const setFieldError = useCallback(
-    (field: SettingsFieldKey, message: string | null) => {
-      const input = fieldInputByKey(field);
-      if (!input) return;
-      input.setCustomValidity(message ?? "");
-    },
-    [fieldInputByKey],
-  );
 
   const validateDraftField = useCallback(
     (
       field: SettingsFieldKey,
       draft: SettingsDraft,
-      reportInvalid: boolean,
+      _reportInvalid: boolean,
     ): { valid: true; value: number | string | null } | { valid: false; message: string } => {
       let message: string | null = null;
       let value: number | string | null = null;
@@ -2586,16 +2581,13 @@ export function SettingsViewPanel({
       }
 
       setFieldError(field, message);
-      if (reportInvalid && message) {
-        fieldInputByKey(field)?.reportValidity();
-      }
 
       if (message) {
         return { valid: false, message };
       }
       return { valid: true, value };
     },
-    [fieldInputByKey, setFieldError],
+    [setFieldError],
   );
 
   const validateDraft = useCallback(
@@ -2767,6 +2759,13 @@ export function SettingsViewPanel({
   }
 
   const saveStateClass = saveState.kind === "error" ? "error" : "muted";
+  const renderFieldError = (field: SettingsFieldKey) =>
+    fieldErrors[field] ? (
+      <div className="settings-error-bubble" role="alert">
+        <span className="settings-error-badge">!</span>
+        <span>{fieldErrors[field]}</span>
+      </div>
+    ) : null;
 
   return (
     <div className="panel" data-testid="page-settings">
@@ -2774,48 +2773,56 @@ export function SettingsViewPanel({
         <div className="panel-title">轮询（Polling）</div>
         <div className="settings-grid">
           <div>查询频率（分钟）</div>
-          <div className="pill num" style={{ width: "120px" }}>
-            <input
-              ref={intervalMinutesRef}
-              type="number"
-              min={1}
-              value={intervalMinutesInput}
-              onChange={(e) => {
-                const value = e.target.value;
-                setIntervalMinutesInput(value);
-                void validateDraftField(
-                  "intervalMinutes",
-                  buildDraft({ intervalMinutesInput: value }),
-                  false,
-                );
-                scheduleAutosave({ intervalMinutesInput: value });
-              }}
-              onBlur={() => {
-                void validateDraftField("intervalMinutes", buildDraft(), true);
-              }}
-            />
+          <div className="settings-input-wrap">
+            <div className="pill num" style={{ width: "120px" }}>
+              <input
+                type="number"
+                min={1}
+                value={intervalMinutesInput}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setIntervalMinutesInput(value);
+                  void validateDraftField(
+                    "intervalMinutes",
+                    buildDraft({ intervalMinutesInput: value }),
+                    false,
+                  );
+                  scheduleAutosave({ intervalMinutesInput: value });
+                }}
+                onBlur={() => {
+                  void validateDraftField("intervalMinutes", buildDraft(), true);
+                }}
+              />
+            </div>
+            {renderFieldError("intervalMinutes")}
           </div>
           <div className="hint">默认 1；最小 1</div>
 
           <div>抖动比例（0..1）</div>
-          <div className="pill num" style={{ width: "120px" }}>
-            <input
-              ref={jitterPctRef}
-              type="number"
-              min={0}
-              max={1}
-              step={0.01}
-              value={jitterPctInput}
-              onChange={(e) => {
-                const value = e.target.value;
-                setJitterPctInput(value);
-                void validateDraftField("jitterPct", buildDraft({ jitterPctInput: value }), false);
-                scheduleAutosave({ jitterPctInput: value });
-              }}
-              onBlur={() => {
-                void validateDraftField("jitterPct", buildDraft(), true);
-              }}
-            />
+          <div className="settings-input-wrap">
+            <div className="pill num" style={{ width: "120px" }}>
+              <input
+                type="number"
+                min={0}
+                max={1}
+                step={0.01}
+                value={jitterPctInput}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setJitterPctInput(value);
+                  void validateDraftField(
+                    "jitterPct",
+                    buildDraft({ jitterPctInput: value }),
+                    false,
+                  );
+                  scheduleAutosave({ jitterPctInput: value });
+                }}
+                onBlur={() => {
+                  void validateDraftField("jitterPct", buildDraft(), true);
+                }}
+              />
+            </div>
+            {renderFieldError("jitterPct")}
           </div>
           <div className="hint">实际间隔 = interval × (1 ± jitter)</div>
         </div>
@@ -2825,25 +2832,27 @@ export function SettingsViewPanel({
         <div className="panel-title">站点地址（用于通知跳转链接）</div>
         <div className="panel-subtitle">默认值：window.location.origin（用户可修改）</div>
         <div className="controls">
-          <div className="pill" style={{ width: "848px" }}>
-            <input
-              ref={siteBaseUrlRef}
-              placeholder={window.location.origin}
-              value={siteBaseUrlInput}
-              onChange={(e) => {
-                const value = e.target.value;
-                setSiteBaseUrlInput(value);
-                void validateDraftField(
-                  "siteBaseUrl",
-                  buildDraft({ siteBaseUrlInput: value }),
-                  false,
-                );
-                scheduleAutosave({ siteBaseUrlInput: value });
-              }}
-              onBlur={() => {
-                void validateDraftField("siteBaseUrl", buildDraft(), true);
-              }}
-            />
+          <div className="settings-input-wrap settings-input-wide">
+            <div className="pill" style={{ width: "848px" }}>
+              <input
+                placeholder={window.location.origin}
+                value={siteBaseUrlInput}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setSiteBaseUrlInput(value);
+                  void validateDraftField(
+                    "siteBaseUrl",
+                    buildDraft({ siteBaseUrlInput: value }),
+                    false,
+                  );
+                  scheduleAutosave({ siteBaseUrlInput: value });
+                }}
+                onBlur={() => {
+                  void validateDraftField("siteBaseUrl", buildDraft(), true);
+                }}
+              />
+            </div>
+            {renderFieldError("siteBaseUrl")}
           </div>
           <button
             type="button"
@@ -2893,28 +2902,30 @@ export function SettingsViewPanel({
           <div className="hint">全局间隔取“所有用户启用值”的最小值</div>
 
           <div>间隔（小时）</div>
-          <div className="pill num" style={{ width: "92px" }}>
-            <input
-              ref={autoIntervalHoursRef}
-              type="number"
-              min={1}
-              max={720}
-              disabled={!autoRefreshEnabled}
-              value={autoIntervalHoursInput}
-              onChange={(e) => {
-                const value = e.target.value;
-                setAutoIntervalHoursInput(value);
-                void validateDraftField(
-                  "autoIntervalHours",
-                  buildDraft({ autoIntervalHoursInput: value }),
-                  false,
-                );
-                scheduleAutosave({ autoIntervalHoursInput: value });
-              }}
-              onBlur={() => {
-                void validateDraftField("autoIntervalHours", buildDraft(), true);
-              }}
-            />
+          <div className="settings-input-wrap">
+            <div className="pill num" style={{ width: "92px" }}>
+              <input
+                type="number"
+                min={1}
+                max={720}
+                disabled={!autoRefreshEnabled}
+                value={autoIntervalHoursInput}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setAutoIntervalHoursInput(value);
+                  void validateDraftField(
+                    "autoIntervalHours",
+                    buildDraft({ autoIntervalHoursInput: value }),
+                    false,
+                  );
+                  scheduleAutosave({ autoIntervalHoursInput: value });
+                }}
+                onBlur={() => {
+                  void validateDraftField("autoIntervalHours", buildDraft(), true);
+                }}
+              />
+            </div>
+            {renderFieldError("autoIntervalHours")}
           </div>
           <div className="hint">默认 6；范围 1..720；关闭=设为 null</div>
 
