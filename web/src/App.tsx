@@ -2758,6 +2758,7 @@ export function SettingsViewPanel({
     return new Date(t).toLocaleString();
   }
 
+  const saveStateClass = saveState.kind === "error" ? "error" : "muted";
   const renderFieldError = (field: SettingsFieldKey) =>
     fieldErrors[field] ? (
       <div className="settings-error-bubble" role="alert">
@@ -2765,22 +2766,6 @@ export function SettingsViewPanel({
         <span>{fieldErrors[field]}</span>
       </div>
     ) : null;
-  const renderSaveStateMessage = () => {
-    if (!saveState.message) return null;
-    if (saveState.kind !== "error") {
-      return (
-        <div className="muted" style={{ marginTop: 12 }}>
-          {saveState.message}
-        </div>
-      );
-    }
-    return (
-      <div className="settings-status-bubble" role="alert">
-        <span className="settings-error-badge">!</span>
-        <span>{saveState.message}</span>
-      </div>
-    );
-  };
 
   return (
     <div className="panel" data-testid="page-settings">
@@ -2979,7 +2964,11 @@ export function SettingsViewPanel({
       <div className="panel-section">
         <div className="panel-title">通知（Notifications）</div>
 
-        {renderSaveStateMessage()}
+        {saveState.message ? (
+          <div className={saveStateClass} style={{ marginTop: 12 }}>
+            {saveState.message}
+          </div>
+        ) : null}
 
         <div className="controls" style={{ marginTop: "16px" }}>
           <div className="panel-title" style={{ fontSize: "16px" }}>
