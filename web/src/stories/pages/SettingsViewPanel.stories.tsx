@@ -47,6 +47,7 @@ function SettingsViewPanelDemo({ about }: DemoProps) {
       onSave={async (next) => {
         const { telegramBotToken: _telegramBotToken, ...settings } = next;
         setBootstrap((prev) => ({ ...prev, settings: { ...prev.settings, ...settings } }));
+        return settings;
       }}
     />
   );

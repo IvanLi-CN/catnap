@@ -277,7 +277,7 @@ function routeTitle(route: Route): string {
 
 function routeSubtitle(route: Route): string {
   if (route === "products") return "分组：国家地区 → 可用区域 → 配置 • 点击卡片下单（新标签页）";
-  if (route === "settings") return "按用户隔离 • 保存后立即生效（下次轮询使用新频率 + 抖动）";
+  if (route === "settings") return "按用户隔离 • 自动保存（下次轮询使用新频率 + 抖动）";
   if (route === "logs") return "按用户隔离 • 支持过滤与分页（cursor）";
   if (route === "ops")
     return "全局共享 • 队列/worker/成功率/推送成功率 • SSE 实时 tail（断线自动续传/重置）";
@@ -938,8 +938,10 @@ export function App() {
     });
   }
 
-  async function saveSettings(next: SettingsView & { telegramBotToken?: string | null }) {
-    if (!bootstrap) return;
+  async function saveSettings(
+    next: SettingsView & { telegramBotToken?: string | null },
+  ): Promise<SettingsView> {
+    if (!bootstrap) throw new Error("settings not ready");
     const updated = await api<SettingsView>("/api/settings", {
       method: "PUT",
       headers: { "content-type": "application/json" },
@@ -958,6 +960,7 @@ export function App() {
         },
       }),
     });
+    setSyncAlert(null);
     setBootstrap({
       ...bootstrap,
       settings: updated,
@@ -969,6 +972,7 @@ export function App() {
         },
       },
     });
+    return updated;
   }
 
   const openOrderUrl = useCallback((url: string) => {
@@ -2253,6 +2257,133 @@ export function MonitoringSection({
   );
 }
 
+type SettingsFieldKey = "intervalMinutes" | "jitterPct" | "siteBaseUrl" | "autoIntervalHours";
+
+type SettingsSaveState = {
+  kind: "idle" | "saving" | "saved" | "error";
+  message: string | null;
+};
+
+type SettingsDraft = {
+  intervalMinutesInput: string;
+  jitterPctInput: string;
+  siteBaseUrlInput: string;
+  autoRefreshEnabled: boolean;
+  autoIntervalHoursInput: string;
+  listedEnabled: boolean;
+  delistedEnabled: boolean;
+  tgEnabled: boolean;
+  tgTargetInput: string;
+  tgBotTokenInput: string;
+  wpEnabled: boolean;
+};
+
+type SettingsPersistSnapshot = {
+  poll: { intervalMinutes: number; jitterPct: number };
+  siteBaseUrl: string | null;
+  catalogRefresh: { autoIntervalHours: number | null };
+  monitoringEvents: { listedEnabled: boolean; delistedEnabled: boolean };
+  notifications: {
+    telegram: { enabled: boolean; target: string | null };
+    webPush: { enabled: boolean };
+  };
+  telegramBotToken: string | null;
+};
+
+function normalizeOptionalText(value: string): string | null {
+  const next = value.trim();
+  return next ? next : null;
+}
+
+function parseStrictInteger(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (!trimmed || !/^-?\d+$/.test(trimmed)) return null;
+  const value = Number(trimmed);
+  if (!Number.isSafeInteger(value)) return null;
+  return value;
+}
+
+function parseStrictNumber(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const value = Number(trimmed);
+  if (!Number.isFinite(value)) return null;
+  return value;
+}
+
+function buildPersistedSnapshotFromSettings(settings: SettingsView): SettingsPersistSnapshot {
+  return {
+    poll: {
+      intervalMinutes: settings.poll.intervalMinutes,
+      jitterPct: settings.poll.jitterPct,
+    },
+    siteBaseUrl: settings.siteBaseUrl,
+    catalogRefresh: {
+      autoIntervalHours: settings.catalogRefresh.autoIntervalHours,
+    },
+    monitoringEvents: {
+      listedEnabled: settings.monitoringEvents.listedEnabled,
+      delistedEnabled: settings.monitoringEvents.delistedEnabled,
+    },
+    notifications: {
+      telegram: {
+        enabled: settings.notifications.telegram.enabled,
+        target: settings.notifications.telegram.target?.trim()
+          ? settings.notifications.telegram.target.trim()
+          : null,
+      },
+      webPush: {
+        enabled: settings.notifications.webPush.enabled,
+      },
+    },
+    telegramBotToken: null,
+  };
+}
+
+function clonePersistedSnapshot(snapshot: SettingsPersistSnapshot): SettingsPersistSnapshot {
+  return {
+    poll: { ...snapshot.poll },
+    siteBaseUrl: snapshot.siteBaseUrl,
+    catalogRefresh: { ...snapshot.catalogRefresh },
+    monitoringEvents: { ...snapshot.monitoringEvents },
+    notifications: {
+      telegram: { ...snapshot.notifications.telegram },
+      webPush: { ...snapshot.notifications.webPush },
+    },
+    telegramBotToken: snapshot.telegramBotToken,
+  };
+}
+
+function snapshotToOnSaveInput(
+  snapshot: SettingsPersistSnapshot,
+): SettingsView & { telegramBotToken?: string | null } {
+  return {
+    poll: {
+      intervalMinutes: snapshot.poll.intervalMinutes,
+      jitterPct: snapshot.poll.jitterPct,
+    },
+    siteBaseUrl: snapshot.siteBaseUrl,
+    catalogRefresh: {
+      autoIntervalHours: snapshot.catalogRefresh.autoIntervalHours,
+    },
+    monitoringEvents: {
+      listedEnabled: snapshot.monitoringEvents.listedEnabled,
+      delistedEnabled: snapshot.monitoringEvents.delistedEnabled,
+    },
+    notifications: {
+      telegram: {
+        enabled: snapshot.notifications.telegram.enabled,
+        configured: false,
+        target: snapshot.notifications.telegram.target ?? undefined,
+      },
+      webPush: {
+        enabled: snapshot.notifications.webPush.enabled,
+      },
+    },
+    telegramBotToken: snapshot.telegramBotToken,
+  };
+}
+
 export function SettingsViewPanel({
   bootstrap,
   about,
@@ -2266,18 +2397,22 @@ export function SettingsViewPanel({
   aboutLoading: boolean;
   aboutError: string | null;
   onCheckUpdate: () => Promise<void>;
-  onSave: (next: SettingsView & { telegramBotToken?: string | null }) => Promise<void>;
+  onSave: (next: SettingsView & { telegramBotToken?: string | null }) => Promise<SettingsView>;
 }) {
-  const [intervalMinutes, setIntervalMinutes] = useState<number>(
-    bootstrap.settings.poll.intervalMinutes,
+  const [intervalMinutesInput, setIntervalMinutesInput] = useState<string>(
+    String(bootstrap.settings.poll.intervalMinutes),
   );
-  const [jitterPct, setJitterPct] = useState<number>(bootstrap.settings.poll.jitterPct);
-  const [siteBaseUrl, setSiteBaseUrl] = useState<string>(bootstrap.settings.siteBaseUrl ?? "");
+  const [jitterPctInput, setJitterPctInput] = useState<string>(
+    String(bootstrap.settings.poll.jitterPct),
+  );
+  const [siteBaseUrlInput, setSiteBaseUrlInput] = useState<string>(
+    bootstrap.settings.siteBaseUrl ?? "",
+  );
   const [autoRefreshEnabled, setAutoRefreshEnabled] = useState<boolean>(
     bootstrap.settings.catalogRefresh.autoIntervalHours !== null,
   );
-  const [autoIntervalHours, setAutoIntervalHours] = useState<number>(
-    bootstrap.settings.catalogRefresh.autoIntervalHours ?? 6,
+  const [autoIntervalHoursInput, setAutoIntervalHoursInput] = useState<string>(
+    String(bootstrap.settings.catalogRefresh.autoIntervalHours ?? 6),
   );
   const [listedEnabled, setListedEnabled] = useState<boolean>(
     bootstrap.settings.monitoringEvents.listedEnabled,
@@ -2288,10 +2423,10 @@ export function SettingsViewPanel({
   const [tgEnabled, setTgEnabled] = useState<boolean>(
     bootstrap.settings.notifications.telegram.enabled,
   );
-  const [tgTarget, setTgTarget] = useState<string>(
+  const [tgTargetInput, setTgTargetInput] = useState<string>(
     bootstrap.settings.notifications.telegram.target ?? "",
   );
-  const [tgBotToken, setTgBotToken] = useState<string>("");
+  const [tgBotTokenInput, setTgBotTokenInput] = useState<string>("");
   const [tgTestPending, setTgTestPending] = useState<boolean>(false);
   const [tgTestStatus, setTgTestStatus] = useState<string | null>(null);
   const [wpEnabled, setWpEnabled] = useState<boolean>(
@@ -2301,6 +2436,32 @@ export function SettingsViewPanel({
   const [wpTestPending, setWpTestPending] = useState<boolean>(false);
   const [wpTestStatus, setWpTestStatus] = useState<string | null>(null);
   const [saving, setSaving] = useState<boolean>(false);
+  const [saveState, setSaveState] = useState<SettingsSaveState>({ kind: "idle", message: null });
+  const [lastPersisted, setLastPersisted] = useState<SettingsPersistSnapshot>(() =>
+    buildPersistedSnapshotFromSettings(bootstrap.settings),
+  );
+
+  const intervalMinutesRef = useRef<HTMLInputElement>(null);
+  const jitterPctRef = useRef<HTMLInputElement>(null);
+  const siteBaseUrlRef = useRef<HTMLInputElement>(null);
+  const autoIntervalHoursRef = useRef<HTMLInputElement>(null);
+  const autosaveTimerRef = useRef<number | null>(null);
+  const saveSeqRef = useRef(0);
+  const lastPersistedRef = useRef(lastPersisted);
+
+  useEffect(() => {
+    lastPersistedRef.current = lastPersisted;
+  }, [lastPersisted]);
+
+  useEffect(
+    () => () => {
+      if (autosaveTimerRef.current !== null) {
+        window.clearTimeout(autosaveTimerRef.current);
+        autosaveTimerRef.current = null;
+      }
+    },
+    [],
+  );
 
   const wpKey = bootstrap.settings.notifications.webPush.vapidPublicKey;
   const wpSupported = "serviceWorker" in navigator && "PushManager" in window;
@@ -2325,12 +2486,287 @@ export function SettingsViewPanel({
   const updateAvailable = update?.updateAvailable ?? false;
   const updateMessage = update?.message ?? aboutError;
 
+  const buildDraft = useCallback(
+    (overrides: Partial<SettingsDraft> = {}): SettingsDraft => ({
+      intervalMinutesInput,
+      jitterPctInput,
+      siteBaseUrlInput,
+      autoRefreshEnabled,
+      autoIntervalHoursInput,
+      listedEnabled,
+      delistedEnabled,
+      tgEnabled,
+      tgTargetInput,
+      tgBotTokenInput,
+      wpEnabled,
+      ...overrides,
+    }),
+    [
+      intervalMinutesInput,
+      jitterPctInput,
+      siteBaseUrlInput,
+      autoRefreshEnabled,
+      autoIntervalHoursInput,
+      listedEnabled,
+      delistedEnabled,
+      tgEnabled,
+      tgTargetInput,
+      tgBotTokenInput,
+      wpEnabled,
+    ],
+  );
+
+  const fieldInputByKey = useCallback((field: SettingsFieldKey): HTMLInputElement | null => {
+    if (field === "intervalMinutes") return intervalMinutesRef.current;
+    if (field === "jitterPct") return jitterPctRef.current;
+    if (field === "siteBaseUrl") return siteBaseUrlRef.current;
+    return autoIntervalHoursRef.current;
+  }, []);
+
+  const setFieldError = useCallback(
+    (field: SettingsFieldKey, message: string | null) => {
+      const input = fieldInputByKey(field);
+      if (!input) return;
+      input.setCustomValidity(message ?? "");
+    },
+    [fieldInputByKey],
+  );
+
+  const validateDraftField = useCallback(
+    (
+      field: SettingsFieldKey,
+      draft: SettingsDraft,
+      reportInvalid: boolean,
+    ): { valid: true; value: number | string | null } | { valid: false; message: string } => {
+      let message: string | null = null;
+      let value: number | string | null = null;
+
+      if (field === "intervalMinutes") {
+        const parsed = parseStrictInteger(draft.intervalMinutesInput);
+        if (parsed === null || parsed < 1) {
+          message = "查询频率必须是 >= 1 的整数";
+        } else {
+          value = parsed;
+        }
+      } else if (field === "jitterPct") {
+        const parsed = parseStrictNumber(draft.jitterPctInput);
+        if (parsed === null || parsed < 0 || parsed > 1) {
+          message = "抖动比例必须在 0..1 之间";
+        } else {
+          value = parsed;
+        }
+      } else if (field === "siteBaseUrl") {
+        const trimmed = draft.siteBaseUrlInput.trim();
+        if (!trimmed) {
+          value = null;
+        } else {
+          try {
+            const parsed = new URL(trimmed);
+            const protocol = parsed.protocol.toLowerCase();
+            if (protocol !== "http:" && protocol !== "https:") {
+              message = "站点地址必须是 http 或 https";
+            } else {
+              value = trimmed;
+            }
+          } catch {
+            message = "站点地址格式不正确";
+          }
+        }
+      } else {
+        if (!draft.autoRefreshEnabled) {
+          value = null;
+        } else {
+          const parsed = parseStrictInteger(draft.autoIntervalHoursInput);
+          if (parsed === null || parsed < 1 || parsed > 720) {
+            message = "间隔（小时）必须是 1..720 的整数";
+          } else {
+            value = parsed;
+          }
+        }
+      }
+
+      setFieldError(field, message);
+      if (reportInvalid && message) {
+        fieldInputByKey(field)?.reportValidity();
+      }
+
+      if (message) {
+        return { valid: false, message };
+      }
+      return { valid: true, value };
+    },
+    [fieldInputByKey, setFieldError],
+  );
+
+  const validateDraft = useCallback(
+    (draft: SettingsDraft, reportInvalid: boolean) => {
+      const intervalMinutes = validateDraftField("intervalMinutes", draft, reportInvalid);
+      const jitterPct = validateDraftField("jitterPct", draft, reportInvalid);
+      const siteBaseUrl = validateDraftField("siteBaseUrl", draft, reportInvalid);
+      const autoIntervalHours = validateDraftField("autoIntervalHours", draft, reportInvalid);
+
+      const computedInvalid: SettingsFieldKey[] = [];
+      if (!intervalMinutes.valid) computedInvalid.push("intervalMinutes");
+      if (!jitterPct.valid) computedInvalid.push("jitterPct");
+      if (!siteBaseUrl.valid) computedInvalid.push("siteBaseUrl");
+      if (!autoIntervalHours.valid) computedInvalid.push("autoIntervalHours");
+
+      return {
+        intervalMinutes,
+        jitterPct,
+        siteBaseUrl,
+        autoIntervalHours,
+        invalidFields: computedInvalid,
+      };
+    },
+    [validateDraftField],
+  );
+
+  const persistDraft = useCallback(
+    async (draft: SettingsDraft, reportInvalid: boolean) => {
+      const validated = validateDraft(draft, reportInvalid);
+      const next = clonePersistedSnapshot(lastPersistedRef.current);
+      let changed = false;
+
+      if (validated.intervalMinutes.valid) {
+        const value = validated.intervalMinutes.value as number;
+        if (value !== next.poll.intervalMinutes) {
+          next.poll.intervalMinutes = value;
+          changed = true;
+        }
+      }
+
+      if (validated.jitterPct.valid) {
+        const value = validated.jitterPct.value as number;
+        if (value !== next.poll.jitterPct) {
+          next.poll.jitterPct = value;
+          changed = true;
+        }
+      }
+
+      if (validated.siteBaseUrl.valid) {
+        const value = validated.siteBaseUrl.value as string | null;
+        if (value !== next.siteBaseUrl) {
+          next.siteBaseUrl = value;
+          changed = true;
+        }
+      }
+
+      if (validated.autoIntervalHours.valid) {
+        const value = validated.autoIntervalHours.value as number | null;
+        if (value !== next.catalogRefresh.autoIntervalHours) {
+          next.catalogRefresh.autoIntervalHours = value;
+          changed = true;
+        }
+      }
+
+      if (draft.listedEnabled !== next.monitoringEvents.listedEnabled) {
+        next.monitoringEvents.listedEnabled = draft.listedEnabled;
+        changed = true;
+      }
+
+      if (draft.delistedEnabled !== next.monitoringEvents.delistedEnabled) {
+        next.monitoringEvents.delistedEnabled = draft.delistedEnabled;
+        changed = true;
+      }
+
+      if (draft.tgEnabled !== next.notifications.telegram.enabled) {
+        next.notifications.telegram.enabled = draft.tgEnabled;
+        changed = true;
+      }
+
+      const nextTarget = normalizeOptionalText(draft.tgTargetInput);
+      if (nextTarget !== next.notifications.telegram.target) {
+        next.notifications.telegram.target = nextTarget;
+        changed = true;
+      }
+
+      const nextBotToken = normalizeOptionalText(draft.tgBotTokenInput);
+      if (nextBotToken !== next.telegramBotToken) {
+        next.telegramBotToken = nextBotToken;
+        changed = true;
+      }
+
+      if (draft.wpEnabled !== next.notifications.webPush.enabled) {
+        next.notifications.webPush.enabled = draft.wpEnabled;
+        changed = true;
+      }
+
+      if (!changed) {
+        if (validated.invalidFields.length > 0) {
+          setSaveState({ kind: "error", message: "存在不合法字段，已跳过保存" });
+        } else {
+          setSaveState((prev) => (prev.kind === "saving" ? prev : { kind: "idle", message: null }));
+        }
+        return { requested: false, saved: false, invalidFields: validated.invalidFields };
+      }
+
+      const seq = saveSeqRef.current + 1;
+      saveSeqRef.current = seq;
+      setSaveState({ kind: "saving", message: "自动保存中…" });
+
+      try {
+        const updated = await onSave(snapshotToOnSaveInput(next));
+        if (seq !== saveSeqRef.current) {
+          return { requested: true, saved: false, invalidFields: validated.invalidFields };
+        }
+
+        const committed = buildPersistedSnapshotFromSettings(updated);
+        committed.telegramBotToken = next.telegramBotToken;
+        setLastPersisted(committed);
+
+        if (validated.invalidFields.length > 0) {
+          setSaveState({ kind: "error", message: "已保存合法字段，仍有字段需要修正" });
+        } else {
+          setSaveState({ kind: "saved", message: "已自动保存" });
+        }
+
+        return { requested: true, saved: true, invalidFields: validated.invalidFields };
+      } catch (e) {
+        if (seq !== saveSeqRef.current) {
+          return { requested: true, saved: false, invalidFields: validated.invalidFields };
+        }
+        const msg = e instanceof Error ? e.message : String(e);
+        setSaveState({ kind: "error", message: msg });
+        return { requested: true, saved: false, invalidFields: validated.invalidFields };
+      }
+    },
+    [onSave, validateDraft],
+  );
+
+  const scheduleAutosave = useCallback(
+    (overrides: Partial<SettingsDraft> = {}) => {
+      if (autosaveTimerRef.current !== null) {
+        window.clearTimeout(autosaveTimerRef.current);
+      }
+      const draft = buildDraft(overrides);
+      autosaveTimerRef.current = window.setTimeout(() => {
+        void persistDraft(draft, true);
+      }, 800);
+    },
+    [buildDraft, persistDraft],
+  );
+
+  const flushAutosaveImmediate = useCallback(
+    async (overrides: Partial<SettingsDraft> = {}) => {
+      if (autosaveTimerRef.current !== null) {
+        window.clearTimeout(autosaveTimerRef.current);
+        autosaveTimerRef.current = null;
+      }
+      const draft = buildDraft(overrides);
+      return persistDraft(draft, true);
+    },
+    [buildDraft, persistDraft],
+  );
+
   function formatLocalTime(iso: string | null): string {
     if (!iso) return "-";
     const t = Date.parse(iso);
     if (!Number.isFinite(t)) return iso;
     return new Date(t).toLocaleString();
   }
+
+  const saveStateClass = saveState.kind === "error" ? "error" : "muted";
 
   return (
     <div className="panel" data-testid="page-settings">
@@ -2340,10 +2776,23 @@ export function SettingsViewPanel({
           <div>查询频率（分钟）</div>
           <div className="pill num" style={{ width: "120px" }}>
             <input
+              ref={intervalMinutesRef}
               type="number"
               min={1}
-              value={intervalMinutes}
-              onChange={(e) => setIntervalMinutes(Number(e.target.value))}
+              value={intervalMinutesInput}
+              onChange={(e) => {
+                const value = e.target.value;
+                setIntervalMinutesInput(value);
+                void validateDraftField(
+                  "intervalMinutes",
+                  buildDraft({ intervalMinutesInput: value }),
+                  false,
+                );
+                scheduleAutosave({ intervalMinutesInput: value });
+              }}
+              onBlur={() => {
+                void validateDraftField("intervalMinutes", buildDraft(), true);
+              }}
             />
           </div>
           <div className="hint">默认 1；最小 1</div>
@@ -2351,12 +2800,21 @@ export function SettingsViewPanel({
           <div>抖动比例（0..1）</div>
           <div className="pill num" style={{ width: "120px" }}>
             <input
+              ref={jitterPctRef}
               type="number"
               min={0}
               max={1}
               step={0.01}
-              value={jitterPct}
-              onChange={(e) => setJitterPct(Number(e.target.value))}
+              value={jitterPctInput}
+              onChange={(e) => {
+                const value = e.target.value;
+                setJitterPctInput(value);
+                void validateDraftField("jitterPct", buildDraft({ jitterPctInput: value }), false);
+                scheduleAutosave({ jitterPctInput: value });
+              }}
+              onBlur={() => {
+                void validateDraftField("jitterPct", buildDraft(), true);
+              }}
             />
           </div>
           <div className="hint">实际间隔 = interval × (1 ± jitter)</div>
@@ -2369,16 +2827,38 @@ export function SettingsViewPanel({
         <div className="controls">
           <div className="pill" style={{ width: "848px" }}>
             <input
+              ref={siteBaseUrlRef}
               placeholder={window.location.origin}
-              value={siteBaseUrl}
-              onChange={(e) => setSiteBaseUrl(e.target.value)}
+              value={siteBaseUrlInput}
+              onChange={(e) => {
+                const value = e.target.value;
+                setSiteBaseUrlInput(value);
+                void validateDraftField(
+                  "siteBaseUrl",
+                  buildDraft({ siteBaseUrlInput: value }),
+                  false,
+                );
+                scheduleAutosave({ siteBaseUrlInput: value });
+              }}
+              onBlur={() => {
+                void validateDraftField("siteBaseUrl", buildDraft(), true);
+              }}
             />
           </div>
           <button
             type="button"
             className="pill warn center"
             style={{ width: "160px" }}
-            onClick={() => setSiteBaseUrl(window.location.origin)}
+            onClick={() => {
+              const value = window.location.origin;
+              setSiteBaseUrlInput(value);
+              void validateDraftField(
+                "siteBaseUrl",
+                buildDraft({ siteBaseUrlInput: value }),
+                false,
+              );
+              void flushAutosaveImmediate({ siteBaseUrlInput: value });
+            }}
           >
             自动填充
           </button>
@@ -2394,7 +2874,19 @@ export function SettingsViewPanel({
             type="button"
             className={`pill sm center ${autoRefreshEnabled ? "on" : ""}`}
             style={{ width: "92px" }}
-            onClick={() => setAutoRefreshEnabled((v) => !v)}
+            onClick={() => {
+              const next = !autoRefreshEnabled;
+              setAutoRefreshEnabled(next);
+              if (!next) {
+                setFieldError("autoIntervalHours", null);
+              }
+              void validateDraftField(
+                "autoIntervalHours",
+                buildDraft({ autoRefreshEnabled: next }),
+                false,
+              );
+              void flushAutosaveImmediate({ autoRefreshEnabled: next });
+            }}
           >
             {autoRefreshEnabled ? "启用" : "关闭"}
           </button>
@@ -2403,12 +2895,25 @@ export function SettingsViewPanel({
           <div>间隔（小时）</div>
           <div className="pill num" style={{ width: "92px" }}>
             <input
+              ref={autoIntervalHoursRef}
               type="number"
               min={1}
               max={720}
               disabled={!autoRefreshEnabled}
-              value={autoIntervalHours}
-              onChange={(e) => setAutoIntervalHours(Number(e.target.value))}
+              value={autoIntervalHoursInput}
+              onChange={(e) => {
+                const value = e.target.value;
+                setAutoIntervalHoursInput(value);
+                void validateDraftField(
+                  "autoIntervalHours",
+                  buildDraft({ autoIntervalHoursInput: value }),
+                  false,
+                );
+                scheduleAutosave({ autoIntervalHoursInput: value });
+              }}
+              onBlur={() => {
+                void validateDraftField("autoIntervalHours", buildDraft(), true);
+              }}
             />
           </div>
           <div className="hint">默认 6；范围 1..720；关闭=设为 null</div>
@@ -2418,7 +2923,11 @@ export function SettingsViewPanel({
             type="button"
             className={`pill sm center ${listedEnabled ? "on" : ""}`}
             style={{ width: "92px" }}
-            onClick={() => setListedEnabled((v) => !v)}
+            onClick={() => {
+              const next = !listedEnabled;
+              setListedEnabled(next);
+              void flushAutosaveImmediate({ listedEnabled: next });
+            }}
           >
             {listedEnabled ? "启用" : "关闭"}
           </button>
@@ -2429,7 +2938,11 @@ export function SettingsViewPanel({
             type="button"
             className={`pill sm center ${delistedEnabled ? "on" : ""}`}
             style={{ width: "92px" }}
-            onClick={() => setDelistedEnabled((v) => !v)}
+            onClick={() => {
+              const next = !delistedEnabled;
+              setDelistedEnabled(next);
+              void flushAutosaveImmediate({ delistedEnabled: next });
+            }}
           >
             {delistedEnabled ? "启用" : "关闭"}
           </button>
@@ -2440,6 +2953,12 @@ export function SettingsViewPanel({
       <div className="panel-section">
         <div className="panel-title">通知（Notifications）</div>
 
+        {saveState.message ? (
+          <div className={saveStateClass} style={{ marginTop: 12 }}>
+            {saveState.message}
+          </div>
+        ) : null}
+
         <div className="controls" style={{ marginTop: "16px" }}>
           <div className="panel-title" style={{ fontSize: "16px" }}>
             Telegram
@@ -2448,7 +2967,11 @@ export function SettingsViewPanel({
             type="button"
             className={`pill sm center ${tgEnabled ? "on" : ""}`}
             style={{ width: "92px" }}
-            onClick={() => setTgEnabled((v) => !v)}
+            onClick={() => {
+              const next = !tgEnabled;
+              setTgEnabled(next);
+              void flushAutosaveImmediate({ tgEnabled: next });
+            }}
           >
             {tgEnabled ? "启用" : "关闭"}
           </button>
@@ -2462,8 +2985,12 @@ export function SettingsViewPanel({
               placeholder={
                 bootstrap.settings.notifications.telegram.configured ? "••••••••••••••••" : ""
               }
-              value={tgBotToken}
-              onChange={(e) => setTgBotToken(e.target.value)}
+              value={tgBotTokenInput}
+              onChange={(e) => {
+                const value = e.target.value;
+                setTgBotTokenInput(value);
+                scheduleAutosave({ tgBotTokenInput: value });
+              }}
             />
           </div>
         </div>
@@ -2471,7 +2998,14 @@ export function SettingsViewPanel({
         <div className="settings-row" style={{ marginTop: "16px" }}>
           <div>Target（chat id 或频道）</div>
           <div className="pill">
-            <input value={tgTarget} onChange={(e) => setTgTarget(e.target.value)} />
+            <input
+              value={tgTargetInput}
+              onChange={(e) => {
+                const value = e.target.value;
+                setTgTargetInput(value);
+                scheduleAutosave({ tgTargetInput: value });
+              }}
+            />
           </div>
         </div>
 
@@ -2490,8 +3024,8 @@ export function SettingsViewPanel({
                   method: "POST",
                   headers: { "content-type": "application/json" },
                   body: JSON.stringify({
-                    botToken: tgBotToken.trim() ? tgBotToken.trim() : null,
-                    target: tgTarget.trim() ? tgTarget.trim() : null,
+                    botToken: tgBotTokenInput.trim() ? tgBotTokenInput.trim() : null,
+                    target: tgTargetInput.trim() ? tgTargetInput.trim() : null,
                     text: null,
                   }),
                 });
@@ -2517,7 +3051,11 @@ export function SettingsViewPanel({
             type="button"
             className={`pill sm center ${wpEnabled ? "on" : ""}`}
             style={{ width: "92px" }}
-            onClick={() => setWpEnabled((v) => !v)}
+            onClick={() => {
+              const next = !wpEnabled;
+              setWpEnabled(next);
+              void flushAutosaveImmediate({ wpEnabled: next });
+            }}
           >
             {wpEnabled ? "启用" : "关闭"}
           </button>
@@ -2546,24 +3084,10 @@ export function SettingsViewPanel({
               setWpStatus(null);
               try {
                 setWpEnabled(true);
-                await onSave({
-                  poll: { intervalMinutes, jitterPct },
-                  siteBaseUrl: siteBaseUrl.trim() ? siteBaseUrl.trim() : null,
-                  catalogRefresh: {
-                    autoIntervalHours: autoRefreshEnabled ? autoIntervalHours : null,
-                  },
-                  monitoringEvents: { listedEnabled, delistedEnabled },
-                  notifications: {
-                    telegram: {
-                      enabled: tgEnabled,
-                      configured: false,
-                      target: tgTarget.trim() || undefined,
-                    },
-                    webPush: { enabled: true },
-                  },
-                  telegramBotToken: tgBotToken.trim() ? tgBotToken.trim() : null,
-                });
-                setTgBotToken("");
+                const saveResult = await flushAutosaveImmediate({ wpEnabled: true });
+                if (saveResult.requested && !saveResult.saved) {
+                  throw new Error("设置保存失败，无法启用推送");
+                }
 
                 const perm = await Notification.requestPermission();
                 if (perm !== "granted") {
@@ -2674,39 +3198,6 @@ export function SettingsViewPanel({
             }}
           >
             {wpTestPending ? "测试中…" : "测试 Web Push"}
-          </button>
-
-          <button
-            type="button"
-            className="pill on center btn"
-            disabled={saving}
-            onClick={async () => {
-              setSaving(true);
-              try {
-                await onSave({
-                  poll: { intervalMinutes, jitterPct },
-                  siteBaseUrl: siteBaseUrl.trim() ? siteBaseUrl.trim() : null,
-                  catalogRefresh: {
-                    autoIntervalHours: autoRefreshEnabled ? autoIntervalHours : null,
-                  },
-                  monitoringEvents: { listedEnabled, delistedEnabled },
-                  notifications: {
-                    telegram: {
-                      enabled: tgEnabled,
-                      configured: false,
-                      target: tgTarget.trim() || undefined,
-                    },
-                    webPush: { enabled: wpEnabled },
-                  },
-                  telegramBotToken: tgBotToken.trim() ? tgBotToken.trim() : null,
-                });
-                setTgBotToken("");
-              } finally {
-                setSaving(false);
-              }
-            }}
-          >
-            保存设置
           </button>
         </div>
       </div>
