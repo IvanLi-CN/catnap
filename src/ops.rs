@@ -1608,6 +1608,8 @@ fn upsert_region_notice_in_snapshot(
     gid: Option<&str>,
     notice: Option<&str>,
 ) {
+    snap.region_notice_initialized_keys
+        .insert(crate::upstream::catalog_region_key(fid, gid));
     snap.region_notices
         .retain(|n| !(n.country_id == fid && n.region_id.as_deref() == gid));
     let Some(text) = notice.map(str::trim).filter(|v| !v.is_empty()) else {

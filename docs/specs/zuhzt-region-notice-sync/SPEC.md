@@ -83,7 +83,7 @@
 - [x] M2: 完成上游“可用区域说明”解析并接入抓取链路。
 - [x] M3: 完成产品页/监控页分组级说明展示，移除固定无效文案。
 - [x] M4: 补齐测试与 Storybook fixture 并通过质量门禁。
-- [ ] M5: fast-track 收口（PR + checks + review-loop）。
+- [x] M5: fast-track 收口（PR + checks + review-loop）。
 
 ## 风险 / 假设
 
@@ -94,3 +94,4 @@
 
 - 2026-03-05: 初始化规格，冻结范围、接口契约与验收标准。
 - 2026-03-05: 完成后端解析与 API 透出、前端分组说明渲染、相关测试与 Storybook fixture 更新。
+- 2026-03-05: 完成 review-loop 收敛修复（解析标题变体、按分组初始化 cache bypass、冷启动 notice 回填）并进入 PR 收口阶段。

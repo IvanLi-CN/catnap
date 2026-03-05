@@ -1,7 +1,7 @@
 use crate::models::{Country, Inventory, Money, Region, RegionNotice, Spec};
 use scraper::{ElementRef, Html, Selector};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use tokio::sync::Mutex;
@@ -11,6 +11,7 @@ pub struct CatalogSnapshot {
     pub countries: Vec<Country>,
     pub regions: Vec<Region>,
     pub region_notices: Vec<RegionNotice>,
+    pub region_notice_initialized_keys: HashSet<String>,
     pub configs: Vec<ConfigBase>,
     pub fetched_at: String,
     pub source_url: String,
@@ -38,6 +39,7 @@ impl CatalogSnapshot {
             countries: Vec::new(),
             regions: Vec::new(),
             region_notices: Vec::new(),
+            region_notice_initialized_keys: HashSet::new(),
             configs: Vec::new(),
             fetched_at: now_rfc3339(),
             source_url,
@@ -115,6 +117,7 @@ impl UpstreamClient {
 
         let mut regions = Vec::new();
         let mut region_notices = BTreeMap::<(String, Option<String>), String>::new();
+        let mut region_notice_initialized_keys = HashSet::new();
         let mut configs = Vec::new();
 
         // Keep concurrency low to avoid hammering upstream.
@@ -124,6 +127,7 @@ impl UpstreamClient {
             let fid_html = self.fetch_html(&fid_url).await?;
             let mut fid_regions = parse_regions(fid, &fid_html);
             if fid_regions.is_empty() {
+                region_notice_initialized_keys.insert(catalog_region_key(fid, None));
                 // Some pages may not have a region selector.
                 if let Some(text) = parse_region_notice(&fid_html) {
                     upsert_region_notice(&mut region_notices, fid, None, &text);
@@ -139,6 +143,7 @@ impl UpstreamClient {
                 let gid = &r.id;
                 let gid_url = format!("{}?fid={fid}&gid={gid}", self.cart_url);
                 let gid_html = self.fetch_html(&gid_url).await?;
+                region_notice_initialized_keys.insert(catalog_region_key(fid, Some(gid)));
                 if let Some(text) = parse_region_notice(&gid_html) {
                     upsert_region_notice(&mut region_notices, fid, Some(gid), &text);
                 }
@@ -167,6 +172,7 @@ impl UpstreamClient {
                     text,
                 })
                 .collect(),
+            region_notice_initialized_keys,
             configs,
             fetched_at,
             source_url: self.cart_url.clone(),
@@ -375,6 +381,10 @@ fn extract_query_number(s: &str, key: &str) -> Option<String> {
         start = after;
     }
     None
+}
+
+pub fn catalog_region_key(fid: &str, gid: Option<&str>) -> String {
+    format!("{fid}:{}", gid.unwrap_or("0"))
 }
 
 pub fn parse_countries(html: &str) -> Vec<Country> {
@@ -624,9 +634,7 @@ fn is_region_title_only(s: &str) -> bool {
         .collect::<String>();
 
     let normalized = compact
-        .trim_start_matches('📍')
-        .trim_start_matches(':')
-        .trim_start_matches('：')
+        .trim_matches(|ch| matches!(ch, '📍' | ':' | '：'))
         .trim();
     normalized == "可用区域" || normalized == "可用區域"
 }
@@ -832,6 +840,20 @@ mod tests {
           <div class="secondgroup_box mb-2 flex-column p-2">
             <div class="secondgroup_box_area fs-22 ml-3 mt-2 pl-1 w-100 yy-dtjbt-text">
               📍可用区域
+            </div>
+          </div>
+        </body></html>
+        "#;
+        assert_eq!(parse_region_notice(html), None);
+    }
+
+    #[test]
+    fn parse_region_notice_returns_none_when_only_title_with_trailing_colon_exists() {
+        let html = r#"
+        <html><body>
+          <div class="secondgroup_box mb-2 flex-column p-2">
+            <div class="secondgroup_box_area fs-22 ml-3 mt-2 pl-1 w-100 yy-dtjbt-text">
+              📍可用区域：
             </div>
           </div>
         </body></html>

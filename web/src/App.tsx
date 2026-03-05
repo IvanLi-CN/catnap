@@ -615,6 +615,7 @@ export function App() {
   });
   const lastTerminalJobIdRef = useRef<string | null>(null);
   const orderGuardReqSeqRef = useRef<number>(0);
+  const catalogBackfillPendingRef = useRef<boolean>(false);
 
   const applyProductsResponse = useCallback((res: ProductsResponse) => {
     setBootstrap((prev) =>
@@ -767,10 +768,17 @@ export function App() {
 
   useEffect(() => {
     if (!hasBootstrap) return;
-    if (catalogCountriesLen > 0 && catalogRegionsLen > 0) return;
+    const missingCatalogTopology = catalogCountriesLen === 0 || catalogRegionsLen === 0;
+    if (missingCatalogTopology) {
+      catalogBackfillPendingRef.current = true;
+    }
+    if (!missingCatalogTopology && !catalogBackfillPendingRef.current) {
+      return;
+    }
 
     let cancelled = false;
     let attempts = 0;
+    let noticeGraceRetriesRemaining = 1;
     let timeoutId: number | null = null;
 
     const schedule = (delayMs: number) => {
@@ -792,16 +800,24 @@ export function App() {
 
           const hasCountries = prevCatalog.countries.length > 0;
           const hasRegions = prevCatalog.regions.length > 0;
-          if (hasCountries && hasRegions) return prev;
+          const hasRegionNotices = prevCatalog.regionNotices.length > 0;
+          if (hasCountries && hasRegions && hasRegionNotices) return prev;
 
           const canBackfillCountries = !hasCountries && jsonCatalog.countries.length > 0;
           const canBackfillRegions = !hasRegions && jsonCatalog.regions.length > 0;
-          if (!canBackfillCountries && !canBackfillRegions) return prev;
+          const canBackfillRegionNotices =
+            !hasRegionNotices && jsonCatalog.regionNotices.length > 0;
+          if (!canBackfillCountries && !canBackfillRegions && !canBackfillRegionNotices) {
+            return prev;
+          }
 
           const nextCountries = canBackfillCountries
             ? jsonCatalog.countries
             : prevCatalog.countries;
           const nextRegions = canBackfillRegions ? jsonCatalog.regions : prevCatalog.regions;
+          const nextRegionNotices = canBackfillRegionNotices
+            ? jsonCatalog.regionNotices
+            : prevCatalog.regionNotices;
 
           return {
             ...prev,
@@ -809,15 +825,38 @@ export function App() {
               ...prevCatalog,
               countries: nextCountries,
               regions: nextRegions,
+              regionNotices: nextRegionNotices,
             },
           };
         });
 
-        const ok = json.catalog.countries.length > 0 && json.catalog.regions.length > 0;
-        if (!ok && attempts < 6) schedule(900 + attempts * 250);
+        const topologyReady = json.catalog.countries.length > 0 && json.catalog.regions.length > 0;
+        const noticesReady = json.catalog.regionNotices.length > 0;
+        const reachedAttemptCap = attempts >= 6;
+        if (!topologyReady && !reachedAttemptCap) {
+          schedule(900 + attempts * 250);
+          return;
+        }
+
+        if (
+          topologyReady &&
+          !noticesReady &&
+          noticeGraceRetriesRemaining > 0 &&
+          !reachedAttemptCap
+        ) {
+          noticeGraceRetriesRemaining -= 1;
+          schedule(900 + attempts * 250);
+          return;
+        }
+
+        catalogBackfillPendingRef.current = false;
       } catch {
         if (cancelled) return;
-        if (attempts < 6) schedule(900 + attempts * 250);
+        if (attempts < 6) {
+          schedule(900 + attempts * 250);
+        } else {
+          catalogBackfillPendingRef.current = false;
+        }
       }
     }
 

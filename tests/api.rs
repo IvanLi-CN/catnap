@@ -83,6 +83,7 @@ async fn make_app_with_config(cfg: RuntimeConfig) -> TestApp {
             region_id: Some("56".to_string()),
             text: "HKG Premium 仅限合规使用，禁止滥用。".to_string(),
         }],
+        region_notice_initialized_keys: std::collections::HashSet::from([String::from("2:56")]),
         configs: configs.clone(),
         fetched_at: "2026-01-19T00:00:00Z".to_string(),
         source_url: cfg.upstream_cart_url.clone(),
