@@ -1159,9 +1159,11 @@ select {
 }
 
 .settings-input-wrap {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
+  min-width: 0;
 }
 
 .settings-site-controls {
@@ -1180,13 +1182,15 @@ select {
 }
 
 .settings-error-bubble {
-  position: relative;
-  z-index: 1;
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 24;
   display: inline-flex;
   align-items: flex-start;
   gap: 8px;
-  margin-top: 8px;
-  max-width: min(460px, 100%);
+  width: max-content;
+  max-width: min(460px, calc(100vw - 36px));
   padding: 10px 12px;
   border-radius: var(--r10);
   border: 1px solid var(--pill-err-border);
@@ -1197,19 +1201,31 @@ select {
   line-height: 1.35;
   overflow-wrap: anywhere;
   white-space: normal;
+  pointer-events: none;
 }
 
 .settings-error-bubble::before {
   content: "";
   position: absolute;
-  top: -7px;
+  top: -9px;
   left: 18px;
-  width: 12px;
-  height: 12px;
-  background: var(--pill-err);
-  border-top: 1px solid var(--pill-err-border);
-  border-left: 1px solid var(--pill-err-border);
-  transform: rotate(45deg);
+  width: 0;
+  height: 0;
+  border-left: 8px solid transparent;
+  border-right: 8px solid transparent;
+  border-bottom: 8px solid var(--pill-err-border);
+}
+
+.settings-error-bubble::after {
+  content: "";
+  position: absolute;
+  top: -8px;
+  left: 19px;
+  width: 0;
+  height: 0;
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+  border-bottom: 7px solid var(--pill-err);
 }
 
 .settings-error-badge {
@@ -2021,13 +2037,22 @@ select {
   }
 
   .settings-error-bubble {
-    max-width: min(320px, 92vw);
-    margin-top: 8px;
+    max-width: min(320px, calc(100vw - 28px));
     white-space: normal;
   }
 
   .settings-error-bubble::before {
     left: 14px;
+  }
+
+  .settings-error-bubble::after {
+    left: 15px;
+  }
+
+  .controls.settings-site-controls > button.pill.settings-site-autofill {
+    width: 160px !important;
+    align-self: flex-end;
+    margin-left: auto;
   }
 
   .settings-grid > :nth-child(3n) {

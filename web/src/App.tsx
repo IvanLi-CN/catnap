@@ -2856,7 +2856,7 @@ export function SettingsViewPanel({
           </div>
           <button
             type="button"
-            className="pill warn center"
+            className="pill warn center settings-site-autofill"
             style={{ width: "160px" }}
             onClick={() => {
               const value = window.location.origin;
