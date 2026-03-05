@@ -2,6 +2,7 @@ import type { Meta, StoryObj } from "@storybook/react";
 import type { ComponentProps } from "react";
 import { MonitoringView } from "../../App";
 import { countriesById, demoBootstrap, demoNowMs, regionsById } from "../fixtures";
+import { ResponsivePageStory, expectResponsiveBreakpoints } from "./responsivePageHelpers";
 
 const meta = {
   title: "Pages/MonitoringView",
@@ -44,4 +45,31 @@ export const Default: Story = {
 export const WithSyncAlert: Story = {
   args: { syncAlert: "同步失败：上游超时（demo）" },
   render: (args) => <MonitoringViewDemo {...args} />,
+};
+
+export const ResponsiveAllBreakpoints: Story = {
+  render: (args) => {
+    const mergedArgs = {
+      ...(meta.args ?? {}),
+      ...(args ?? {}),
+    } as ComponentProps<typeof MonitoringView>;
+
+    return (
+      <ResponsivePageStory
+        route="monitoring"
+        title="Catnap • 库存监控"
+        subtitle="使用顶部 Viewport 选择断点进行验收"
+        actions={
+          <>
+            <span className="pill sm">最近刷新：1 分钟前</span>
+            <span className="pill sm">立即刷新</span>
+          </>
+        }
+        renderPage={() => <MonitoringView {...mergedArgs} />}
+      />
+    );
+  },
+  play: async ({ canvasElement }) => {
+    await expectResponsiveBreakpoints(canvasElement, "page-monitoring");
+  },
 };

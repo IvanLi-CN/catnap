@@ -1,0 +1,1304 @@
+{
+  "generatedAt": "2026-03-04T15:30:14.369Z",
+  "method": "responsive-page-frame (same strategy as story play assertions)",
+  "total": 35,
+  "passed": 35,
+  "failed": 0,
+  "scenarios": [
+    {
+      "story": "monitoring",
+      "storyId": "pages-monitoringview--responsive-all-breakpoints",
+      "breakpoint": "bp-360",
+      "pass": true,
+      "checks": {
+        "frameNoOverflow": true,
+        "appNoOverflow": true,
+        "contentNoOverflow": true,
+        "topbarVisible": true,
+        "pageVisible": true,
+        "contentVisible": true,
+        "navToggleVisible": true,
+        "desktopSidebarVisible": false,
+        "drawerOpenCloseOk": true,
+        "drawerWidthOk": true,
+        "appWidthMatch": true
+      },
+      "metrics": {
+        "frame": {
+          "cw": 360,
+          "sw": 360
+        },
+        "app": {
+          "cw": 360,
+          "sw": 360
+        },
+        "content": {
+          "cw": 348,
+          "sw": 348
+        },
+        "page": {
+          "cw": 348,
+          "sw": 348
+        }
+      }
+    },
+    {
+      "story": "monitoring",
+      "storyId": "pages-monitoringview--responsive-all-breakpoints",
+      "breakpoint": "bp-480",
+      "pass": true,
+      "checks": {
+        "frameNoOverflow": true,
+        "appNoOverflow": true,
+        "contentNoOverflow": true,
+        "topbarVisible": true,
+        "pageVisible": true,
+        "contentVisible": true,
+        "navToggleVisible": true,
+        "desktopSidebarVisible": false,
+        "drawerOpenCloseOk": true,
+        "drawerWidthOk": true,
+        "appWidthMatch": true
+      },
+      "metrics": {
+        "frame": {
+          "cw": 480,
+          "sw": 480
+        },
+        "app": {
+          "cw": 480,
+          "sw": 480
+        },
+        "content": {
+          "cw": 460,
+          "sw": 460
+        },
+        "page": {
+          "cw": 460,
+          "sw": 461
+        }
+      }
+    },
+    {
+      "story": "monitoring",
+      "storyId": "pages-monitoringview--responsive-all-breakpoints",
+      "breakpoint": "bp-768",
+      "pass": true,
+      "checks": {
+        "frameNoOverflow": true,
+        "appNoOverflow": true,
+        "contentNoOverflow": true,
+        "topbarVisible": true,
+        "pageVisible": true,
+        "contentVisible": true,
+        "navToggleVisible": true,
+        "desktopSidebarVisible": false,
+        "drawerOpenCloseOk": true,
+        "drawerWidthOk": true,
+        "appWidthMatch": true
+      },
+      "metrics": {
+        "frame": {
+          "cw": 768,
+          "sw": 768
+        },
+        "app": {
+          "cw": 768,
+          "sw": 768
+        },
+        "content": {
+          "cw": 738,
+          "sw": 738
+        },
+        "page": {
+          "cw": 710,
+          "sw": 710
+        }
+      }
+    },
+    {
+      "story": "monitoring",
+      "storyId": "pages-monitoringview--responsive-all-breakpoints",
+      "breakpoint": "bp-1024",
+      "pass": true,
+      "checks": {
+        "frameNoOverflow": true,
+        "appNoOverflow": true,
+        "contentNoOverflow": true,
+        "topbarVisible": true,
+        "pageVisible": true,
+        "contentVisible": true,
+        "navToggleVisible": false,
+        "desktopSidebarVisible": true,
+        "drawerOpenCloseOk": true,
+        "drawerWidthOk": true,
+        "appWidthMatch": true
+      },
+      "metrics": {
+        "frame": {
+          "cw": 1024,
+          "sw": 1024
+        },
+        "app": {
+          "cw": 1024,
+          "sw": 1024
+        },
+        "content": {
+          "cw": 730,
+          "sw": 730
+        },
+        "page": {
+          "cw": 682,
+          "sw": 682
+        }
+      }
+    },
+    {
+      "story": "monitoring",
+      "storyId": "pages-monitoringview--responsive-all-breakpoints",
+      "breakpoint": "bp-1220",
+      "pass": true,
+      "checks": {
+        "frameNoOverflow": true,
+        "appNoOverflow": true,
+        "contentNoOverflow": true,
+        "topbarVisible": true,
+        "pageVisible": true,
+        "contentVisible": true,
+        "navToggleVisible": false,
+        "desktopSidebarVisible": true,
+        "drawerOpenCloseOk": true,
+        "drawerWidthOk": true,
+        "appWidthMatch": true
+      },
+      "metrics": {
+        "frame": {
+          "cw": 1220,
+          "sw": 1220
+        },
+        "app": {
+          "cw": 1220,
+          "sw": 1220
+        },
+        "content": {
+          "cw": 906,
+          "sw": 906
+        },
+        "page": {
+          "cw": 858,
+          "sw": 858
+        }
+      }
+    },
+    {
+      "story": "monitoring",
+      "storyId": "pages-monitoringview--responsive-all-breakpoints",
+      "breakpoint": "bp-1440",
+      "pass": true,
+      "checks": {
+        "frameNoOverflow": true,
+        "appNoOverflow": true,
+        "contentNoOverflow": true,
+        "topbarVisible": true,
+        "pageVisible": true,
+        "contentVisible": true,
+        "navToggleVisible": false,
+        "desktopSidebarVisible": true,
+        "drawerOpenCloseOk": true,
+        "drawerWidthOk": true,
+        "appWidthMatch": true
+      },
+      "metrics": {
+        "frame": {
+          "cw": 1440,
+          "sw": 1440
+        },
+        "app": {
+          "cw": 1440,
+          "sw": 1440
+        },
+        "content": {
+          "cw": 1126,
+          "sw": 1126
+        },
+        "page": {
+          "cw": 1078,
+          "sw": 1078
+        }
+      }
+    },
+    {
+      "story": "monitoring",
+      "storyId": "pages-monitoringview--responsive-all-breakpoints",
+      "breakpoint": "bp-1680",
+      "pass": true,
+      "checks": {
+        "frameNoOverflow": true,
+        "appNoOverflow": true,
+        "contentNoOverflow": true,
+        "topbarVisible": true,
+        "pageVisible": true,
+        "contentVisible": true,
+        "navToggleVisible": false,
+        "desktopSidebarVisible": true,
+        "drawerOpenCloseOk": true,
+        "drawerWidthOk": true,
+        "appWidthMatch": true
+      },
+      "metrics": {
+        "frame": {
+          "cw": 1680,
+          "sw": 1680
+        },
+        "app": {
+          "cw": 1680,
+          "sw": 1680
+        },
+        "content": {
+          "cw": 1366,
+          "sw": 1366
+        },
+        "page": {
+          "cw": 1318,
+          "sw": 1318
+        }
+      }
+    },
+    {
+      "story": "products",
+      "storyId": "pages-productsview--responsive-all-breakpoints",
+      "breakpoint": "bp-360",
+      "pass": true,
+      "checks": {
+        "frameNoOverflow": true,
+        "appNoOverflow": true,
+        "contentNoOverflow": true,
+        "topbarVisible": true,
+        "pageVisible": true,
+        "contentVisible": true,
+        "navToggleVisible": true,
+        "desktopSidebarVisible": false,
+        "drawerOpenCloseOk": true,
+        "drawerWidthOk": true,
+        "appWidthMatch": true
+      },
+      "metrics": {
+        "frame": {
+          "cw": 360,
+          "sw": 360
+        },
+        "app": {
+          "cw": 360,
+          "sw": 360
+        },
+        "content": {
+          "cw": 348,
+          "sw": 348
+        },
+        "page": {
+          "cw": 348,
+          "sw": 348
+        }
+      }
+    },
+    {
+      "story": "products",
+      "storyId": "pages-productsview--responsive-all-breakpoints",
+      "breakpoint": "bp-480",
+      "pass": true,
+      "checks": {
+        "frameNoOverflow": true,
+        "appNoOverflow": true,
+        "contentNoOverflow": true,
+        "topbarVisible": true,
+        "pageVisible": true,
+        "contentVisible": true,
+        "navToggleVisible": true,
+        "desktopSidebarVisible": false,
+        "drawerOpenCloseOk": true,
+        "drawerWidthOk": true,
+        "appWidthMatch": true
+      },
+      "metrics": {
+        "frame": {
+          "cw": 480,
+          "sw": 480
+        },
+        "app": {
+          "cw": 480,
+          "sw": 480
+        },
+        "content": {
+          "cw": 460,
+          "sw": 460
+        },
+        "page": {
+          "cw": 460,
+          "sw": 461
+        }
+      }
+    },
+    {
+      "story": "products",
+      "storyId": "pages-productsview--responsive-all-breakpoints",
+      "breakpoint": "bp-768",
+      "pass": true,
+      "checks": {
+        "frameNoOverflow": true,
+        "appNoOverflow": true,
+        "contentNoOverflow": true,
+        "topbarVisible": true,
+        "pageVisible": true,
+        "contentVisible": true,
+        "navToggleVisible": true,
+        "desktopSidebarVisible": false,
+        "drawerOpenCloseOk": true,
+        "drawerWidthOk": true,
+        "appWidthMatch": true
+      },
+      "metrics": {
+        "frame": {
+          "cw": 768,
+          "sw": 768
+        },
+        "app": {
+          "cw": 768,
+          "sw": 768
+        },
+        "content": {
+          "cw": 738,
+          "sw": 738
+        },
+        "page": {
+          "cw": 710,
+          "sw": 710
+        }
+      }
+    },
+    {
+      "story": "products",
+      "storyId": "pages-productsview--responsive-all-breakpoints",
+      "breakpoint": "bp-1024",
+      "pass": true,
+      "checks": {
+        "frameNoOverflow": true,
+        "appNoOverflow": true,
+        "contentNoOverflow": true,
+        "topbarVisible": true,
+        "pageVisible": true,
+        "contentVisible": true,
+        "navToggleVisible": false,
+        "desktopSidebarVisible": true,
+        "drawerOpenCloseOk": true,
+        "drawerWidthOk": true,
+        "appWidthMatch": true
+      },
+      "metrics": {
+        "frame": {
+          "cw": 1024,
+          "sw": 1024
+        },
+        "app": {
+          "cw": 1024,
+          "sw": 1024
+        },
+        "content": {
+          "cw": 730,
+          "sw": 730
+        },
+        "page": {
+          "cw": 682,
+          "sw": 682
+        }
+      }
+    },
+    {
+      "story": "products",
+      "storyId": "pages-productsview--responsive-all-breakpoints",
+      "breakpoint": "bp-1220",
+      "pass": true,
+      "checks": {
+        "frameNoOverflow": true,
+        "appNoOverflow": true,
+        "contentNoOverflow": true,
+        "topbarVisible": true,
+        "pageVisible": true,
+        "contentVisible": true,
+        "navToggleVisible": false,
+        "desktopSidebarVisible": true,
+        "drawerOpenCloseOk": true,
+        "drawerWidthOk": true,
+        "appWidthMatch": true
+      },
+      "metrics": {
+        "frame": {
+          "cw": 1220,
+          "sw": 1220
+        },
+        "app": {
+          "cw": 1220,
+          "sw": 1220
+        },
+        "content": {
+          "cw": 906,
+          "sw": 906
+        },
+        "page": {
+          "cw": 858,
+          "sw": 858
+        }
+      }
+    },
+    {
+      "story": "products",
+      "storyId": "pages-productsview--responsive-all-breakpoints",
+      "breakpoint": "bp-1440",
+      "pass": true,
+      "checks": {
+        "frameNoOverflow": true,
+        "appNoOverflow": true,
+        "contentNoOverflow": true,
+        "topbarVisible": true,
+        "pageVisible": true,
+        "contentVisible": true,
+        "navToggleVisible": false,
+        "desktopSidebarVisible": true,
+        "drawerOpenCloseOk": true,
+        "drawerWidthOk": true,
+        "appWidthMatch": true
+      },
+      "metrics": {
+        "frame": {
+          "cw": 1440,
+          "sw": 1440
+        },
+        "app": {
+          "cw": 1440,
+          "sw": 1440
+        },
+        "content": {
+          "cw": 1126,
+          "sw": 1126
+        },
+        "page": {
+          "cw": 1078,
+          "sw": 1078
+        }
+      }
+    },
+    {
+      "story": "products",
+      "storyId": "pages-productsview--responsive-all-breakpoints",
+      "breakpoint": "bp-1680",
+      "pass": true,
+      "checks": {
+        "frameNoOverflow": true,
+        "appNoOverflow": true,
+        "contentNoOverflow": true,
+        "topbarVisible": true,
+        "pageVisible": true,
+        "contentVisible": true,
+        "navToggleVisible": false,
+        "desktopSidebarVisible": true,
+        "drawerOpenCloseOk": true,
+        "drawerWidthOk": true,
+        "appWidthMatch": true
+      },
+      "metrics": {
+        "frame": {
+          "cw": 1680,
+          "sw": 1680
+        },
+        "app": {
+          "cw": 1680,
+          "sw": 1680
+        },
+        "content": {
+          "cw": 1366,
+          "sw": 1366
+        },
+        "page": {
+          "cw": 1318,
+          "sw": 1318
+        }
+      }
+    },
+    {
+      "story": "settings",
+      "storyId": "pages-settingsviewpanel--responsive-all-breakpoints",
+      "breakpoint": "bp-360",
+      "pass": true,
+      "checks": {
+        "frameNoOverflow": true,
+        "appNoOverflow": true,
+        "contentNoOverflow": true,
+        "topbarVisible": true,
+        "pageVisible": true,
+        "contentVisible": true,
+        "navToggleVisible": true,
+        "desktopSidebarVisible": false,
+        "drawerOpenCloseOk": true,
+        "drawerWidthOk": true,
+        "appWidthMatch": true
+      },
+      "metrics": {
+        "frame": {
+          "cw": 360,
+          "sw": 360
+        },
+        "app": {
+          "cw": 360,
+          "sw": 360
+        },
+        "content": {
+          "cw": 348,
+          "sw": 348
+        },
+        "page": {
+          "cw": 348,
+          "sw": 348
+        }
+      }
+    },
+    {
+      "story": "settings",
+      "storyId": "pages-settingsviewpanel--responsive-all-breakpoints",
+      "breakpoint": "bp-480",
+      "pass": true,
+      "checks": {
+        "frameNoOverflow": true,
+        "appNoOverflow": true,
+        "contentNoOverflow": true,
+        "topbarVisible": true,
+        "pageVisible": true,
+        "contentVisible": true,
+        "navToggleVisible": true,
+        "desktopSidebarVisible": false,
+        "drawerOpenCloseOk": true,
+        "drawerWidthOk": true,
+        "appWidthMatch": true
+      },
+      "metrics": {
+        "frame": {
+          "cw": 480,
+          "sw": 480
+        },
+        "app": {
+          "cw": 480,
+          "sw": 480
+        },
+        "content": {
+          "cw": 460,
+          "sw": 460
+        },
+        "page": {
+          "cw": 460,
+          "sw": 460
+        }
+      }
+    },
+    {
+      "story": "settings",
+      "storyId": "pages-settingsviewpanel--responsive-all-breakpoints",
+      "breakpoint": "bp-768",
+      "pass": true,
+      "checks": {
+        "frameNoOverflow": true,
+        "appNoOverflow": true,
+        "contentNoOverflow": true,
+        "topbarVisible": true,
+        "pageVisible": true,
+        "contentVisible": true,
+        "navToggleVisible": true,
+        "desktopSidebarVisible": false,
+        "drawerOpenCloseOk": true,
+        "drawerWidthOk": true,
+        "appWidthMatch": true
+      },
+      "metrics": {
+        "frame": {
+          "cw": 768,
+          "sw": 768
+        },
+        "app": {
+          "cw": 768,
+          "sw": 768
+        },
+        "content": {
+          "cw": 738,
+          "sw": 738
+        },
+        "page": {
+          "cw": 710,
+          "sw": 710
+        }
+      }
+    },
+    {
+      "story": "settings",
+      "storyId": "pages-settingsviewpanel--responsive-all-breakpoints",
+      "breakpoint": "bp-1024",
+      "pass": true,
+      "checks": {
+        "frameNoOverflow": true,
+        "appNoOverflow": true,
+        "contentNoOverflow": true,
+        "topbarVisible": true,
+        "pageVisible": true,
+        "contentVisible": true,
+        "navToggleVisible": false,
+        "desktopSidebarVisible": true,
+        "drawerOpenCloseOk": true,
+        "drawerWidthOk": true,
+        "appWidthMatch": true
+      },
+      "metrics": {
+        "frame": {
+          "cw": 1024,
+          "sw": 1024
+        },
+        "app": {
+          "cw": 1024,
+          "sw": 1024
+        },
+        "content": {
+          "cw": 730,
+          "sw": 730
+        },
+        "page": {
+          "cw": 682,
+          "sw": 682
+        }
+      }
+    },
+    {
+      "story": "settings",
+      "storyId": "pages-settingsviewpanel--responsive-all-breakpoints",
+      "breakpoint": "bp-1220",
+      "pass": true,
+      "checks": {
+        "frameNoOverflow": true,
+        "appNoOverflow": true,
+        "contentNoOverflow": true,
+        "topbarVisible": true,
+        "pageVisible": true,
+        "contentVisible": true,
+        "navToggleVisible": false,
+        "desktopSidebarVisible": true,
+        "drawerOpenCloseOk": true,
+        "drawerWidthOk": true,
+        "appWidthMatch": true
+      },
+      "metrics": {
+        "frame": {
+          "cw": 1220,
+          "sw": 1220
+        },
+        "app": {
+          "cw": 1220,
+          "sw": 1220
+        },
+        "content": {
+          "cw": 906,
+          "sw": 906
+        },
+        "page": {
+          "cw": 858,
+          "sw": 858
+        }
+      }
+    },
+    {
+      "story": "settings",
+      "storyId": "pages-settingsviewpanel--responsive-all-breakpoints",
+      "breakpoint": "bp-1440",
+      "pass": true,
+      "checks": {
+        "frameNoOverflow": true,
+        "appNoOverflow": true,
+        "contentNoOverflow": true,
+        "topbarVisible": true,
+        "pageVisible": true,
+        "contentVisible": true,
+        "navToggleVisible": false,
+        "desktopSidebarVisible": true,
+        "drawerOpenCloseOk": true,
+        "drawerWidthOk": true,
+        "appWidthMatch": true
+      },
+      "metrics": {
+        "frame": {
+          "cw": 1440,
+          "sw": 1440
+        },
+        "app": {
+          "cw": 1440,
+          "sw": 1440
+        },
+        "content": {
+          "cw": 1126,
+          "sw": 1126
+        },
+        "page": {
+          "cw": 1078,
+          "sw": 1078
+        }
+      }
+    },
+    {
+      "story": "settings",
+      "storyId": "pages-settingsviewpanel--responsive-all-breakpoints",
+      "breakpoint": "bp-1680",
+      "pass": true,
+      "checks": {
+        "frameNoOverflow": true,
+        "appNoOverflow": true,
+        "contentNoOverflow": true,
+        "topbarVisible": true,
+        "pageVisible": true,
+        "contentVisible": true,
+        "navToggleVisible": false,
+        "desktopSidebarVisible": true,
+        "drawerOpenCloseOk": true,
+        "drawerWidthOk": true,
+        "appWidthMatch": true
+      },
+      "metrics": {
+        "frame": {
+          "cw": 1680,
+          "sw": 1680
+        },
+        "app": {
+          "cw": 1680,
+          "sw": 1680
+        },
+        "content": {
+          "cw": 1366,
+          "sw": 1366
+        },
+        "page": {
+          "cw": 1318,
+          "sw": 1318
+        }
+      }
+    },
+    {
+      "story": "logs",
+      "storyId": "pages-logsview--responsive-all-breakpoints",
+      "breakpoint": "bp-360",
+      "pass": true,
+      "checks": {
+        "frameNoOverflow": true,
+        "appNoOverflow": true,
+        "contentNoOverflow": true,
+        "topbarVisible": true,
+        "pageVisible": true,
+        "contentVisible": true,
+        "navToggleVisible": true,
+        "desktopSidebarVisible": false,
+        "drawerOpenCloseOk": true,
+        "drawerWidthOk": true,
+        "appWidthMatch": true
+      },
+      "metrics": {
+        "frame": {
+          "cw": 360,
+          "sw": 360
+        },
+        "app": {
+          "cw": 360,
+          "sw": 360
+        },
+        "content": {
+          "cw": 348,
+          "sw": 348
+        },
+        "page": {
+          "cw": 348,
+          "sw": 348
+        }
+      }
+    },
+    {
+      "story": "logs",
+      "storyId": "pages-logsview--responsive-all-breakpoints",
+      "breakpoint": "bp-480",
+      "pass": true,
+      "checks": {
+        "frameNoOverflow": true,
+        "appNoOverflow": true,
+        "contentNoOverflow": true,
+        "topbarVisible": true,
+        "pageVisible": true,
+        "contentVisible": true,
+        "navToggleVisible": true,
+        "desktopSidebarVisible": false,
+        "drawerOpenCloseOk": true,
+        "drawerWidthOk": true,
+        "appWidthMatch": true
+      },
+      "metrics": {
+        "frame": {
+          "cw": 480,
+          "sw": 480
+        },
+        "app": {
+          "cw": 480,
+          "sw": 480
+        },
+        "content": {
+          "cw": 460,
+          "sw": 460
+        },
+        "page": {
+          "cw": 460,
+          "sw": 461
+        }
+      }
+    },
+    {
+      "story": "logs",
+      "storyId": "pages-logsview--responsive-all-breakpoints",
+      "breakpoint": "bp-768",
+      "pass": true,
+      "checks": {
+        "frameNoOverflow": true,
+        "appNoOverflow": true,
+        "contentNoOverflow": true,
+        "topbarVisible": true,
+        "pageVisible": true,
+        "contentVisible": true,
+        "navToggleVisible": true,
+        "desktopSidebarVisible": false,
+        "drawerOpenCloseOk": true,
+        "drawerWidthOk": true,
+        "appWidthMatch": true
+      },
+      "metrics": {
+        "frame": {
+          "cw": 768,
+          "sw": 768
+        },
+        "app": {
+          "cw": 768,
+          "sw": 768
+        },
+        "content": {
+          "cw": 738,
+          "sw": 738
+        },
+        "page": {
+          "cw": 710,
+          "sw": 710
+        }
+      }
+    },
+    {
+      "story": "logs",
+      "storyId": "pages-logsview--responsive-all-breakpoints",
+      "breakpoint": "bp-1024",
+      "pass": true,
+      "checks": {
+        "frameNoOverflow": true,
+        "appNoOverflow": true,
+        "contentNoOverflow": true,
+        "topbarVisible": true,
+        "pageVisible": true,
+        "contentVisible": true,
+        "navToggleVisible": false,
+        "desktopSidebarVisible": true,
+        "drawerOpenCloseOk": true,
+        "drawerWidthOk": true,
+        "appWidthMatch": true
+      },
+      "metrics": {
+        "frame": {
+          "cw": 1024,
+          "sw": 1024
+        },
+        "app": {
+          "cw": 1024,
+          "sw": 1024
+        },
+        "content": {
+          "cw": 730,
+          "sw": 730
+        },
+        "page": {
+          "cw": 682,
+          "sw": 682
+        }
+      }
+    },
+    {
+      "story": "logs",
+      "storyId": "pages-logsview--responsive-all-breakpoints",
+      "breakpoint": "bp-1220",
+      "pass": true,
+      "checks": {
+        "frameNoOverflow": true,
+        "appNoOverflow": true,
+        "contentNoOverflow": true,
+        "topbarVisible": true,
+        "pageVisible": true,
+        "contentVisible": true,
+        "navToggleVisible": false,
+        "desktopSidebarVisible": true,
+        "drawerOpenCloseOk": true,
+        "drawerWidthOk": true,
+        "appWidthMatch": true
+      },
+      "metrics": {
+        "frame": {
+          "cw": 1220,
+          "sw": 1220
+        },
+        "app": {
+          "cw": 1220,
+          "sw": 1220
+        },
+        "content": {
+          "cw": 906,
+          "sw": 906
+        },
+        "page": {
+          "cw": 858,
+          "sw": 858
+        }
+      }
+    },
+    {
+      "story": "logs",
+      "storyId": "pages-logsview--responsive-all-breakpoints",
+      "breakpoint": "bp-1440",
+      "pass": true,
+      "checks": {
+        "frameNoOverflow": true,
+        "appNoOverflow": true,
+        "contentNoOverflow": true,
+        "topbarVisible": true,
+        "pageVisible": true,
+        "contentVisible": true,
+        "navToggleVisible": false,
+        "desktopSidebarVisible": true,
+        "drawerOpenCloseOk": true,
+        "drawerWidthOk": true,
+        "appWidthMatch": true
+      },
+      "metrics": {
+        "frame": {
+          "cw": 1440,
+          "sw": 1440
+        },
+        "app": {
+          "cw": 1440,
+          "sw": 1440
+        },
+        "content": {
+          "cw": 1126,
+          "sw": 1126
+        },
+        "page": {
+          "cw": 1078,
+          "sw": 1078
+        }
+      }
+    },
+    {
+      "story": "logs",
+      "storyId": "pages-logsview--responsive-all-breakpoints",
+      "breakpoint": "bp-1680",
+      "pass": true,
+      "checks": {
+        "frameNoOverflow": true,
+        "appNoOverflow": true,
+        "contentNoOverflow": true,
+        "topbarVisible": true,
+        "pageVisible": true,
+        "contentVisible": true,
+        "navToggleVisible": false,
+        "desktopSidebarVisible": true,
+        "drawerOpenCloseOk": true,
+        "drawerWidthOk": true,
+        "appWidthMatch": true
+      },
+      "metrics": {
+        "frame": {
+          "cw": 1680,
+          "sw": 1680
+        },
+        "app": {
+          "cw": 1680,
+          "sw": 1680
+        },
+        "content": {
+          "cw": 1366,
+          "sw": 1366
+        },
+        "page": {
+          "cw": 1318,
+          "sw": 1318
+        }
+      }
+    },
+    {
+      "story": "ops",
+      "storyId": "pages-opsview--responsive-all-breakpoints",
+      "breakpoint": "bp-360",
+      "pass": true,
+      "checks": {
+        "frameNoOverflow": true,
+        "appNoOverflow": true,
+        "contentNoOverflow": true,
+        "topbarVisible": true,
+        "pageVisible": true,
+        "contentVisible": true,
+        "navToggleVisible": true,
+        "desktopSidebarVisible": false,
+        "drawerOpenCloseOk": true,
+        "drawerWidthOk": true,
+        "appWidthMatch": true
+      },
+      "metrics": {
+        "frame": {
+          "cw": 360,
+          "sw": 360
+        },
+        "app": {
+          "cw": 360,
+          "sw": 360
+        },
+        "content": {
+          "cw": 348,
+          "sw": 348
+        },
+        "page": {
+          "cw": 348,
+          "sw": 348
+        }
+      }
+    },
+    {
+      "story": "ops",
+      "storyId": "pages-opsview--responsive-all-breakpoints",
+      "breakpoint": "bp-480",
+      "pass": true,
+      "checks": {
+        "frameNoOverflow": true,
+        "appNoOverflow": true,
+        "contentNoOverflow": true,
+        "topbarVisible": true,
+        "pageVisible": true,
+        "contentVisible": true,
+        "navToggleVisible": true,
+        "desktopSidebarVisible": false,
+        "drawerOpenCloseOk": true,
+        "drawerWidthOk": true,
+        "appWidthMatch": true
+      },
+      "metrics": {
+        "frame": {
+          "cw": 480,
+          "sw": 480
+        },
+        "app": {
+          "cw": 480,
+          "sw": 480
+        },
+        "content": {
+          "cw": 460,
+          "sw": 460
+        },
+        "page": {
+          "cw": 460,
+          "sw": 460
+        }
+      }
+    },
+    {
+      "story": "ops",
+      "storyId": "pages-opsview--responsive-all-breakpoints",
+      "breakpoint": "bp-768",
+      "pass": true,
+      "checks": {
+        "frameNoOverflow": true,
+        "appNoOverflow": true,
+        "contentNoOverflow": true,
+        "topbarVisible": true,
+        "pageVisible": true,
+        "contentVisible": true,
+        "navToggleVisible": true,
+        "desktopSidebarVisible": false,
+        "drawerOpenCloseOk": true,
+        "drawerWidthOk": true,
+        "appWidthMatch": true
+      },
+      "metrics": {
+        "frame": {
+          "cw": 768,
+          "sw": 768
+        },
+        "app": {
+          "cw": 768,
+          "sw": 768
+        },
+        "content": {
+          "cw": 738,
+          "sw": 738
+        },
+        "page": {
+          "cw": 710,
+          "sw": 710
+        }
+      }
+    },
+    {
+      "story": "ops",
+      "storyId": "pages-opsview--responsive-all-breakpoints",
+      "breakpoint": "bp-1024",
+      "pass": true,
+      "checks": {
+        "frameNoOverflow": true,
+        "appNoOverflow": true,
+        "contentNoOverflow": true,
+        "topbarVisible": true,
+        "pageVisible": true,
+        "contentVisible": true,
+        "navToggleVisible": false,
+        "desktopSidebarVisible": true,
+        "drawerOpenCloseOk": true,
+        "drawerWidthOk": true,
+        "appWidthMatch": true
+      },
+      "metrics": {
+        "frame": {
+          "cw": 1024,
+          "sw": 1024
+        },
+        "app": {
+          "cw": 1024,
+          "sw": 1024
+        },
+        "content": {
+          "cw": 730,
+          "sw": 730
+        },
+        "page": {
+          "cw": 682,
+          "sw": 682
+        }
+      }
+    },
+    {
+      "story": "ops",
+      "storyId": "pages-opsview--responsive-all-breakpoints",
+      "breakpoint": "bp-1220",
+      "pass": true,
+      "checks": {
+        "frameNoOverflow": true,
+        "appNoOverflow": true,
+        "contentNoOverflow": true,
+        "topbarVisible": true,
+        "pageVisible": true,
+        "contentVisible": true,
+        "navToggleVisible": false,
+        "desktopSidebarVisible": true,
+        "drawerOpenCloseOk": true,
+        "drawerWidthOk": true,
+        "appWidthMatch": true
+      },
+      "metrics": {
+        "frame": {
+          "cw": 1220,
+          "sw": 1220
+        },
+        "app": {
+          "cw": 1220,
+          "sw": 1220
+        },
+        "content": {
+          "cw": 906,
+          "sw": 906
+        },
+        "page": {
+          "cw": 858,
+          "sw": 858
+        }
+      }
+    },
+    {
+      "story": "ops",
+      "storyId": "pages-opsview--responsive-all-breakpoints",
+      "breakpoint": "bp-1440",
+      "pass": true,
+      "checks": {
+        "frameNoOverflow": true,
+        "appNoOverflow": true,
+        "contentNoOverflow": true,
+        "topbarVisible": true,
+        "pageVisible": true,
+        "contentVisible": true,
+        "navToggleVisible": false,
+        "desktopSidebarVisible": true,
+        "drawerOpenCloseOk": true,
+        "drawerWidthOk": true,
+        "appWidthMatch": true
+      },
+      "metrics": {
+        "frame": {
+          "cw": 1440,
+          "sw": 1440
+        },
+        "app": {
+          "cw": 1440,
+          "sw": 1440
+        },
+        "content": {
+          "cw": 1126,
+          "sw": 1126
+        },
+        "page": {
+          "cw": 1078,
+          "sw": 1078
+        }
+      }
+    },
+    {
+      "story": "ops",
+      "storyId": "pages-opsview--responsive-all-breakpoints",
+      "breakpoint": "bp-1680",
+      "pass": true,
+      "checks": {
+        "frameNoOverflow": true,
+        "appNoOverflow": true,
+        "contentNoOverflow": true,
+        "topbarVisible": true,
+        "pageVisible": true,
+        "contentVisible": true,
+        "navToggleVisible": false,
+        "desktopSidebarVisible": true,
+        "drawerOpenCloseOk": true,
+        "drawerWidthOk": true,
+        "appWidthMatch": true
+      },
+      "metrics": {
+        "frame": {
+          "cw": 1680,
+          "sw": 1680
+        },
+        "app": {
+          "cw": 1680,
+          "sw": 1680
+        },
+        "content": {
+          "cw": 1366,
+          "sw": 1366
+        },
+        "page": {
+          "cw": 1318,
+          "sw": 1318
+        }
+      }
+    }
+  ]
+}
