@@ -1183,45 +1183,48 @@ select {
   position: relative;
   z-index: 1;
   display: inline-flex;
-  align-items: center;
-  gap: 10px;
+  align-items: flex-start;
+  gap: 8px;
   margin-top: 10px;
-  max-width: min(420px, 88vw);
+  max-width: min(460px, 100%);
   padding: 10px 12px;
-  border-radius: 12px;
-  border: 1px solid color-mix(in oklab, var(--warn) 42%, transparent);
-  background: color-mix(in oklab, var(--panel) 86%, black 14%);
-  box-shadow: 0 12px 24px color-mix(in oklab, black 28%, transparent);
+  border-radius: var(--r10);
+  border: 1px solid var(--pill-err-border);
+  background: var(--pill-err);
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.18);
   color: var(--fg);
   font-size: 14px;
-  line-height: 1.25;
-  white-space: nowrap;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .settings-error-bubble::before {
   content: "";
   position: absolute;
   bottom: calc(100% - 1px);
-  left: 24px;
+  left: 18px;
   width: 12px;
   height: 12px;
-  border-top: 1px solid color-mix(in oklab, var(--warn) 42%, transparent);
-  border-left: 1px solid color-mix(in oklab, var(--warn) 42%, transparent);
-  background: color-mix(in oklab, var(--panel) 86%, black 14%);
+  border-top: 1px solid var(--pill-err-border);
+  border-left: 1px solid var(--pill-err-border);
+  background: var(--pill-err);
   rotate: 45deg;
 }
 
 .settings-error-badge {
-  width: 24px;
-  height: 24px;
-  border-radius: 6px;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   font-weight: 800;
-  background: var(--warn);
-  color: #101016;
-  flex: 0 0 24px;
+  font-size: 12px;
+  background: var(--badge-err);
+  border: 1px solid var(--badge-err-border);
+  color: var(--text);
+  flex: 0 0 20px;
 }
 
 .line-inner {
