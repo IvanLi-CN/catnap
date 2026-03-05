@@ -26,6 +26,7 @@
 
 | ID   | Title | Status | Spec | Last | Notes |
 |-----:|-------|--------|------|------|-------|
+| zuhzt | 补齐可用区域说明并替换无效分组文案 | 已完成 | `zuhzt-region-notice-sync/SPEC.md` | 2026-03-05 | PR #55：区域说明链路上线 + review-loop 收敛完成 |
 | pc6du | 移动端响应式适配与 Storybook 全断点 DOM 验收 | 已完成 | `pc6du-mobile-responsive-breakpoints/SPEC.md` | 2026-03-04 | PR #54（run #154 checks 全绿）；35 场景 DOM 验收 + 断点边界修正完成 |
 | 35uke | 修复付费周期识别：年付被误判为月付 | 已完成 | `35uke-billing-period-detection-fix/SPEC.md` | 2026-03-03 | PR #52（run #145 checks 全绿） |
 | 4ccac | 下架产品归档与三态恢复显示（全产品 + 监控页） | 已完成 | `4ccac-delisted-product-archive/SPEC.md` | 2026-03-03 | 归档 API + cleanupAt + 产品页三态筛选 + 监控页默认隐藏归档 + relist 自动恢复 |

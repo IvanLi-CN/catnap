@@ -2,7 +2,7 @@ use crate::app::AppState;
 use crate::db;
 use crate::models::{CatalogRefreshCurrent, CatalogRefreshStatus};
 use crate::upstream::UpstreamClient;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use tokio::sync::{broadcast, Mutex};
@@ -48,6 +48,14 @@ fn now_rfc3339() -> String {
     OffsetDateTime::now_utc()
         .format(&Rfc3339)
         .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string())
+}
+
+fn should_bypass_notice_cache_for_key(
+    action: &str,
+    url_key: &str,
+    initialized_keys: &HashSet<String>,
+) -> bool {
+    action == "cache" && !initialized_keys.contains(url_key)
 }
 
 impl CatalogRefreshManager {
@@ -203,10 +211,23 @@ async fn run_full_refresh_job(
         }
     }
 
+    let active_task_keys = tasks
+        .iter()
+        .map(|(fid, gid)| (fid.clone(), gid.clone()))
+        .collect::<HashSet<_>>();
+    let active_url_keys = tasks
+        .iter()
+        .map(|(fid, gid)| crate::upstream::catalog_region_key(fid, gid.as_deref()))
+        .collect::<HashSet<_>>();
+
     {
         let mut snap = app.catalog.write().await;
         snap.countries = countries;
         snap.regions = regions;
+        snap.region_notices
+            .retain(|n| active_task_keys.contains(&(n.country_id.clone(), n.region_id.clone())));
+        snap.region_notice_initialized_keys
+            .retain(|key| active_url_keys.contains(key));
         snap.source_url = app.config.upstream_cart_url.clone();
     }
 
@@ -240,6 +261,22 @@ async fn run_full_refresh_job(
                 }
             }
         }
+        if action == "cache" {
+            let should_bypass = {
+                let snap = app.catalog.read().await;
+                should_bypass_notice_cache_for_key(
+                    &action,
+                    &url_key,
+                    &snap.region_notice_initialized_keys,
+                )
+            };
+            if should_bypass {
+                // Only bypass cache for keys that have never had notice parsing applied.
+                // This avoids stale empty state while preserving cache for initialized keys.
+                action = "fetch".to_string();
+                note = Some("cache bypass: region notice key not initialized".to_string());
+            }
+        }
 
         mgr.update_progress(
             done,
@@ -267,4 +304,35 @@ async fn run_full_refresh_job(
     mgr.finish_success().await;
     info!(job_id, done, total, "catalog refresh finished");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bypass_notice_cache_only_for_uninitialized_key() {
+        let initialized = HashSet::from([String::from("2:56"), String::from("7:0")]);
+
+        assert!(!should_bypass_notice_cache_for_key(
+            "fetch",
+            "2:56",
+            &initialized
+        ));
+        assert!(!should_bypass_notice_cache_for_key(
+            "cache",
+            "2:56",
+            &initialized
+        ));
+        assert!(should_bypass_notice_cache_for_key(
+            "cache",
+            "2:57",
+            &initialized
+        ));
+        assert!(should_bypass_notice_cache_for_key(
+            "cache",
+            "8:0",
+            &initialized
+        ));
+    }
 }
