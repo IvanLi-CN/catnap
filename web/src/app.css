@@ -574,6 +574,11 @@ select {
   color: var(--muted);
 }
 
+.group-notice {
+  line-height: 1.5;
+  color: color-mix(in oklab, var(--accent) 72%, var(--text));
+}
+
 .muted {
   color: var(--muted);
 }

@@ -2,7 +2,7 @@ use crate::app::AppState;
 use crate::db;
 use crate::models::{CatalogRefreshCurrent, CatalogRefreshStatus};
 use crate::upstream::UpstreamClient;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use tokio::sync::{broadcast, Mutex};
@@ -203,10 +203,17 @@ async fn run_full_refresh_job(
         }
     }
 
+    let active_task_keys = tasks
+        .iter()
+        .map(|(fid, gid)| (fid.clone(), gid.clone()))
+        .collect::<HashSet<_>>();
+
     {
         let mut snap = app.catalog.write().await;
         snap.countries = countries;
         snap.regions = regions;
+        snap.region_notices
+            .retain(|n| active_task_keys.contains(&(n.country_id.clone(), n.region_id.clone())));
         snap.source_url = app.config.upstream_cart_url.clone();
     }
 

@@ -1082,6 +1082,7 @@ VALUES (?, ?, ?, NULL, 0)
             produced_configs: fetch.configs.len() as i64,
             elapsed_ms: fetch.parse_elapsed_ms,
         };
+        let region_notice = fetch.region_notice.clone();
 
         let applied = match crate::db::apply_catalog_url_fetch_success(
             &self.inner.db,
@@ -1116,6 +1117,7 @@ VALUES (?, ?, ?, NULL, 0)
         {
             let mut snap = self.inner.catalog.write().await;
             snap.fetched_at = applied.fetched_at.clone();
+            upsert_region_notice_in_snapshot(&mut snap, &key.fid, gid, region_notice.as_deref());
         }
 
         let do_lifecycle_notify = {
@@ -1598,6 +1600,24 @@ fn now_rfc3339() -> String {
     OffsetDateTime::now_utc()
         .format(&Rfc3339)
         .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string())
+}
+
+fn upsert_region_notice_in_snapshot(
+    snap: &mut CatalogSnapshot,
+    fid: &str,
+    gid: Option<&str>,
+    notice: Option<&str>,
+) {
+    snap.region_notices
+        .retain(|n| !(n.country_id == fid && n.region_id.as_deref() == gid));
+    let Some(text) = notice.map(str::trim).filter(|v| !v.is_empty()) else {
+        return;
+    };
+    snap.region_notices.push(crate::models::RegionNotice {
+        country_id: fid.to_string(),
+        region_id: gid.map(std::string::ToString::to_string),
+        text: text.to_string(),
+    });
 }
 
 // Views / API payload shapes (shared by snapshot + SSE).

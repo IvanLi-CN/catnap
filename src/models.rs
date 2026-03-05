@@ -37,6 +37,15 @@ pub struct Region {
     pub location_name: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegionNotice {
+    pub country_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub region_id: Option<String>,
+    pub text: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Spec {
@@ -98,6 +107,7 @@ pub struct ConfigLifecycleView {
 pub struct CatalogView {
     pub countries: Vec<Country>,
     pub regions: Vec<Region>,
+    pub region_notices: Vec<RegionNotice>,
     pub configs: Vec<ConfigView>,
     pub fetched_at: String,
     pub source: CatalogSource,

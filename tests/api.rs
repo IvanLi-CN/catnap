@@ -78,6 +78,11 @@ async fn make_app_with_config(cfg: RuntimeConfig) -> TestApp {
     let snapshot = catnap::upstream::CatalogSnapshot {
         countries,
         regions,
+        region_notices: vec![catnap::models::RegionNotice {
+            country_id: "2".to_string(),
+            region_id: Some("56".to_string()),
+            text: "HKG Premium 仅限合规使用，禁止滥用。".to_string(),
+        }],
         configs: configs.clone(),
         fetched_at: "2026-01-19T00:00:00Z".to_string(),
         source_url: cfg.upstream_cart_url.clone(),
@@ -272,6 +277,16 @@ async fn bootstrap_returns_catalog_and_settings() {
     let bytes = to_bytes(res.into_body(), usize::MAX).await.unwrap();
     let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert!(json.get("catalog").is_some());
+    let notices = json["catalog"]["regionNotices"]
+        .as_array()
+        .expect("catalog.regionNotices should be an array");
+    assert!(notices.iter().any(|n| {
+        n["countryId"].as_str() == Some("2")
+            && n["regionId"].as_str() == Some("56")
+            && n["text"]
+                .as_str()
+                .is_some_and(|txt| txt.contains("禁止滥用"))
+    }));
     assert!(json.get("settings").is_some());
     assert!(json.get("monitoring").is_some());
 }

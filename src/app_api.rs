@@ -592,6 +592,7 @@ async fn get_bootstrap(
         catalog: CatalogView {
             countries: snapshot.countries,
             regions: snapshot.regions,
+            region_notices: snapshot.region_notices,
             configs,
             fetched_at: snapshot.fetched_at,
             source: CatalogSource {

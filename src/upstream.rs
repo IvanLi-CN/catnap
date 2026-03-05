@@ -1,7 +1,7 @@
-use crate::models::{Country, Inventory, Money, Region, Spec};
+use crate::models::{Country, Inventory, Money, Region, RegionNotice, Spec};
 use scraper::{ElementRef, Html, Selector};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use tokio::sync::Mutex;
@@ -10,6 +10,7 @@ use tokio::sync::Mutex;
 pub struct CatalogSnapshot {
     pub countries: Vec<Country>,
     pub regions: Vec<Region>,
+    pub region_notices: Vec<RegionNotice>,
     pub configs: Vec<ConfigBase>,
     pub fetched_at: String,
     pub source_url: String,
@@ -36,6 +37,7 @@ impl CatalogSnapshot {
         Self {
             countries: Vec::new(),
             regions: Vec::new(),
+            region_notices: Vec::new(),
             configs: Vec::new(),
             fetched_at: now_rfc3339(),
             source_url,
@@ -88,6 +90,7 @@ pub struct RegionFetchDetailed {
     pub elapsed_ms: i64,
     pub parse_elapsed_ms: i64,
     pub configs: Vec<ConfigBase>,
+    pub region_notice: Option<String>,
 }
 
 impl UpstreamClient {
@@ -111,6 +114,7 @@ impl UpstreamClient {
         let countries = parse_countries(&root_html);
 
         let mut regions = Vec::new();
+        let mut region_notices = BTreeMap::<(String, Option<String>), String>::new();
         let mut configs = Vec::new();
 
         // Keep concurrency low to avoid hammering upstream.
@@ -121,6 +125,9 @@ impl UpstreamClient {
             let mut fid_regions = parse_regions(fid, &fid_html);
             if fid_regions.is_empty() {
                 // Some pages may not have a region selector.
+                if let Some(text) = parse_region_notice(&fid_html) {
+                    upsert_region_notice(&mut region_notices, fid, None, &text);
+                }
                 let parsed = parse_configs(fid, None, &fid_html);
                 configs.extend(parsed);
             } else {
@@ -132,6 +139,9 @@ impl UpstreamClient {
                 let gid = &r.id;
                 let gid_url = format!("{}?fid={fid}&gid={gid}", self.cart_url);
                 let gid_html = self.fetch_html(&gid_url).await?;
+                if let Some(text) = parse_region_notice(&gid_html) {
+                    upsert_region_notice(&mut region_notices, fid, Some(gid), &text);
+                }
                 let parsed = parse_configs(fid, Some(gid), &gid_html);
                 configs.extend(parsed);
                 tokio::time::sleep(std::time::Duration::from_millis(250)).await;
@@ -149,6 +159,14 @@ impl UpstreamClient {
         Ok(CatalogSnapshot {
             countries,
             regions,
+            region_notices: region_notices
+                .into_iter()
+                .map(|((country_id, region_id), text)| RegionNotice {
+                    country_id,
+                    region_id,
+                    text,
+                })
+                .collect(),
             configs,
             fetched_at,
             source_url: self.cart_url.clone(),
@@ -196,6 +214,7 @@ impl UpstreamClient {
         let parse_start = Instant::now();
         let configs = parse_configs(fid, gid, &html);
         let parse_elapsed_ms = parse_start.elapsed().as_millis() as i64;
+        let region_notice = parse_region_notice(&html);
 
         if configs.is_empty() {
             anyhow::bail!("upstream parse produced 0 configs for {url}");
@@ -208,6 +227,7 @@ impl UpstreamClient {
             elapsed_ms,
             parse_elapsed_ms,
             configs,
+            region_notice,
         })
     }
 
@@ -412,6 +432,21 @@ pub fn parse_regions(fid: &str, html: &str) -> Vec<Region> {
     out
 }
 
+pub fn parse_region_notice(html: &str) -> Option<String> {
+    let doc = Html::parse_document(html);
+    let area = Selector::parse(".secondgroup_box .secondgroup_box_area.yy-dtjbt-text").unwrap();
+
+    let mut notice = None;
+    for el in doc.select(&area) {
+        let text = normalize_text(&el.text().collect::<String>());
+        if text.is_empty() || is_region_title_only(&text) {
+            continue;
+        }
+        notice = Some(text);
+    }
+    notice
+}
+
 pub fn parse_configs(fid: &str, gid: Option<&str>, html: &str) -> Vec<ConfigBase> {
     let doc = Html::parse_document(html);
     let card = Selector::parse(".card.cartitem").unwrap();
@@ -575,6 +610,36 @@ fn normalize_text(s: &str) -> String {
         .to_string()
 }
 
+fn is_region_title_only(s: &str) -> bool {
+    let compact = s
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .filter(|ch| !matches!(ch, '|' | '｜'))
+        .collect::<String>();
+
+    let normalized = compact
+        .trim_start_matches('📍')
+        .trim_start_matches(':')
+        .trim_start_matches('：')
+        .trim();
+    normalized == "可用区域" || normalized == "可用區域"
+}
+
+fn upsert_region_notice(
+    notices: &mut BTreeMap<(String, Option<String>), String>,
+    country_id: &str,
+    region_id: Option<&str>,
+    text: &str,
+) {
+    notices.insert(
+        (
+            country_id.to_string(),
+            region_id.map(std::string::ToString::to_string),
+        ),
+        text.to_string(),
+    );
+}
+
 fn detect_price_period(price_text: &str, name: &str) -> &'static str {
     detect_period_from_price_text(price_text)
         .or_else(|| detect_period_from_name(name))
@@ -727,6 +792,45 @@ mod tests {
         let html = include_str!("../tests/fixtures/cart-fid-2.html");
         let regions = parse_regions("2", html);
         assert!(regions.iter().any(|r| r.id == "56"));
+    }
+
+    #[test]
+    fn parses_region_notice_skipping_region_title() {
+        let html = r#"
+        <html><body>
+          <div class="secondgroup_box mb-2 flex-column p-2">
+            <div class="secondgroup_box_area fs-22 ml-3 mt-2 pl-1 w-100 yy-dtjbt-text">
+              <span class="yy-bl"></span> 📍可用区域
+            </div>
+          </div>
+          <div class="secondgroup_box mb-2">
+            <div class="secondgroup_box_area mr-2 fs-16 yy-dtjbt-text">
+              <span class="yy-bl"></span>
+              <span class="fs-18">
+                台湾苗栗Hinet 高质量IP 三网直连 动态IP 带IPV6
+                <p>禁止滥用！发包、机场、扫描等滥用行为！</p>
+              </span>
+            </div>
+          </div>
+        </body></html>
+        "#;
+        let notice = parse_region_notice(html).expect("notice should be present");
+        assert!(notice.contains("台湾苗栗Hinet"));
+        assert!(notice.contains("禁止滥用"));
+    }
+
+    #[test]
+    fn parse_region_notice_returns_none_when_only_title_exists() {
+        let html = r#"
+        <html><body>
+          <div class="secondgroup_box mb-2 flex-column p-2">
+            <div class="secondgroup_box_area fs-22 ml-3 mt-2 pl-1 w-100 yy-dtjbt-text">
+              📍可用区域
+            </div>
+          </div>
+        </body></html>
+        "#;
+        assert_eq!(parse_region_notice(html), None);
     }
 
     #[test]

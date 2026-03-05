@@ -210,6 +210,18 @@ export const demoBootstrap: BootstrapResponse = {
   catalog: {
     countries: demoCountries,
     regions: demoRegions,
+    regionNotices: [
+      {
+        countryId: "jp",
+        regionId: "jp-tokyo",
+        text: "东京线路：默认优化国际出口，禁止高频滥用。",
+      },
+      {
+        countryId: "us",
+        regionId: "us-ca",
+        text: "美国家宽：动态 IP，禁止发包与扫描等滥用行为。",
+      },
+    ],
     configs: demoConfigs,
     fetchedAt,
     source: { url: "https://example.com/catalog" },

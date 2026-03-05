@@ -57,6 +57,11 @@ export type Region = {
   name: string;
   locationName?: string;
 };
+export type RegionNotice = {
+  countryId: string;
+  regionId?: string | null;
+  text: string;
+};
 
 export type Spec = { key: string; value: string };
 export type Money = { amount: number; currency: string; period: string };
@@ -106,6 +111,7 @@ export type BootstrapResponse = {
   catalog: {
     countries: Country[];
     regions: Region[];
+    regionNotices: RegionNotice[];
     configs: Config[];
     fetchedAt: string;
     source: { url: string };
@@ -1360,6 +1366,16 @@ function groupKey(c: Config): string {
   return `${c.countryId}::${c.regionId ?? ""}`;
 }
 
+function buildGroupNoticeByKey(notices: RegionNotice[]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const notice of notices) {
+    const text = notice.text.trim();
+    if (!text) continue;
+    out.set(`${notice.countryId}::${notice.regionId ?? ""}`, text);
+  }
+  return out;
+}
+
 function isArchivedDelisted(cfg: Config): boolean {
   return cfg.lifecycle.state === "delisted" && Boolean(cfg.lifecycle.cleanupAt);
 }
@@ -1817,6 +1833,11 @@ export function ProductsView({
     return entries;
   }, [filtered, countriesById]);
 
+  const groupNoticeByKey = useMemo(
+    () => buildGroupNoticeByKey(bootstrap.catalog.regionNotices),
+    [bootstrap.catalog.regionNotices],
+  );
+
   const visibleIds = useMemo(() => filtered.map((c) => c.id), [filtered]);
   const { window: historyWindow, byId: historyById } = useInventoryHistory(
     visibleIds,
@@ -1940,9 +1961,7 @@ export function ProductsView({
         const title = isCloud
           ? country
           : `${country} / ${regionId ? (regionsById.get(regionId)?.name ?? regionId) : "默认"}`;
-        const subtitle = isCloud
-          ? "长期有货：不提供库存监控开关"
-          : "配置卡片：规格 / 价格 / 库存 / 监控开关";
+        const groupNotice = groupNoticeByKey.get(k) ?? null;
         return (
           <div className="panel-section" key={k}>
             <div className="panel-title-row">
@@ -1964,7 +1983,7 @@ export function ProductsView({
                 </a>
               ) : null}
             </div>
-            <div className="panel-subtitle">{subtitle}</div>
+            {groupNotice ? <div className="panel-subtitle group-notice">{groupNotice}</div> : null}
             <div className="divider-bleed" />
             <div className="grid">
               {items.map((cfg) => (
@@ -2092,6 +2111,11 @@ export function MonitoringView({
     return Array.from(m.entries());
   }, [enabled]);
 
+  const groupNoticeByKey = useMemo(
+    () => buildGroupNoticeByKey(bootstrap.catalog.regionNotices),
+    [bootstrap.catalog.regionNotices],
+  );
+
   return (
     <div className="panel" data-testid="page-monitoring">
       {syncAlert ? (
@@ -2144,6 +2168,7 @@ export function MonitoringView({
             key={k}
             collapseKey={`catnap:collapse:${k}`}
             title={`${country} / ${region}`}
+            groupNotice={groupNoticeByKey.get(k) ?? null}
             items={items}
             countriesById={countriesById}
             orderBaseUrl={orderBaseUrl}
@@ -2168,6 +2193,7 @@ export function MonitoringView({
 export function MonitoringSection({
   collapseKey,
   title,
+  groupNotice = null,
   items,
   countriesById,
   orderBaseUrl,
@@ -2178,6 +2204,7 @@ export function MonitoringSection({
 }: {
   collapseKey: string;
   title: string;
+  groupNotice?: string | null;
   items: Config[];
   countriesById: Map<string, Country>;
   orderBaseUrl: string;
@@ -2217,6 +2244,7 @@ export function MonitoringSection({
         <div>
           <div className="panel-title">{title}</div>
           <div className="group-meta">{meta}</div>
+          {groupNotice ? <div className="panel-subtitle group-notice">{groupNotice}</div> : null}
         </div>
         <button
           type="button"
