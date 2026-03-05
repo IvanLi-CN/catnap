@@ -90,6 +90,10 @@
 - 风险：上游 DOM class 或布局变更会导致说明提取失败。
 - 假设：说明文案作为纯文本展示即可满足当前业务，不需要保留 HTML 样式。
 
+## Visual Evidence (PR)
+
+![分组标题使用国家/区域名称且不再显示原始 fid/gid](./assets/products-group-title-fixed.png)
+
 ## 变更记录（Change log）
 
 - 2026-03-05: 初始化规格，冻结范围、接口契约与验收标准。
