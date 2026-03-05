@@ -2699,7 +2699,7 @@ export function SettingsViewPanel({
 
       if (!changed) {
         if (validated.invalidFields.length > 0) {
-          setSaveState({ kind: "error", message: "存在不合法字段，已跳过保存" });
+          setSaveState((prev) => (prev.kind === "saving" ? { kind: "idle", message: null } : prev));
         } else {
           setSaveState((prev) => (prev.kind === "saving" ? prev : { kind: "idle", message: null }));
         }
@@ -2724,7 +2724,7 @@ export function SettingsViewPanel({
         }
 
         if (validated.invalidFields.length > 0) {
-          setSaveState({ kind: "error", message: "已保存合法字段，仍有字段需要修正" });
+          setSaveState({ kind: "saved", message: "已保存合法字段，仍有字段需要修正" });
         } else {
           setSaveState({ kind: "saved", message: "已自动保存" });
         }
@@ -2735,10 +2735,6 @@ export function SettingsViewPanel({
           return { requested: true, saved: false, invalidFields: validated.invalidFields };
         }
         const msg = e instanceof Error ? e.message : String(e);
-        const targetField = changedFields[0];
-        if (targetField) {
-          setFieldError(targetField, msg);
-        }
         setSaveState({ kind: "error", message: msg });
         return { requested: true, saved: false, invalidFields: validated.invalidFields };
       }
@@ -2787,6 +2783,14 @@ export function SettingsViewPanel({
     ) : null;
   const renderSaveStateMessage = () => {
     if (!saveState.message) return null;
+    if (saveState.kind === "error") {
+      return (
+        <div className="settings-status-error-bubble" role="alert">
+          <span className="settings-error-badge">!</span>
+          <span>{saveState.message}</span>
+        </div>
+      );
+    }
     if (saveState.kind === "saving" || saveState.kind === "saved") {
       return (
         <div className="muted" style={{ marginTop: 12 }}>
@@ -2799,6 +2803,7 @@ export function SettingsViewPanel({
 
   return (
     <div className="panel" data-testid="page-settings">
+      {renderSaveStateMessage()}
       <div className="panel-section">
         <div className="panel-title">轮询（Polling）</div>
         <div className="settings-grid">
@@ -2993,8 +2998,6 @@ export function SettingsViewPanel({
 
       <div className="panel-section">
         <div className="panel-title">通知（Notifications）</div>
-
-        {renderSaveStateMessage()}
 
         <div className="controls" style={{ marginTop: "16px" }}>
           <div className="panel-title" style={{ fontSize: "16px" }}>
