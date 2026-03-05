@@ -1168,6 +1168,13 @@ select {
 
 .settings-site-controls {
   align-items: flex-start;
+  flex-wrap: nowrap;
+}
+
+.settings-site-controls > .settings-input-wide {
+  flex: 1 1 auto;
+  width: auto;
+  max-width: 848px;
 }
 
 .settings-input-wide {
