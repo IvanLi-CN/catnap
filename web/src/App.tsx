@@ -25,6 +25,7 @@ import {
   type KeyboardEvent,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -2257,7 +2258,22 @@ export function MonitoringSection({
   );
 }
 
-type SettingsFieldKey = "intervalMinutes" | "jitterPct" | "siteBaseUrl" | "autoIntervalHours";
+type SettingsFieldKey =
+  | "intervalMinutes"
+  | "jitterPct"
+  | "siteBaseUrl"
+  | "siteAutofill"
+  | "autoRefreshEnabled"
+  | "autoIntervalHours"
+  | "listedEnabled"
+  | "delistedEnabled"
+  | "tgEnabled"
+  | "tgTarget"
+  | "tgBotToken"
+  | "tgTestAction"
+  | "wpEnableAction"
+  | "wpTestAction"
+  | "wpEnabled";
 
 type SettingsSaveState = {
   kind: "idle" | "saving" | "saved" | "error";
@@ -2382,6 +2398,61 @@ function snapshotToOnSaveInput(
     },
     telegramBotToken: snapshot.telegramBotToken,
   };
+}
+
+function SettingsErrorBubble({
+  message,
+  onClose,
+}: {
+  message: string;
+  onClose: () => void;
+}) {
+  const textRef = useRef<HTMLSpanElement | null>(null);
+  const [isMultiline, setIsMultiline] = useState(false);
+
+  useLayoutEffect(() => {
+    const textEl = textRef.current;
+    if (!textEl) return;
+
+    const update = () => {
+      const lineHeight = Number.parseFloat(window.getComputedStyle(textEl).lineHeight);
+      if (Number.isFinite(lineHeight) && lineHeight > 0) {
+        setIsMultiline(textEl.getBoundingClientRect().height > lineHeight * 1.45);
+        return;
+      }
+      setIsMultiline(textEl.scrollHeight - textEl.clientHeight > 1);
+    };
+
+    update();
+    if (typeof ResizeObserver !== "undefined") {
+      const observer = new ResizeObserver(update);
+      observer.observe(textEl);
+      return () => observer.disconnect();
+    }
+
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  });
+
+  return (
+    <div
+      className={`settings-error-bubble ${isMultiline ? "is-multiline" : "is-singleline"}`}
+      role="alert"
+    >
+      <span className="settings-error-badge">!</span>
+      <span className="settings-error-text" ref={textRef}>
+        {message}
+      </span>
+      <button
+        aria-label="关闭提示"
+        className="settings-error-close"
+        onClick={onClose}
+        type="button"
+      >
+        ×
+      </button>
+    </div>
+  );
 }
 
 export function SettingsViewPanel({
@@ -2615,7 +2686,7 @@ export function SettingsViewPanel({
   );
 
   const persistDraft = useCallback(
-    async (draft: SettingsDraft, reportInvalid: boolean) => {
+    async (draft: SettingsDraft, reportInvalid: boolean, sourceField: SettingsFieldKey | null) => {
       const validated = validateDraft(draft, reportInvalid);
       const next = clonePersistedSnapshot(lastPersistedRef.current);
       let changed = false;
@@ -2685,16 +2756,15 @@ export function SettingsViewPanel({
       }
 
       if (!changed) {
-        if (validated.invalidFields.length > 0) {
-          setSaveState({ kind: "error", message: "存在不合法字段，已跳过保存" });
-        } else {
-          setSaveState((prev) => (prev.kind === "saving" ? prev : { kind: "idle", message: null }));
-        }
+        setSaveState((prev) => (prev.kind === "saving" ? prev : { kind: "idle", message: null }));
         return { requested: false, saved: false, invalidFields: validated.invalidFields };
       }
 
       const seq = saveSeqRef.current + 1;
       saveSeqRef.current = seq;
+      if (sourceField) {
+        setFieldError(sourceField, null);
+      }
       setSaveState({ kind: "saving", message: "自动保存中…" });
 
       try {
@@ -2707,8 +2777,12 @@ export function SettingsViewPanel({
         committed.telegramBotToken = next.telegramBotToken;
         setLastPersisted(committed);
 
+        if (sourceField) {
+          setFieldError(sourceField, null);
+        }
+
         if (validated.invalidFields.length > 0) {
-          setSaveState({ kind: "error", message: "已保存合法字段，仍有字段需要修正" });
+          setSaveState({ kind: "saved", message: "已保存合法字段，仍有字段需要修正" });
         } else {
           setSaveState({ kind: "saved", message: "已自动保存" });
         }
@@ -2719,34 +2793,37 @@ export function SettingsViewPanel({
           return { requested: true, saved: false, invalidFields: validated.invalidFields };
         }
         const msg = e instanceof Error ? e.message : String(e);
+        if (sourceField) {
+          setFieldError(sourceField, msg);
+        }
         setSaveState({ kind: "error", message: msg });
         return { requested: true, saved: false, invalidFields: validated.invalidFields };
       }
     },
-    [onSave, validateDraft],
+    [onSave, setFieldError, validateDraft],
   );
 
   const scheduleAutosave = useCallback(
-    (overrides: Partial<SettingsDraft> = {}) => {
+    (overrides: Partial<SettingsDraft> = {}, sourceField: SettingsFieldKey | null = null) => {
       if (autosaveTimerRef.current !== null) {
         window.clearTimeout(autosaveTimerRef.current);
       }
       const draft = buildDraft(overrides);
       autosaveTimerRef.current = window.setTimeout(() => {
-        void persistDraft(draft, true);
+        void persistDraft(draft, true, sourceField);
       }, 800);
     },
     [buildDraft, persistDraft],
   );
 
   const flushAutosaveImmediate = useCallback(
-    async (overrides: Partial<SettingsDraft> = {}) => {
+    async (overrides: Partial<SettingsDraft> = {}, sourceField: SettingsFieldKey | null = null) => {
       if (autosaveTimerRef.current !== null) {
         window.clearTimeout(autosaveTimerRef.current);
         autosaveTimerRef.current = null;
       }
       const draft = buildDraft(overrides);
-      return persistDraft(draft, true);
+      return persistDraft(draft, true, sourceField);
     },
     [buildDraft, persistDraft],
   );
@@ -2758,14 +2835,22 @@ export function SettingsViewPanel({
     return new Date(t).toLocaleString();
   }
 
-  const saveStateClass = saveState.kind === "error" ? "error" : "muted";
-  const renderFieldError = (field: SettingsFieldKey) =>
-    fieldErrors[field] ? (
-      <div className="settings-error-bubble" role="alert">
-        <span className="settings-error-badge">!</span>
-        <span>{fieldErrors[field]}</span>
-      </div>
-    ) : null;
+  const renderFieldError = (field: SettingsFieldKey) => {
+    const message = fieldErrors[field];
+    if (!message) return null;
+    return <SettingsErrorBubble message={message} onClose={() => setFieldError(field, null)} />;
+  };
+  const renderSaveStateMessage = () => {
+    if (!saveState.message) return null;
+    if (saveState.kind === "saving" || saveState.kind === "saved") {
+      return (
+        <div className="muted" style={{ marginTop: 12 }}>
+          {saveState.message}
+        </div>
+      );
+    }
+    return null;
+  };
 
   return (
     <div className="panel" data-testid="page-settings">
@@ -2787,7 +2872,7 @@ export function SettingsViewPanel({
                     buildDraft({ intervalMinutesInput: value }),
                     false,
                   );
-                  scheduleAutosave({ intervalMinutesInput: value });
+                  scheduleAutosave({ intervalMinutesInput: value }, "intervalMinutes");
                 }}
                 onBlur={() => {
                   void validateDraftField("intervalMinutes", buildDraft(), true);
@@ -2815,7 +2900,7 @@ export function SettingsViewPanel({
                     buildDraft({ jitterPctInput: value }),
                     false,
                   );
-                  scheduleAutosave({ jitterPctInput: value });
+                  scheduleAutosave({ jitterPctInput: value }, "jitterPct");
                 }}
                 onBlur={() => {
                   void validateDraftField("jitterPct", buildDraft(), true);
@@ -2840,12 +2925,13 @@ export function SettingsViewPanel({
                 onChange={(e) => {
                   const value = e.target.value;
                   setSiteBaseUrlInput(value);
+                  setFieldError("siteAutofill", null);
                   void validateDraftField(
                     "siteBaseUrl",
                     buildDraft({ siteBaseUrlInput: value }),
                     false,
                   );
-                  scheduleAutosave({ siteBaseUrlInput: value });
+                  scheduleAutosave({ siteBaseUrlInput: value }, "siteBaseUrl");
                 }}
                 onBlur={() => {
                   void validateDraftField("siteBaseUrl", buildDraft(), true);
@@ -2854,23 +2940,27 @@ export function SettingsViewPanel({
             </div>
             {renderFieldError("siteBaseUrl")}
           </div>
-          <button
-            type="button"
-            className="pill warn center settings-site-autofill"
-            style={{ width: "160px" }}
-            onClick={() => {
-              const value = window.location.origin;
-              setSiteBaseUrlInput(value);
-              void validateDraftField(
-                "siteBaseUrl",
-                buildDraft({ siteBaseUrlInput: value }),
-                false,
-              );
-              void flushAutosaveImmediate({ siteBaseUrlInput: value });
-            }}
-          >
-            自动填充
-          </button>
+          <div className="settings-action-wrap">
+            <button
+              type="button"
+              className="pill warn center settings-site-autofill"
+              style={{ width: "160px" }}
+              onClick={() => {
+                const value = window.location.origin;
+                setSiteBaseUrlInput(value);
+                setFieldError("siteAutofill", null);
+                void validateDraftField(
+                  "siteBaseUrl",
+                  buildDraft({ siteBaseUrlInput: value }),
+                  false,
+                );
+                void flushAutosaveImmediate({ siteBaseUrlInput: value }, "siteAutofill");
+              }}
+            >
+              自动填充
+            </button>
+            {renderFieldError("siteAutofill")}
+          </div>
         </div>
       </div>
 
@@ -2879,26 +2969,30 @@ export function SettingsViewPanel({
         <div className="panel-subtitle">手动“立即刷新”与系统自动刷新共用</div>
         <div className="settings-grid">
           <div>自动全量刷新</div>
-          <button
-            type="button"
-            className={`pill sm center ${autoRefreshEnabled ? "on" : ""}`}
-            style={{ width: "92px" }}
-            onClick={() => {
-              const next = !autoRefreshEnabled;
-              setAutoRefreshEnabled(next);
-              if (!next) {
-                setFieldError("autoIntervalHours", null);
-              }
-              void validateDraftField(
-                "autoIntervalHours",
-                buildDraft({ autoRefreshEnabled: next }),
-                false,
-              );
-              void flushAutosaveImmediate({ autoRefreshEnabled: next });
-            }}
-          >
-            {autoRefreshEnabled ? "启用" : "关闭"}
-          </button>
+          <div className="settings-action-wrap">
+            <button
+              type="button"
+              className={`pill sm center ${autoRefreshEnabled ? "on" : ""}`}
+              style={{ width: "92px" }}
+              onClick={() => {
+                const next = !autoRefreshEnabled;
+                setAutoRefreshEnabled(next);
+                setFieldError("autoRefreshEnabled", null);
+                if (!next) {
+                  setFieldError("autoIntervalHours", null);
+                }
+                void validateDraftField(
+                  "autoIntervalHours",
+                  buildDraft({ autoRefreshEnabled: next }),
+                  false,
+                );
+                void flushAutosaveImmediate({ autoRefreshEnabled: next }, "autoRefreshEnabled");
+              }}
+            >
+              {autoRefreshEnabled ? "启用" : "关闭"}
+            </button>
+            {renderFieldError("autoRefreshEnabled")}
+          </div>
           <div className="hint">全局间隔取“所有用户启用值”的最小值</div>
 
           <div>间隔（小时）</div>
@@ -2918,7 +3012,7 @@ export function SettingsViewPanel({
                     buildDraft({ autoIntervalHoursInput: value }),
                     false,
                   );
-                  scheduleAutosave({ autoIntervalHoursInput: value });
+                  scheduleAutosave({ autoIntervalHoursInput: value }, "autoIntervalHours");
                 }}
                 onBlur={() => {
                   void validateDraftField("autoIntervalHours", buildDraft(), true);
@@ -2930,33 +3024,41 @@ export function SettingsViewPanel({
           <div className="hint">默认 6；范围 1..720；关闭=设为 null</div>
 
           <div>上架监控</div>
-          <button
-            type="button"
-            className={`pill sm center ${listedEnabled ? "on" : ""}`}
-            style={{ width: "92px" }}
-            onClick={() => {
-              const next = !listedEnabled;
-              setListedEnabled(next);
-              void flushAutosaveImmediate({ listedEnabled: next });
-            }}
-          >
-            {listedEnabled ? "启用" : "关闭"}
-          </button>
+          <div className="settings-action-wrap">
+            <button
+              type="button"
+              className={`pill sm center ${listedEnabled ? "on" : ""}`}
+              style={{ width: "92px" }}
+              onClick={() => {
+                const next = !listedEnabled;
+                setListedEnabled(next);
+                setFieldError("listedEnabled", null);
+                void flushAutosaveImmediate({ listedEnabled: next }, "listedEnabled");
+              }}
+            >
+              {listedEnabled ? "启用" : "关闭"}
+            </button>
+            {renderFieldError("listedEnabled")}
+          </div>
           <div className="hint">启用后：上架/重新上架会通知所有启用者</div>
 
           <div>下架监控</div>
-          <button
-            type="button"
-            className={`pill sm center ${delistedEnabled ? "on" : ""}`}
-            style={{ width: "92px" }}
-            onClick={() => {
-              const next = !delistedEnabled;
-              setDelistedEnabled(next);
-              void flushAutosaveImmediate({ delistedEnabled: next });
-            }}
-          >
-            {delistedEnabled ? "启用" : "关闭"}
-          </button>
+          <div className="settings-action-wrap">
+            <button
+              type="button"
+              className={`pill sm center ${delistedEnabled ? "on" : ""}`}
+              style={{ width: "92px" }}
+              onClick={() => {
+                const next = !delistedEnabled;
+                setDelistedEnabled(next);
+                setFieldError("delistedEnabled", null);
+                void flushAutosaveImmediate({ delistedEnabled: next }, "delistedEnabled");
+              }}
+            >
+              {delistedEnabled ? "启用" : "关闭"}
+            </button>
+            {renderFieldError("delistedEnabled")}
+          </div>
           <div className="hint">启用后：下架会通知所有启用者</div>
         </div>
       </div>
@@ -2964,92 +3066,105 @@ export function SettingsViewPanel({
       <div className="panel-section">
         <div className="panel-title">通知（Notifications）</div>
 
-        {saveState.message ? (
-          <div className={saveStateClass} style={{ marginTop: 12 }}>
-            {saveState.message}
-          </div>
-        ) : null}
+        {renderSaveStateMessage()}
 
         <div className="controls" style={{ marginTop: "16px" }}>
           <div className="panel-title" style={{ fontSize: "16px" }}>
             Telegram
           </div>
-          <button
-            type="button"
-            className={`pill sm center ${tgEnabled ? "on" : ""}`}
-            style={{ width: "92px" }}
-            onClick={() => {
-              const next = !tgEnabled;
-              setTgEnabled(next);
-              void flushAutosaveImmediate({ tgEnabled: next });
-            }}
-          >
-            {tgEnabled ? "启用" : "关闭"}
-          </button>
+          <div className="settings-action-wrap">
+            <button
+              type="button"
+              className={`pill sm center ${tgEnabled ? "on" : ""}`}
+              style={{ width: "92px" }}
+              onClick={() => {
+                const next = !tgEnabled;
+                setTgEnabled(next);
+                setFieldError("tgEnabled", null);
+                void flushAutosaveImmediate({ tgEnabled: next }, "tgEnabled");
+              }}
+            >
+              {tgEnabled ? "启用" : "关闭"}
+            </button>
+            {renderFieldError("tgEnabled")}
+          </div>
         </div>
 
         <div className="settings-row">
           <div>Bot Token（不回显）</div>
-          <div className="pill">
-            <input
-              type="password"
-              placeholder={
-                bootstrap.settings.notifications.telegram.configured ? "••••••••••••••••" : ""
-              }
-              value={tgBotTokenInput}
-              onChange={(e) => {
-                const value = e.target.value;
-                setTgBotTokenInput(value);
-                scheduleAutosave({ tgBotTokenInput: value });
-              }}
-            />
+          <div className="settings-input-wrap">
+            <div className="pill">
+              <input
+                type="password"
+                placeholder={
+                  bootstrap.settings.notifications.telegram.configured ? "••••••••••••••••" : ""
+                }
+                value={tgBotTokenInput}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setTgBotTokenInput(value);
+                  setFieldError("tgBotToken", null);
+                  scheduleAutosave({ tgBotTokenInput: value }, "tgBotToken");
+                }}
+              />
+            </div>
+            {renderFieldError("tgBotToken")}
           </div>
         </div>
 
         <div className="settings-row" style={{ marginTop: "16px" }}>
           <div>Target（chat id 或频道）</div>
-          <div className="pill">
-            <input
-              value={tgTargetInput}
-              onChange={(e) => {
-                const value = e.target.value;
-                setTgTargetInput(value);
-                scheduleAutosave({ tgTargetInput: value });
-              }}
-            />
+          <div className="settings-input-wrap">
+            <div className="pill">
+              <input
+                value={tgTargetInput}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setTgTargetInput(value);
+                  setFieldError("tgTarget", null);
+                  scheduleAutosave({ tgTargetInput: value }, "tgTarget");
+                }}
+              />
+            </div>
+            {renderFieldError("tgTarget")}
           </div>
         </div>
 
         {tgTestStatus ? <div className="muted">{tgTestStatus}</div> : null}
 
         <div className="settings-actions">
-          <button
-            type="button"
-            className="pill warn center btn"
-            disabled={saving || tgTestPending}
-            onClick={async () => {
-              setTgTestPending(true);
-              setTgTestStatus(null);
-              try {
-                await api<{ ok: true }>("/api/notifications/telegram/test", {
-                  method: "POST",
-                  headers: { "content-type": "application/json" },
-                  body: JSON.stringify({
-                    botToken: tgBotTokenInput.trim() ? tgBotTokenInput.trim() : null,
-                    target: tgTargetInput.trim() ? tgTargetInput.trim() : null,
-                    text: null,
-                  }),
-                });
-                setTgTestStatus("已发送。");
-              } catch (e) {
-                setTgTestStatus(e instanceof Error ? e.message : String(e));
-              } finally {
-                setTgTestPending(false);
-              }
-            }}
-          >
-            {tgTestPending ? "测试中…" : "测试 Telegram"}
-          </button>
+          <div className="settings-action-wrap settings-action-wrap-bubble-left">
+            <button
+              type="button"
+              className="pill warn center btn"
+              disabled={saving || tgTestPending}
+              onClick={async () => {
+                setTgTestPending(true);
+                setTgTestStatus(null);
+                setFieldError("tgTestAction", null);
+                try {
+                  await api<{ ok: true }>("/api/notifications/telegram/test", {
+                    method: "POST",
+                    headers: { "content-type": "application/json" },
+                    body: JSON.stringify({
+                      botToken: tgBotTokenInput.trim() ? tgBotTokenInput.trim() : null,
+                      target: tgTargetInput.trim() ? tgTargetInput.trim() : null,
+                      text: null,
+                    }),
+                  });
+                  setTgTestStatus("已发送。");
+                  setFieldError("tgTestAction", null);
+                } catch (e) {
+                  setFieldError("tgTestAction", e instanceof Error ? e.message : String(e));
+                } finally {
+                  setTgTestPending(false);
+                }
+              }}
+            >
+              {tgTestPending ? "测试中…" : "测试 Telegram"}
+            </button>
+            {renderFieldError("tgTestAction")}
+          </div>
         </div>
 
         <div className="line-inner" />
@@ -3058,18 +3173,22 @@ export function SettingsViewPanel({
           <div className="panel-title" style={{ fontSize: "16px" }}>
             Web Push（浏览器推送）
           </div>
-          <button
-            type="button"
-            className={`pill sm center ${wpEnabled ? "on" : ""}`}
-            style={{ width: "92px" }}
-            onClick={() => {
-              const next = !wpEnabled;
-              setWpEnabled(next);
-              void flushAutosaveImmediate({ wpEnabled: next });
-            }}
-          >
-            {wpEnabled ? "启用" : "关闭"}
-          </button>
+          <div className="settings-action-wrap">
+            <button
+              type="button"
+              className={`pill sm center ${wpEnabled ? "on" : ""}`}
+              style={{ width: "92px" }}
+              onClick={() => {
+                const next = !wpEnabled;
+                setWpEnabled(next);
+                setFieldError("wpEnabled", null);
+                void flushAutosaveImmediate({ wpEnabled: next }, "wpEnabled");
+              }}
+            >
+              {wpEnabled ? "启用" : "关闭"}
+            </button>
+            {renderFieldError("wpEnabled")}
+          </div>
         </div>
 
         <div className="panel-subtitle" style={{ marginTop: "16px" }}>
@@ -3086,130 +3205,140 @@ export function SettingsViewPanel({
         {wpTestStatus ? <div className="muted">{wpTestStatus}</div> : null}
 
         <div className="settings-actions">
-          <button
-            type="button"
-            className="pill warn center btn"
-            disabled={saving || !wpKey || !wpSupported}
-            onClick={async () => {
-              setSaving(true);
-              setWpStatus(null);
-              try {
-                setWpEnabled(true);
-                const saveResult = await flushAutosaveImmediate({ wpEnabled: true });
-                if (saveResult.requested && !saveResult.saved) {
-                  throw new Error("设置保存失败，无法启用推送");
-                }
+          <div className="settings-action-wrap settings-action-wrap-bubble-left">
+            <button
+              type="button"
+              className="pill warn center btn"
+              disabled={saving || !wpKey || !wpSupported}
+              onClick={async () => {
+                setSaving(true);
+                setWpStatus(null);
+                setFieldError("wpEnableAction", null);
+                try {
+                  setWpEnabled(true);
+                  const saveResult = await flushAutosaveImmediate({ wpEnabled: true }, "wpEnabled");
+                  if (saveResult.requested && !saveResult.saved) {
+                    throw new Error("设置保存失败，无法启用推送");
+                  }
 
-                const perm = await Notification.requestPermission();
-                if (perm !== "granted") {
-                  throw new Error("浏览器未授予通知权限");
-                }
+                  const perm = await Notification.requestPermission();
+                  if (perm !== "granted") {
+                    throw new Error("浏览器未授予通知权限");
+                  }
 
-                await navigator.serviceWorker.register("/sw.js");
-                const ready = await navigator.serviceWorker.ready;
-                if (!wpKey) throw new Error("缺少 VAPID public key");
-
-                const sub = await ready.pushManager.subscribe({
-                  userVisibleOnly: true,
-                  applicationServerKey: urlBase64ToUint8Array(wpKey) as unknown as BufferSource,
-                });
-
-                const json = sub.toJSON() as {
-                  endpoint?: string;
-                  keys?: { p256dh?: string; auth?: string };
-                };
-                if (!json.endpoint || !json.keys?.p256dh || !json.keys?.auth) {
-                  throw new Error("订阅信息不完整");
-                }
-
-                await api("/api/notifications/web-push/subscriptions", {
-                  method: "POST",
-                  headers: { "content-type": "application/json" },
-                  body: JSON.stringify({
-                    subscription: {
-                      endpoint: json.endpoint,
-                      keys: { p256dh: json.keys.p256dh, auth: json.keys.auth },
-                    },
-                  }),
-                });
-
-                setWpStatus("订阅已上传。");
-              } catch (e) {
-                setWpStatus(e instanceof Error ? e.message : String(e));
-              } finally {
-                setSaving(false);
-              }
-            }}
-          >
-            启用推送
-          </button>
-
-          <button
-            type="button"
-            className="pill warn center btn"
-            disabled={saving || wpTestPending}
-            onClick={async () => {
-              setWpTestPending(true);
-              setWpTestStatus(null);
-              try {
-                if (!wpSupported) throw new Error("当前浏览器不支持 Push");
-
-                const perm = await Notification.requestPermission();
-                if (perm !== "granted") {
-                  throw new Error("浏览器未授予通知权限");
-                }
-
-                await navigator.serviceWorker.register("/sw.js");
-                const ready = await navigator.serviceWorker.ready;
-
-                let sub = await ready.pushManager.getSubscription();
-                if (!sub) {
+                  await navigator.serviceWorker.register("/sw.js");
+                  const ready = await navigator.serviceWorker.ready;
                   if (!wpKey) throw new Error("缺少 VAPID public key");
-                  sub = await ready.pushManager.subscribe({
+
+                  const sub = await ready.pushManager.subscribe({
                     userVisibleOnly: true,
                     applicationServerKey: urlBase64ToUint8Array(wpKey) as unknown as BufferSource,
                   });
+
+                  const json = sub.toJSON() as {
+                    endpoint?: string;
+                    keys?: { p256dh?: string; auth?: string };
+                  };
+                  if (!json.endpoint || !json.keys?.p256dh || !json.keys?.auth) {
+                    throw new Error("订阅信息不完整");
+                  }
+
+                  await api("/api/notifications/web-push/subscriptions", {
+                    method: "POST",
+                    headers: { "content-type": "application/json" },
+                    body: JSON.stringify({
+                      subscription: {
+                        endpoint: json.endpoint,
+                        keys: { p256dh: json.keys.p256dh, auth: json.keys.auth },
+                      },
+                    }),
+                  });
+
+                  setWpStatus("订阅已上传。");
+                  setFieldError("wpEnableAction", null);
+                } catch (e) {
+                  setFieldError("wpEnableAction", e instanceof Error ? e.message : String(e));
+                } finally {
+                  setSaving(false);
                 }
+              }}
+            >
+              启用推送
+            </button>
+            {renderFieldError("wpEnableAction")}
+          </div>
 
-                const json = sub.toJSON() as {
-                  endpoint?: string;
-                  keys?: { p256dh?: string; auth?: string };
-                };
-                if (!json.endpoint || !json.keys?.p256dh || !json.keys?.auth) {
-                  throw new Error("订阅信息不完整");
+          <div className="settings-action-wrap">
+            <button
+              type="button"
+              className="pill warn center btn"
+              disabled={saving || wpTestPending}
+              onClick={async () => {
+                setWpTestPending(true);
+                setWpTestStatus(null);
+                setFieldError("wpTestAction", null);
+                try {
+                  if (!wpSupported) throw new Error("当前浏览器不支持 Push");
+
+                  const perm = await Notification.requestPermission();
+                  if (perm !== "granted") {
+                    throw new Error("浏览器未授予通知权限");
+                  }
+
+                  await navigator.serviceWorker.register("/sw.js");
+                  const ready = await navigator.serviceWorker.ready;
+
+                  let sub = await ready.pushManager.getSubscription();
+                  if (!sub) {
+                    if (!wpKey) throw new Error("缺少 VAPID public key");
+                    sub = await ready.pushManager.subscribe({
+                      userVisibleOnly: true,
+                      applicationServerKey: urlBase64ToUint8Array(wpKey) as unknown as BufferSource,
+                    });
+                  }
+
+                  const json = sub.toJSON() as {
+                    endpoint?: string;
+                    keys?: { p256dh?: string; auth?: string };
+                  };
+                  if (!json.endpoint || !json.keys?.p256dh || !json.keys?.auth) {
+                    throw new Error("订阅信息不完整");
+                  }
+
+                  await api("/api/notifications/web-push/subscriptions", {
+                    method: "POST",
+                    headers: { "content-type": "application/json" },
+                    body: JSON.stringify({
+                      subscription: {
+                        endpoint: json.endpoint,
+                        keys: { p256dh: json.keys.p256dh, auth: json.keys.auth },
+                      },
+                    }),
+                  });
+
+                  await api<{ ok: true }>("/api/notifications/web-push/test", {
+                    method: "POST",
+                    headers: { "content-type": "application/json" },
+                    body: JSON.stringify({
+                      title: "catnap",
+                      body: `测试通知 ${new Date().toISOString()}`,
+                      url: "/settings",
+                    }),
+                  });
+
+                  setWpTestStatus("已发送（如权限/订阅正常，应很快弹出通知）。");
+                  setFieldError("wpTestAction", null);
+                } catch (e) {
+                  setFieldError("wpTestAction", e instanceof Error ? e.message : String(e));
+                } finally {
+                  setWpTestPending(false);
                 }
-
-                await api("/api/notifications/web-push/subscriptions", {
-                  method: "POST",
-                  headers: { "content-type": "application/json" },
-                  body: JSON.stringify({
-                    subscription: {
-                      endpoint: json.endpoint,
-                      keys: { p256dh: json.keys.p256dh, auth: json.keys.auth },
-                    },
-                  }),
-                });
-
-                await api<{ ok: true }>("/api/notifications/web-push/test", {
-                  method: "POST",
-                  headers: { "content-type": "application/json" },
-                  body: JSON.stringify({
-                    title: "catnap",
-                    body: `测试通知 ${new Date().toISOString()}`,
-                    url: "/settings",
-                  }),
-                });
-
-                setWpTestStatus("已发送（如权限/订阅正常，应很快弹出通知）。");
-              } catch (e) {
-                setWpTestStatus(e instanceof Error ? e.message : String(e));
-              } finally {
-                setWpTestPending(false);
-              }
-            }}
-          >
-            {wpTestPending ? "测试中…" : "测试 Web Push"}
-          </button>
+              }}
+            >
+              {wpTestPending ? "测试中…" : "测试 Web Push"}
+            </button>
+            {renderFieldError("wpTestAction")}
+          </div>
         </div>
       </div>
 

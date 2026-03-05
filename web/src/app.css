@@ -49,6 +49,8 @@
   --pill-disabled-border: rgba(11, 18, 32, 0.16);
   --pill-err: rgba(180, 35, 24, 0.12);
   --pill-err-border: rgba(180, 35, 24, 0.45);
+  --error-bubble-bg: #fdecea;
+  --error-bubble-border: rgba(180, 35, 24, 0.5);
 
   /* Semi-transparent badges for card overlays (trend visible underneath) */
   --badge: rgba(11, 18, 32, 0.06);
@@ -98,6 +100,8 @@
   --pill-disabled-border: rgba(52, 65, 95, 0.8);
   --pill-err: #3b1a1a;
   --pill-err-border: rgba(138, 42, 42, 0.9);
+  --error-bubble-bg: #3b1a1a;
+  --error-bubble-border: rgba(138, 42, 42, 0.95);
 
   --badge: rgba(16, 31, 58, 0.72);
   --badge-border: rgba(27, 42, 74, 0.55);
@@ -156,6 +160,8 @@
     --pill-disabled-border: rgba(52, 65, 95, 0.8);
     --pill-err: #3b1a1a;
     --pill-err-border: rgba(138, 42, 42, 0.9);
+    --error-bubble-bg: #3b1a1a;
+    --error-bubble-border: rgba(138, 42, 42, 0.95);
 
     --badge: rgba(16, 31, 58, 0.72);
     --badge-border: rgba(27, 42, 74, 0.55);
@@ -1177,6 +1183,12 @@ select {
   max-width: 848px;
 }
 
+.settings-action-wrap {
+  position: relative;
+  display: inline-flex;
+  min-width: 0;
+}
+
 .settings-input-wide {
   width: min(100%, 848px);
   max-width: 100%;
@@ -1198,17 +1210,57 @@ select {
   gap: 8px;
   width: max-content;
   max-width: min(460px, calc(100vw - 36px));
-  padding: 10px 12px;
+  padding: 10px 36px 10px 12px;
   border-radius: var(--r10);
-  border: 1px solid var(--pill-err-border);
-  background: var(--pill-err);
+  border: 1px solid var(--error-bubble-border);
+  background: var(--error-bubble-bg);
   box-shadow: 0 6px 14px rgba(0, 0, 0, 0.14);
   color: var(--fg);
   font-size: 14px;
   line-height: 1.35;
   overflow-wrap: anywhere;
   white-space: normal;
-  pointer-events: none;
+  pointer-events: auto;
+}
+
+.settings-action-wrap > .settings-error-bubble {
+  top: auto;
+  bottom: calc(100% + 8px);
+  left: auto;
+  right: 0;
+}
+
+.settings-action-wrap-bubble-left > .settings-error-bubble {
+  left: 0;
+  right: auto;
+}
+
+.settings-action-wrap > .settings-error-bubble::before {
+  top: auto;
+  bottom: -9px;
+  left: auto;
+  right: 18px;
+  border-top: 8px solid var(--error-bubble-border);
+  border-bottom: 0;
+}
+
+.settings-action-wrap > .settings-error-bubble::after {
+  top: auto;
+  bottom: -8px;
+  left: auto;
+  right: 19px;
+  border-top: 7px solid var(--error-bubble-bg);
+  border-bottom: 0;
+}
+
+.settings-action-wrap-bubble-left > .settings-error-bubble::before {
+  left: 18px;
+  right: auto;
+}
+
+.settings-action-wrap-bubble-left > .settings-error-bubble::after {
+  left: 19px;
+  right: auto;
 }
 
 .settings-error-bubble::before {
@@ -1220,7 +1272,7 @@ select {
   height: 0;
   border-left: 8px solid transparent;
   border-right: 8px solid transparent;
-  border-bottom: 8px solid var(--pill-err-border);
+  border-bottom: 8px solid var(--error-bubble-border);
 }
 
 .settings-error-bubble::after {
@@ -1232,7 +1284,7 @@ select {
   height: 0;
   border-left: 7px solid transparent;
   border-right: 7px solid transparent;
-  border-bottom: 7px solid var(--pill-err);
+  border-bottom: 7px solid var(--error-bubble-bg);
 }
 
 .settings-error-badge {
@@ -1248,6 +1300,42 @@ select {
   border: 1px solid var(--badge-err-border);
   color: var(--text);
   flex: 0 0 20px;
+}
+
+.settings-error-text {
+  min-width: 0;
+}
+
+.settings-error-close {
+  position: absolute;
+  right: 8px;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+}
+
+.settings-error-bubble.is-singleline .settings-error-close {
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.settings-error-bubble.is-multiline .settings-error-close {
+  top: 8px;
+}
+
+.settings-error-close:hover {
+  background: color-mix(in oklab, var(--surface), transparent 40%);
 }
 
 .line-inner {
@@ -2056,10 +2144,14 @@ select {
     left: 15px;
   }
 
-  .controls.settings-site-controls > button.pill.settings-site-autofill {
+  .controls.settings-site-controls > .settings-action-wrap {
+    width: auto;
+    margin-left: auto;
+  }
+
+  .controls.settings-site-controls > .settings-action-wrap > button.pill.settings-site-autofill {
     width: 160px !important;
     align-self: flex-end;
-    margin-left: auto;
   }
 
   .settings-grid > :nth-child(3n) {
@@ -2181,12 +2273,21 @@ select {
 
   .controls > .pill,
   .controls > button.pill,
+  .controls > .settings-action-wrap,
+  .controls > .settings-action-wrap > .pill,
   .logs-footer .next,
   .logs-footer .cursor,
+  .settings-actions > .settings-action-wrap,
+  .settings-actions > .settings-action-wrap > .btn,
   .settings-actions > .btn,
   .settings-actions > .pill {
     width: 100% !important;
     max-width: 100%;
+  }
+
+  .controls.settings-site-controls > .settings-action-wrap {
+    width: auto !important;
+    margin-left: auto;
   }
 
   .group-head {
