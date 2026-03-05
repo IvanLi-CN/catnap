@@ -1159,9 +1159,9 @@ select {
 }
 
 .settings-input-wrap {
-  position: relative;
-  display: inline-flex;
+  display: flex;
   flex-direction: column;
+  align-items: flex-start;
 }
 
 .settings-input-wide {
@@ -1169,14 +1169,12 @@ select {
 }
 
 .settings-error-bubble {
-  position: absolute;
-  top: calc(100% + 10px);
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 12;
+  position: relative;
+  z-index: 1;
   display: inline-flex;
   align-items: center;
   gap: 10px;
+  margin-top: 10px;
   max-width: min(420px, 88vw);
   padding: 10px 12px;
   border-radius: 12px;
@@ -1192,9 +1190,8 @@ select {
 .settings-error-bubble::before {
   content: "";
   position: absolute;
-  bottom: 100%;
-  left: 50%;
-  transform: translateX(-50%);
+  bottom: calc(100% - 1px);
+  left: 24px;
   width: 12px;
   height: 12px;
   border-top: 1px solid color-mix(in oklab, var(--warn) 42%, transparent);
@@ -2010,15 +2007,13 @@ select {
   }
 
   .settings-error-bubble {
-    left: 0;
-    transform: none;
     max-width: min(320px, 92vw);
+    margin-top: 8px;
     white-space: normal;
   }
 
   .settings-error-bubble::before {
     left: 20px;
-    transform: none;
   }
 
   .settings-grid > :nth-child(3n) {
