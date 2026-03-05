@@ -778,6 +778,7 @@ export function App() {
 
     let cancelled = false;
     let attempts = 0;
+    const topologyRetryLimit = 45;
     let noticeGraceRetriesRemaining = 1;
     let timeoutId: number | null = null;
 
@@ -832,9 +833,10 @@ export function App() {
 
         const topologyReady = json.catalog.countries.length > 0 && json.catalog.regions.length > 0;
         const noticesReady = json.catalog.regionNotices.length > 0;
-        const reachedAttemptCap = attempts >= 6;
+        const reachedAttemptCap = attempts >= topologyRetryLimit;
         if (!topologyReady && !reachedAttemptCap) {
-          schedule(900 + attempts * 250);
+          // A full bootstrap can take tens of seconds on cold start; keep backfilling topology longer.
+          schedule(Math.min(3_000, 900 + attempts * 250));
           return;
         }
 
@@ -852,8 +854,8 @@ export function App() {
         catalogBackfillPendingRef.current = false;
       } catch {
         if (cancelled) return;
-        if (attempts < 6) {
-          schedule(900 + attempts * 250);
+        if (attempts < topologyRetryLimit) {
+          schedule(Math.min(3_000, 900 + attempts * 250));
         } else {
           catalogBackfillPendingRef.current = false;
         }
@@ -1994,12 +1996,15 @@ export function ProductsView({
 
       {groups.map(([k, items]) => {
         const [countryId, regionId] = k.split("::");
-        const country = countriesById.get(countryId)?.name ?? countryId;
-        const isCloud = country.includes("云服务器");
+        const countryName = countriesById.get(countryId)?.name;
+        const isCloud = countryName?.includes("云服务器") ?? false;
         const countryCatalogLink = buildCountryCatalogLink(orderBaseUrl, countryId);
-        const title = isCloud
-          ? country
-          : `${country} / ${regionId ? (regionsById.get(regionId)?.name ?? regionId) : "默认"}`;
+        const regionLabel = regionId ? (regionsById.get(regionId)?.name ?? "默认") : "默认";
+        const title = !countryName
+          ? "分组信息加载中…"
+          : isCloud
+            ? countryName
+            : `${countryName} / ${regionLabel}`;
         const groupNotice = groupNoticeByKey.get(k) ?? null;
         return (
           <div className="panel-section" key={k}>
@@ -2200,13 +2205,15 @@ export function MonitoringView({
       ) : null}
       {groups.map(([k, items]) => {
         const [countryId, regionId] = k.split("::");
-        const country = countriesById.get(countryId)?.name ?? countryId;
-        const region = regionId ? (regionsById.get(regionId)?.name ?? regionId) : "默认";
+        const countryName = countriesById.get(countryId)?.name;
+        const regionName = regionId ? (regionsById.get(regionId)?.name ?? "默认") : "默认";
+        const title =
+          countryName && regionName ? `${countryName} / ${regionName}` : "分组信息加载中…";
         return (
           <MonitoringSection
             key={k}
             collapseKey={`catnap:collapse:${k}`}
-            title={`${country} / ${region}`}
+            title={title}
             groupNotice={groupNoticeByKey.get(k) ?? null}
             items={items}
             countriesById={countriesById}

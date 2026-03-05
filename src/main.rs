@@ -1,6 +1,6 @@
 use catnap::{build_app, RuntimeConfig};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
-use std::{net::SocketAddr, str::FromStr};
+use std::{net::SocketAddr, str::FromStr, time::Duration};
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
@@ -50,19 +50,35 @@ async fn main() -> anyhow::Result<()> {
                         return;
                     }
                 };
-            match upstream.fetch_catalog().await {
-                Ok(catalog) => {
-                    if let Err(err) =
-                        catnap::db::upsert_catalog_configs(&state.db, &catalog.configs).await
-                    {
-                        warn!(error = %err, "failed to persist upstream catalog");
+
+            const STARTUP_FETCH_MAX_ATTEMPTS: usize = 8;
+            for attempt in 1..=STARTUP_FETCH_MAX_ATTEMPTS {
+                match upstream.fetch_catalog().await {
+                    Ok(catalog) => {
+                        if let Err(err) =
+                            catnap::db::upsert_catalog_configs(&state.db, &catalog.configs).await
+                        {
+                            warn!(error = %err, "failed to persist upstream catalog");
+                            return;
+                        }
+                        *state.catalog.write().await = catalog;
+                        info!(attempt, "upstream catalog refreshed");
                         return;
                     }
-                    *state.catalog.write().await = catalog;
-                    info!("upstream catalog refreshed");
-                }
-                Err(err) => {
-                    warn!(error = %err, "failed to fetch upstream catalog");
+                    Err(err) => {
+                        if attempt >= STARTUP_FETCH_MAX_ATTEMPTS {
+                            warn!(error = %err, attempt, "failed to fetch upstream catalog");
+                            return;
+                        }
+                        let delay_secs = (attempt as u64).saturating_mul(3).min(18);
+                        warn!(
+                            error = %err,
+                            attempt,
+                            next_retry_in_secs = delay_secs,
+                            "failed to fetch upstream catalog; retrying"
+                        );
+                        tokio::time::sleep(Duration::from_secs(delay_secs)).await;
+                    }
                 }
             }
         }
