@@ -247,6 +247,18 @@ async fn run_full_refresh_job(
                 }
             }
         }
+        if action == "cache" {
+            let region_notices_ready = {
+                let snap = app.catalog.read().await;
+                !snap.region_notices.is_empty()
+            };
+            if !region_notices_ready {
+                // Bootstrap may have config/region cache but no notice snapshot yet.
+                // In that case, force one fetch pass to initialize region notices.
+                action = "fetch".to_string();
+                note = Some("cache bypass: region notices not initialized".to_string());
+            }
+        }
 
         mgr.update_progress(
             done,

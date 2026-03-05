@@ -436,15 +436,21 @@ pub fn parse_region_notice(html: &str) -> Option<String> {
     let doc = Html::parse_document(html);
     let area = Selector::parse(".secondgroup_box .secondgroup_box_area.yy-dtjbt-text").unwrap();
 
-    let mut notice = None;
+    let mut parts = Vec::new();
     for el in doc.select(&area) {
         let text = normalize_text(&el.text().collect::<String>());
         if text.is_empty() || is_region_title_only(&text) {
             continue;
         }
-        notice = Some(text);
+        if !parts.iter().any(|v| v == &text) {
+            parts.push(text);
+        }
     }
-    notice
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(" "))
+    }
 }
 
 pub fn parse_configs(fid: &str, gid: Option<&str>, html: &str) -> Vec<ConfigBase> {
@@ -831,6 +837,27 @@ mod tests {
         </body></html>
         "#;
         assert_eq!(parse_region_notice(html), None);
+    }
+
+    #[test]
+    fn parse_region_notice_merges_multiple_notice_blocks() {
+        let html = r#"
+        <html><body>
+          <div class="secondgroup_box mb-2 flex-column p-2">
+            <div class="secondgroup_box_area yy-dtjbt-text">📍可用区域</div>
+          </div>
+          <div class="secondgroup_box mb-2">
+            <div class="secondgroup_box_area yy-dtjbt-text">第一条说明</div>
+          </div>
+          <div class="secondgroup_box mb-2">
+            <div class="secondgroup_box_area yy-dtjbt-text">第二条说明</div>
+          </div>
+        </body></html>
+        "#;
+        assert_eq!(
+            parse_region_notice(html),
+            Some("第一条说明 第二条说明".to_string())
+        );
     }
 
     #[test]
