@@ -1164,8 +1164,19 @@ select {
   align-items: flex-start;
 }
 
+.settings-site-controls {
+  align-items: flex-start;
+}
+
 .settings-input-wide {
-  width: 848px;
+  width: min(100%, 848px);
+  max-width: 100%;
+  min-width: 0;
+}
+
+.settings-input-wide > .pill {
+  width: 100%;
+  max-width: 100%;
 }
 
 .settings-error-bubble {

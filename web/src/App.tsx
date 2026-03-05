@@ -2831,9 +2831,9 @@ export function SettingsViewPanel({
       <div className="panel-section">
         <div className="panel-title">站点地址（用于通知跳转链接）</div>
         <div className="panel-subtitle">默认值：window.location.origin（用户可修改）</div>
-        <div className="controls">
+        <div className="controls settings-site-controls">
           <div className="settings-input-wrap settings-input-wide">
-            <div className="pill" style={{ width: "848px" }}>
+            <div className="pill" style={{ width: "100%" }}>
               <input
                 placeholder={window.location.origin}
                 value={siteBaseUrlInput}
