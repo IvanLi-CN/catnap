@@ -2257,13 +2257,7 @@ export function MonitoringSection({
   );
 }
 
-type SettingsFieldKey =
-  | "intervalMinutes"
-  | "jitterPct"
-  | "siteBaseUrl"
-  | "autoIntervalHours"
-  | "tgTarget"
-  | "tgBotToken";
+type SettingsFieldKey = "intervalMinutes" | "jitterPct" | "siteBaseUrl" | "autoIntervalHours";
 
 type SettingsSaveState = {
   kind: "idle" | "saving" | "saved" | "error";
@@ -2625,14 +2619,12 @@ export function SettingsViewPanel({
       const validated = validateDraft(draft, reportInvalid);
       const next = clonePersistedSnapshot(lastPersistedRef.current);
       let changed = false;
-      const changedFields: SettingsFieldKey[] = [];
 
       if (validated.intervalMinutes.valid) {
         const value = validated.intervalMinutes.value as number;
         if (value !== next.poll.intervalMinutes) {
           next.poll.intervalMinutes = value;
           changed = true;
-          changedFields.push("intervalMinutes");
         }
       }
 
@@ -2641,7 +2633,6 @@ export function SettingsViewPanel({
         if (value !== next.poll.jitterPct) {
           next.poll.jitterPct = value;
           changed = true;
-          changedFields.push("jitterPct");
         }
       }
 
@@ -2650,7 +2641,6 @@ export function SettingsViewPanel({
         if (value !== next.siteBaseUrl) {
           next.siteBaseUrl = value;
           changed = true;
-          changedFields.push("siteBaseUrl");
         }
       }
 
@@ -2659,7 +2649,6 @@ export function SettingsViewPanel({
         if (value !== next.catalogRefresh.autoIntervalHours) {
           next.catalogRefresh.autoIntervalHours = value;
           changed = true;
-          changedFields.push("autoIntervalHours");
         }
       }
 
@@ -2682,14 +2671,12 @@ export function SettingsViewPanel({
       if (nextTarget !== next.notifications.telegram.target) {
         next.notifications.telegram.target = nextTarget;
         changed = true;
-        changedFields.push("tgTarget");
       }
 
       const nextBotToken = normalizeOptionalText(draft.tgBotTokenInput);
       if (nextBotToken !== next.telegramBotToken) {
         next.telegramBotToken = nextBotToken;
         changed = true;
-        changedFields.push("tgBotToken");
       }
 
       if (draft.wpEnabled !== next.notifications.webPush.enabled) {
@@ -2719,9 +2706,6 @@ export function SettingsViewPanel({
         const committed = buildPersistedSnapshotFromSettings(updated);
         committed.telegramBotToken = next.telegramBotToken;
         setLastPersisted(committed);
-        for (const field of changedFields) {
-          setFieldError(field, null);
-        }
 
         if (validated.invalidFields.length > 0) {
           setSaveState({ kind: "error", message: "已保存合法字段，仍有字段需要修正" });
@@ -2735,15 +2719,11 @@ export function SettingsViewPanel({
           return { requested: true, saved: false, invalidFields: validated.invalidFields };
         }
         const msg = e instanceof Error ? e.message : String(e);
-        const targetField = changedFields[0];
-        if (targetField) {
-          setFieldError(targetField, msg);
-        }
         setSaveState({ kind: "error", message: msg });
         return { requested: true, saved: false, invalidFields: validated.invalidFields };
       }
     },
-    [onSave, setFieldError, validateDraft],
+    [onSave, validateDraft],
   );
 
   const scheduleAutosave = useCallback(
@@ -2787,14 +2767,19 @@ export function SettingsViewPanel({
     ) : null;
   const renderSaveStateMessage = () => {
     if (!saveState.message) return null;
-    if (saveState.kind === "saving" || saveState.kind === "saved") {
+    if (saveState.kind !== "error") {
       return (
         <div className="muted" style={{ marginTop: 12 }}>
           {saveState.message}
         </div>
       );
     }
-    return null;
+    return (
+      <div className="settings-status-bubble" role="alert">
+        <span className="settings-error-badge">!</span>
+        <span>{saveState.message}</span>
+      </div>
+    );
   };
 
   return (
@@ -3016,41 +3001,33 @@ export function SettingsViewPanel({
 
         <div className="settings-row">
           <div>Bot Token（不回显）</div>
-          <div className="settings-input-wrap">
-            <div className="pill">
-              <input
-                type="password"
-                placeholder={
-                  bootstrap.settings.notifications.telegram.configured ? "••••••••••••••••" : ""
-                }
-                value={tgBotTokenInput}
-                onChange={(e) => {
-                  const value = e.target.value;
-                  setTgBotTokenInput(value);
-                  setFieldError("tgBotToken", null);
-                  scheduleAutosave({ tgBotTokenInput: value });
-                }}
-              />
-            </div>
-            {renderFieldError("tgBotToken")}
+          <div className="pill">
+            <input
+              type="password"
+              placeholder={
+                bootstrap.settings.notifications.telegram.configured ? "••••••••••••••••" : ""
+              }
+              value={tgBotTokenInput}
+              onChange={(e) => {
+                const value = e.target.value;
+                setTgBotTokenInput(value);
+                scheduleAutosave({ tgBotTokenInput: value });
+              }}
+            />
           </div>
         </div>
 
         <div className="settings-row" style={{ marginTop: "16px" }}>
           <div>Target（chat id 或频道）</div>
-          <div className="settings-input-wrap">
-            <div className="pill">
-              <input
-                value={tgTargetInput}
-                onChange={(e) => {
-                  const value = e.target.value;
-                  setTgTargetInput(value);
-                  setFieldError("tgTarget", null);
-                  scheduleAutosave({ tgTargetInput: value });
-                }}
-              />
-            </div>
-            {renderFieldError("tgTarget")}
+          <div className="pill">
+            <input
+              value={tgTargetInput}
+              onChange={(e) => {
+                const value = e.target.value;
+                setTgTargetInput(value);
+                scheduleAutosave({ tgTargetInput: value });
+              }}
+            />
           </div>
         </div>
 
