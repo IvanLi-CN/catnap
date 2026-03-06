@@ -26,6 +26,7 @@
 
 | ID   | Title | Status | Spec | Last | Notes |
 |-----:|-------|--------|------|------|-------|
+| z9x5g | 通知文案优化：简洁告警风格 | 部分完成（3/4） | `z9x5g-notification-copy-optimization/SPEC.md` | 2026-03-07 | 文案 builder + 通知链路接入完成；待 fast-track 收口 |
 | zuhzt | 补齐可用区域说明并替换无效分组文案 | 已完成 | `zuhzt-region-notice-sync/SPEC.md` | 2026-03-05 | PR #55：区域说明链路上线 + review-loop 收敛完成 |
 | pc6du | 移动端响应式适配与 Storybook 全断点 DOM 验收 | 已完成 | `pc6du-mobile-responsive-breakpoints/SPEC.md` | 2026-03-04 | PR #54（run #154 checks 全绿）；35 场景 DOM 验收 + 断点边界修正完成 |
 | 35uke | 修复付费周期识别：年付被误判为月付 | 已完成 | `35uke-billing-period-detection-fix/SPEC.md` | 2026-03-03 | PR #52（run #145 checks 全绿） |

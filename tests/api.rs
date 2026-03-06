@@ -8,7 +8,7 @@ use sqlx::Row;
 use sqlx::SqlitePool;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
-    Arc,
+    Arc, Mutex,
 };
 use time::OffsetDateTime;
 use tower::ServiceExt;
@@ -777,6 +777,53 @@ async fn telegram_test_returns_5xx_when_upstream_fails() {
 }
 
 #[tokio::test]
+async fn telegram_test_uses_friendly_default_text() {
+    let captured = Arc::new(Mutex::new(None::<serde_json::Value>));
+    let captured2 = captured.clone();
+    let tg = axum::Router::new().route(
+        "/*path",
+        axum::routing::post(move |body: axum::Json<serde_json::Value>| {
+            let captured = captured2.clone();
+            async move {
+                *captured.lock().unwrap() = Some(body.0);
+                StatusCode::OK
+            }
+        }),
+    );
+    let base = spawn_stub_server(tg).await;
+
+    let mut cfg = test_config();
+    cfg.telegram_api_base_url = base;
+    let t = make_app_with_config(cfg).await;
+
+    ensure_user_exists(&t, "u_1").await;
+    save_telegram_settings(&t, "u_1", "t", "@c").await;
+
+    let (status, json) = post_telegram_test(
+        &t,
+        "u_1",
+        serde_json::json!({ "botToken": null, "target": null, "text": null }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["ok"], true);
+
+    let payload = captured
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("telegram request captured");
+    let text = payload["text"].as_str().expect("telegram text payload");
+    assert!(text.starts_with(
+        "【Telegram 测试】通知配置正常
+如果你看到这条消息，说明 Catnap 已可发送 Telegram 通知。
+时间："
+    ));
+    assert!(!text.contains("user="));
+    assert!(!text.contains("catnap 测试消息"));
+}
+
+#[tokio::test]
 async fn telegram_test_surfaces_migrate_to_chat_id_hint() {
     let tg = axum::Router::new().route(
         "/*path",
@@ -1143,12 +1190,7 @@ async fn web_push_test_hits_subscription_endpoint() {
     .await
     .unwrap();
 
-    let bytes = serde_json::to_vec(&serde_json::json!({
-        "title": "catnap",
-        "body": "test",
-        "url": "/settings"
-    }))
-    .unwrap();
+    let bytes = serde_json::to_vec(&serde_json::json!({})).unwrap();
 
     let res = t
         .app

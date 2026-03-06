@@ -3393,11 +3393,7 @@ export function SettingsViewPanel({
                   await api<{ ok: true }>("/api/notifications/web-push/test", {
                     method: "POST",
                     headers: { "content-type": "application/json" },
-                    body: JSON.stringify({
-                      title: "catnap",
-                      body: `测试通知 ${new Date().toISOString()}`,
-                      url: "/settings",
-                    }),
+                    body: JSON.stringify({}),
                   });
 
                   setWpTestStatus("已发送（如权限/订阅正常，应很快弹出通知）。");

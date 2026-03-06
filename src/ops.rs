@@ -1,4 +1,6 @@
 use crate::config::RuntimeConfig;
+use crate::models::Money;
+use crate::notification_content::{self, LifecycleEventKind};
 use crate::notifications;
 use crate::upstream::{CatalogSnapshot, UpstreamClient};
 use serde::{Deserialize, Serialize};
@@ -1198,7 +1200,7 @@ WHERE monitoring_events_delisted_enabled = 1
         async fn load_configs(
             db: &SqlitePool,
             ids: &[String],
-        ) -> anyhow::Result<Vec<(String, String, f64, i64)>> {
+        ) -> anyhow::Result<Vec<(String, String, Money, i64)>> {
             if ids.is_empty() {
                 return Ok(Vec::new());
             }
@@ -1207,7 +1209,7 @@ WHERE monitoring_events_delisted_enabled = 1
                 .join(",");
             let sql = format!(
                 r#"
-SELECT id, name, price_amount, inventory_quantity
+SELECT id, name, price_amount, price_currency, price_period, inventory_quantity
 FROM catalog_configs
 WHERE id IN ({placeholders})
 "#
@@ -1223,8 +1225,12 @@ WHERE id IN ({placeholders})
                     (
                         r.get::<String, _>(0),
                         r.get::<String, _>(1),
-                        r.get::<f64, _>(2),
-                        r.get::<i64, _>(3),
+                        Money {
+                            amount: r.get::<f64, _>(2),
+                            currency: r.get::<String, _>(3),
+                            period: r.get::<String, _>(4),
+                        },
+                        r.get::<i64, _>(5),
                     )
                 })
                 .collect())
@@ -1243,8 +1249,17 @@ WHERE id IN ({placeholders})
 
             for (id, name, price, qty) in listed.iter() {
                 let url = site_base_url.as_deref().unwrap_or("").trim_end_matches('/');
-                let msg =
-                    format!("[listed] {name} ({id}) qty={qty} price={price} {url}/monitoring");
+                let msg = format!(
+                    "[listed] {name} ({id}) qty={qty} price={} {url}/monitoring",
+                    price.amount
+                );
+                let notification = notification_content::build_lifecycle_notification(
+                    LifecycleEventKind::Listed,
+                    name,
+                    *qty,
+                    price,
+                    site_base_url.as_deref(),
+                );
                 let _ = crate::db::insert_log(
                     &self.inner.db,
                     Some(&user_id),
@@ -1269,7 +1284,7 @@ WHERE id IN ({placeholders})
                             &self.inner.cfg.telegram_api_base_url,
                             token,
                             target,
-                            &msg,
+                            &notification.telegram_text,
                         )
                         .await
                         {
@@ -1314,9 +1329,9 @@ WHERE id IN ({placeholders})
                         Ok(Some(sub)) => match notifications::send_web_push(
                             &self.inner.cfg,
                             &sub,
-                            "catnap",
-                            &msg,
-                            "/monitoring",
+                            &notification.web_push_title,
+                            &notification.web_push_body,
+                            &notification.web_push_url,
                         )
                         .await
                         {
@@ -1362,8 +1377,17 @@ WHERE id IN ({placeholders})
 
             for (id, name, price, qty) in delisted.iter() {
                 let url = site_base_url.as_deref().unwrap_or("").trim_end_matches('/');
-                let msg =
-                    format!("[delisted] {name} ({id}) qty={qty} price={price} {url}/monitoring");
+                let msg = format!(
+                    "[delisted] {name} ({id}) qty={qty} price={} {url}/monitoring",
+                    price.amount
+                );
+                let notification = notification_content::build_lifecycle_notification(
+                    LifecycleEventKind::Delisted,
+                    name,
+                    *qty,
+                    price,
+                    site_base_url.as_deref(),
+                );
                 let _ = crate::db::insert_log(
                     &self.inner.db,
                     Some(&user_id),
@@ -1388,7 +1412,7 @@ WHERE id IN ({placeholders})
                             &self.inner.cfg.telegram_api_base_url,
                             token,
                             target,
-                            &msg,
+                            &notification.telegram_text,
                         )
                         .await
                         {
@@ -1433,9 +1457,9 @@ WHERE id IN ({placeholders})
                         Ok(Some(sub)) => match notifications::send_web_push(
                             &self.inner.cfg,
                             &sub,
-                            "catnap",
-                            &msg,
-                            "/monitoring",
+                            &notification.web_push_title,
+                            &notification.web_push_body,
+                            &notification.web_push_url,
                         )
                         .await
                         {

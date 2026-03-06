@@ -109,6 +109,22 @@ curl -sS \
 
 保存后可点击「测试 Telegram」立即验证配置是否可用；测试请求不会在 API 响应或日志中泄漏 token 明文。
 
+当前默认通知文案示例：
+
+```text
+【补货 + 价格变动】芬兰特惠年付 Mini
+库存 0 → 3｜价格 ¥4.99 → ¥3.99 / 年
+查看监控：https://catnap.example/monitoring
+```
+
+```text
+【Telegram 测试】通知配置正常
+如果你看到这条消息，说明 Catnap 已可发送 Telegram 通知。
+时间：2026-03-06 15:00:00Z
+```
+
+说明：用户通知默认不展示 raw `lc:*` 配置 ID；机器可读的技术文案仍保留在日志中。
+
 常见排障建议：
 
 - `chat not found`：先确认 `target` 是否正确（频道用户名用 `@channelusername`，群/超级群通常是数字 id）。
@@ -133,6 +149,12 @@ export CATNAP_WEB_PUSH_VAPID_SUBJECT='mailto:you@example.com'
 ```
 
 > 浏览器 Push 通常要求 HTTPS（或 localhost）。
+
+当前默认 Web Push 文案示例：
+
+- title: `Catnap · 新上架`
+- body: `芬兰特惠年付 Mini｜库存 5｜¥4.99 / 年`
+- test title/body: `Catnap · 测试通知` / `Web Push 已连通，点击返回设置页。`
 
 ## 常用命令
 

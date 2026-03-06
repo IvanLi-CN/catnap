@@ -1,4 +1,5 @@
 use crate::{app::AppState, db};
+use crate::{models::Money, notification_content};
 use sqlx::Row;
 use std::collections::HashMap;
 use time::OffsetDateTime;
@@ -104,6 +105,13 @@ async fn poll_once(
     user_id: &str,
     settings: &db::SettingsRow,
 ) -> anyhow::Result<()> {
+    #[derive(Clone)]
+    struct PollState {
+        inventory_quantity: i64,
+        price: Money,
+        digest: String,
+    }
+
     let enabled = db::list_enabled_monitoring_config_ids(&state.db, user_id).await?;
     if enabled.is_empty() {
         return Ok(());
@@ -133,7 +141,7 @@ async fn poll_once(
             .collect::<Vec<_>>()
             .join(",");
         let sql = format!(
-            r#"SELECT id, inventory_quantity, price_amount, config_digest
+            r#"SELECT id, inventory_quantity, price_amount, price_currency, price_period, config_digest
                FROM catalog_configs
                WHERE id IN ({placeholders})"#
         );
@@ -142,15 +150,19 @@ async fn poll_once(
             q = q.bind(id);
         }
         let old_rows = q.fetch_all(&state.db).await?;
-        let mut old_by_id: HashMap<String, (i64, f64, String)> = HashMap::new();
+        let mut old_by_id: HashMap<String, PollState> = HashMap::new();
         for r in old_rows {
             old_by_id.insert(
                 r.get::<String, _>(0),
-                (
-                    r.get::<i64, _>(1),
-                    r.get::<f64, _>(2),
-                    r.get::<String, _>(3),
-                ),
+                PollState {
+                    inventory_quantity: r.get::<i64, _>(1),
+                    price: Money {
+                        amount: r.get::<f64, _>(2),
+                        currency: r.get::<String, _>(3),
+                        period: r.get::<String, _>(4),
+                    },
+                    digest: r.get::<String, _>(5),
+                },
             );
         }
 
@@ -163,7 +175,7 @@ async fn poll_once(
         for id in ids {
             let old = old_by_id.get(&id).cloned();
             let new_row = sqlx::query(
-                r#"SELECT name, inventory_quantity, price_amount, config_digest
+                r#"SELECT name, inventory_quantity, price_amount, price_currency, price_period, config_digest
                    FROM catalog_configs
                    WHERE id = ?"#,
             )
@@ -174,20 +186,42 @@ async fn poll_once(
             let new_name = new_row.get::<String, _>(0);
             let new_qty = new_row.get::<i64, _>(1);
             let new_price = new_row.get::<f64, _>(2);
-            let new_digest = new_row.get::<String, _>(3);
+            let new_state = PollState {
+                inventory_quantity: new_qty,
+                price: Money {
+                    amount: new_price,
+                    currency: new_row.get::<String, _>(3),
+                    period: new_row.get::<String, _>(4),
+                },
+                digest: new_row.get::<String, _>(5),
+            };
 
-            let mut events = Vec::new();
-            if let Some((old_qty, old_price, old_digest)) = old {
-                if old_qty == 0 && new_qty > 0 {
-                    events.push("restock");
-                }
-                if (old_price - new_price).abs() > f64::EPSILON {
-                    events.push("price");
-                }
-                if old_digest != new_digest {
-                    events.push("config");
-                }
-            }
+            let notification = old.as_ref().and_then(|old_state| {
+                notification_content::build_monitoring_change_notification(
+                    &new_name,
+                    &notification_content::MonitoringSnapshot {
+                        inventory_quantity: old_state.inventory_quantity,
+                        price: &old_state.price,
+                        digest: &old_state.digest,
+                    },
+                    &notification_content::MonitoringSnapshot {
+                        inventory_quantity: new_state.inventory_quantity,
+                        price: &new_state.price,
+                        digest: &new_state.digest,
+                    },
+                    settings.site_base_url.as_deref(),
+                )
+            });
+
+            let events = notification
+                .as_ref()
+                .map(|item| {
+                    item.events
+                        .iter()
+                        .map(|event| event.as_str())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
 
             if !events.is_empty() {
                 let msg = format!(
@@ -211,7 +245,10 @@ async fn poll_once(
                                 &state.config.telegram_api_base_url,
                                 token,
                                 target,
-                                &msg,
+                                &notification
+                                    .as_ref()
+                                    .expect("notification exists when events exist")
+                                    .telegram_text,
                             )
                             .await
                             {
