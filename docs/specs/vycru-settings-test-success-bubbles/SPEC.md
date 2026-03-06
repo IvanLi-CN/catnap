@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 部分完成（3/4）
+- Status: 已完成
 - Created: 2026-03-06
 - Last: 2026-03-06
 
@@ -67,13 +67,34 @@
 - [x] M1: 通用反馈气泡组件支持 `error` / `success` tone 与可访问性语义
 - [x] M2: Telegram / Web Push 成功态切换为气泡，并加入 4 秒自动消失
 - [x] M3: Storybook 成功场景与交互断言通过
-- [ ] M4: 视觉证据入库并用于 PR
+- [x] M4: 视觉证据入库并用于 PR
 
 ## Visual Evidence (PR)
 
-- 待补充
+- source_type: storybook_canvas
+  target_program: mock-only
+  capture_scope: browser-viewport
+  sensitive_exclusion: N/A
+  submission_gate: pending-owner-approval
+  story_id_or_title: Pages/SettingsViewPanel/TelegramSuccessBubble
+  state: success-visible
+  evidence_note: 验证 Telegram 测试成功后，按钮左侧出现 success bubble。
+  image:
+  ![Telegram success bubble](./assets/telegram-success-bubble.png)
+
+- source_type: storybook_canvas
+  target_program: mock-only
+  capture_scope: browser-viewport
+  sensitive_exclusion: N/A
+  submission_gate: pending-owner-approval
+  story_id_or_title: Pages/SettingsViewPanel/WebPushSuccessBubble
+  state: success-visible
+  evidence_note: 验证 Web Push 测试成功后，按钮左侧出现 success bubble。
+  image:
+  ![Web Push success bubble](./assets/web-push-success-bubble.png)
 
 ## 变更记录（Change log）
 
 - 2026-03-06: 创建 follow-up spec，范围锁定为设置页通知测试成功反馈气泡化。
 - 2026-03-06: 完成前端 success bubble 与 Storybook 交互验收；待补充 PR 视觉证据。
+- 2026-03-06: 采集 Storybook 视觉证据并写入 spec，等待图片提交授权后推送。
