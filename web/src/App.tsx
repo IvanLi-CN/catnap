@@ -38,6 +38,8 @@ type ApiError = {
   error: { code: string; message: string };
 };
 
+export const SETTINGS_TEST_SUCCESS_BUBBLE_MS = 4_000;
+
 class ApiHttpError extends Error {
   status: number;
   statusText: string;
@@ -2474,15 +2476,29 @@ function snapshotToOnSaveInput(
   };
 }
 
-function SettingsErrorBubble({
+type SettingsFeedbackTone = "error" | "success";
+
+function clearFeedbackTimer(timerRef: { current: number | null }) {
+  if (timerRef.current !== null) {
+    window.clearTimeout(timerRef.current);
+    timerRef.current = null;
+  }
+}
+
+function SettingsFeedbackBubble({
   message,
   onClose,
+  tone,
+  testId,
 }: {
   message: string;
   onClose: () => void;
+  tone: SettingsFeedbackTone;
+  testId?: string;
 }) {
   const textRef = useRef<HTMLSpanElement | null>(null);
   const [isMultiline, setIsMultiline] = useState(false);
+  const isSuccess = tone === "success";
 
   useLayoutEffect(() => {
     const textEl = textRef.current;
@@ -2510,16 +2526,22 @@ function SettingsErrorBubble({
 
   return (
     <div
-      className={`settings-error-bubble ${isMultiline ? "is-multiline" : "is-singleline"}`}
-      role="alert"
+      aria-live={isSuccess ? "polite" : undefined}
+      className={`settings-feedback-bubble settings-feedback-bubble-${tone} ${
+        isMultiline ? "is-multiline" : "is-singleline"
+      }`}
+      data-testid={testId}
+      role={isSuccess ? "status" : "alert"}
     >
-      <span className="settings-error-badge">!</span>
-      <span className="settings-error-text" ref={textRef}>
+      <span className={`settings-feedback-badge settings-feedback-badge-${tone}`}>
+        {isSuccess ? "✓" : "!"}
+      </span>
+      <span className="settings-feedback-text" ref={textRef}>
         {message}
       </span>
       <button
         aria-label="关闭提示"
-        className="settings-error-close"
+        className="settings-feedback-close"
         onClick={onClose}
         type="button"
       >
@@ -2588,6 +2610,8 @@ export function SettingsViewPanel({
   );
 
   const autosaveTimerRef = useRef<number | null>(null);
+  const tgTestSuccessTimerRef = useRef<number | null>(null);
+  const wpTestSuccessTimerRef = useRef<number | null>(null);
   const saveSeqRef = useRef(0);
   const lastPersistedRef = useRef(lastPersisted);
 
@@ -2597,13 +2621,40 @@ export function SettingsViewPanel({
 
   useEffect(
     () => () => {
-      if (autosaveTimerRef.current !== null) {
-        window.clearTimeout(autosaveTimerRef.current);
-        autosaveTimerRef.current = null;
-      }
+      clearFeedbackTimer(autosaveTimerRef);
+      clearFeedbackTimer(tgTestSuccessTimerRef);
+      clearFeedbackTimer(wpTestSuccessTimerRef);
     },
     [],
   );
+
+  const clearTgTestStatus = useCallback(() => {
+    clearFeedbackTimer(tgTestSuccessTimerRef);
+    setTgTestStatus(null);
+  }, []);
+
+  const showTgTestStatus = useCallback((message: string) => {
+    clearFeedbackTimer(tgTestSuccessTimerRef);
+    setTgTestStatus(message);
+    tgTestSuccessTimerRef.current = window.setTimeout(() => {
+      tgTestSuccessTimerRef.current = null;
+      setTgTestStatus(null);
+    }, SETTINGS_TEST_SUCCESS_BUBBLE_MS);
+  }, []);
+
+  const clearWpTestStatus = useCallback(() => {
+    clearFeedbackTimer(wpTestSuccessTimerRef);
+    setWpTestStatus(null);
+  }, []);
+
+  const showWpTestStatus = useCallback((message: string) => {
+    clearFeedbackTimer(wpTestSuccessTimerRef);
+    setWpTestStatus(message);
+    wpTestSuccessTimerRef.current = window.setTimeout(() => {
+      wpTestSuccessTimerRef.current = null;
+      setWpTestStatus(null);
+    }, SETTINGS_TEST_SUCCESS_BUBBLE_MS);
+  }, []);
 
   const wpKey = bootstrap.settings.notifications.webPush.vapidPublicKey;
   const wpSupported = "serviceWorker" in navigator && "PushManager" in window;
@@ -2912,7 +2963,40 @@ export function SettingsViewPanel({
   const renderFieldError = (field: SettingsFieldKey) => {
     const message = fieldErrors[field];
     if (!message) return null;
-    return <SettingsErrorBubble message={message} onClose={() => setFieldError(field, null)} />;
+    return (
+      <SettingsFeedbackBubble
+        message={message}
+        onClose={() => setFieldError(field, null)}
+        tone="error"
+      />
+    );
+  };
+
+  const renderActionFeedback = (
+    field: SettingsFieldKey,
+    successMessage: string | null,
+    onCloseSuccess: () => void,
+    successTestId?: string,
+  ) => {
+    const errorMessage = fieldErrors[field];
+    if (errorMessage) {
+      return (
+        <SettingsFeedbackBubble
+          message={errorMessage}
+          onClose={() => setFieldError(field, null)}
+          tone="error"
+        />
+      );
+    }
+    if (!successMessage) return null;
+    return (
+      <SettingsFeedbackBubble
+        message={successMessage}
+        onClose={onCloseSuccess}
+        tone="success"
+        testId={successTestId}
+      />
+    );
   };
   const renderSaveStateMessage = () => {
     if (!saveState.message) return null;
@@ -3153,6 +3237,7 @@ export function SettingsViewPanel({
               style={{ width: "92px" }}
               onClick={() => {
                 const next = !tgEnabled;
+                clearTgTestStatus();
                 setTgEnabled(next);
                 setFieldError("tgEnabled", null);
                 void flushAutosaveImmediate({ tgEnabled: next }, "tgEnabled");
@@ -3176,6 +3261,7 @@ export function SettingsViewPanel({
                 value={tgBotTokenInput}
                 onChange={(e) => {
                   const value = e.target.value;
+                  clearTgTestStatus();
                   setTgBotTokenInput(value);
                   setFieldError("tgBotToken", null);
                   scheduleAutosave({ tgBotTokenInput: value }, "tgBotToken");
@@ -3194,6 +3280,7 @@ export function SettingsViewPanel({
                 value={tgTargetInput}
                 onChange={(e) => {
                   const value = e.target.value;
+                  clearTgTestStatus();
                   setTgTargetInput(value);
                   setFieldError("tgTarget", null);
                   scheduleAutosave({ tgTargetInput: value }, "tgTarget");
@@ -3204,8 +3291,6 @@ export function SettingsViewPanel({
           </div>
         </div>
 
-        {tgTestStatus ? <div className="muted">{tgTestStatus}</div> : null}
-
         <div className="settings-actions">
           <div className="settings-action-wrap settings-action-wrap-bubble-left">
             <button
@@ -3214,7 +3299,7 @@ export function SettingsViewPanel({
               disabled={saving || tgTestPending}
               onClick={async () => {
                 setTgTestPending(true);
-                setTgTestStatus(null);
+                clearTgTestStatus();
                 setFieldError("tgTestAction", null);
                 try {
                   await api<{ ok: true }>("/api/notifications/telegram/test", {
@@ -3226,9 +3311,10 @@ export function SettingsViewPanel({
                       text: null,
                     }),
                   });
-                  setTgTestStatus("已发送。");
+                  showTgTestStatus("已发送。");
                   setFieldError("tgTestAction", null);
                 } catch (e) {
+                  clearTgTestStatus();
                   setFieldError("tgTestAction", e instanceof Error ? e.message : String(e));
                 } finally {
                   setTgTestPending(false);
@@ -3237,7 +3323,12 @@ export function SettingsViewPanel({
             >
               {tgTestPending ? "测试中…" : "测试 Telegram"}
             </button>
-            {renderFieldError("tgTestAction")}
+            {renderActionFeedback(
+              "tgTestAction",
+              tgTestStatus,
+              clearTgTestStatus,
+              "settings-feedback-tg-test",
+            )}
           </div>
         </div>
 
@@ -3254,6 +3345,7 @@ export function SettingsViewPanel({
               style={{ width: "92px" }}
               onClick={() => {
                 const next = !wpEnabled;
+                clearWpTestStatus();
                 setWpEnabled(next);
                 setFieldError("wpEnabled", null);
                 void flushAutosaveImmediate({ wpEnabled: next }, "wpEnabled");
@@ -3276,8 +3368,6 @@ export function SettingsViewPanel({
           </div>
         ) : null}
         {wpStatus ? <div className="muted">{wpStatus}</div> : null}
-        {wpTestStatus ? <div className="muted">{wpTestStatus}</div> : null}
-
         <div className="settings-actions">
           <div className="settings-action-wrap settings-action-wrap-bubble-left">
             <button
@@ -3349,7 +3439,7 @@ export function SettingsViewPanel({
               disabled={saving || wpTestPending}
               onClick={async () => {
                 setWpTestPending(true);
-                setWpTestStatus(null);
+                clearWpTestStatus();
                 setFieldError("wpTestAction", null);
                 try {
                   if (!wpSupported) throw new Error("当前浏览器不支持 Push");
@@ -3400,9 +3490,10 @@ export function SettingsViewPanel({
                     }),
                   });
 
-                  setWpTestStatus("已发送（如权限/订阅正常，应很快弹出通知）。");
+                  showWpTestStatus("已发送（如权限/订阅正常，应很快弹出通知）。");
                   setFieldError("wpTestAction", null);
                 } catch (e) {
+                  clearWpTestStatus();
                   setFieldError("wpTestAction", e instanceof Error ? e.message : String(e));
                 } finally {
                   setWpTestPending(false);
@@ -3411,7 +3502,12 @@ export function SettingsViewPanel({
             >
               {wpTestPending ? "测试中…" : "测试 Web Push"}
             </button>
-            {renderFieldError("wpTestAction")}
+            {renderActionFeedback(
+              "wpTestAction",
+              wpTestStatus,
+              clearWpTestStatus,
+              "settings-feedback-wp-test",
+            )}
           </div>
         </div>
       </div>

@@ -51,6 +51,8 @@
   --pill-err-border: rgba(180, 35, 24, 0.45);
   --error-bubble-bg: #fdecea;
   --error-bubble-border: rgba(180, 35, 24, 0.5);
+  --success-bubble-bg: rgba(42, 138, 85, 0.14);
+  --success-bubble-border: rgba(42, 138, 85, 0.45);
 
   /* Semi-transparent badges for card overlays (trend visible underneath) */
   --badge: rgba(11, 18, 32, 0.06);
@@ -102,6 +104,8 @@
   --pill-err-border: rgba(138, 42, 42, 0.9);
   --error-bubble-bg: #3b1a1a;
   --error-bubble-border: rgba(138, 42, 42, 0.95);
+  --success-bubble-bg: #173428;
+  --success-bubble-border: rgba(42, 138, 85, 0.85);
 
   --badge: rgba(16, 31, 58, 0.72);
   --badge-border: rgba(27, 42, 74, 0.55);
@@ -162,6 +166,8 @@
     --pill-err-border: rgba(138, 42, 42, 0.9);
     --error-bubble-bg: #3b1a1a;
     --error-bubble-border: rgba(138, 42, 42, 0.95);
+    --success-bubble-bg: #173428;
+    --success-bubble-border: rgba(42, 138, 85, 0.85);
 
     --badge: rgba(16, 31, 58, 0.72);
     --badge-border: rgba(27, 42, 74, 0.55);
@@ -1205,7 +1211,9 @@ select {
   max-width: 100%;
 }
 
-.settings-error-bubble {
+.settings-feedback-bubble {
+  --settings-feedback-bubble-bg: var(--error-bubble-bg);
+  --settings-feedback-bubble-border: var(--error-bubble-border);
   position: absolute;
   top: calc(100% + 8px);
   left: 0;
@@ -1217,10 +1225,10 @@ select {
   max-width: min(460px, calc(100vw - 36px));
   padding: 10px 36px 10px 12px;
   border-radius: var(--r10);
-  border: 1px solid var(--error-bubble-border);
-  background: var(--error-bubble-bg);
+  border: 1px solid var(--settings-feedback-bubble-border);
+  background: var(--settings-feedback-bubble-bg);
   box-shadow: 0 6px 14px rgba(0, 0, 0, 0.14);
-  color: var(--fg);
+  color: var(--text);
   font-size: 14px;
   line-height: 1.35;
   overflow-wrap: anywhere;
@@ -1228,47 +1236,52 @@ select {
   pointer-events: auto;
 }
 
-.settings-action-wrap > .settings-error-bubble {
+.settings-feedback-bubble-success {
+  --settings-feedback-bubble-bg: var(--success-bubble-bg);
+  --settings-feedback-bubble-border: var(--success-bubble-border);
+}
+
+.settings-action-wrap > .settings-feedback-bubble {
   top: auto;
   bottom: calc(100% + 8px);
   left: auto;
   right: 0;
 }
 
-.settings-action-wrap-bubble-left > .settings-error-bubble {
+.settings-action-wrap-bubble-left > .settings-feedback-bubble {
   left: 0;
   right: auto;
 }
 
-.settings-action-wrap > .settings-error-bubble::before {
+.settings-action-wrap > .settings-feedback-bubble::before {
   top: auto;
   bottom: -9px;
   left: auto;
   right: 18px;
-  border-top: 8px solid var(--error-bubble-border);
+  border-top: 8px solid var(--settings-feedback-bubble-border);
   border-bottom: 0;
 }
 
-.settings-action-wrap > .settings-error-bubble::after {
+.settings-action-wrap > .settings-feedback-bubble::after {
   top: auto;
   bottom: -8px;
   left: auto;
   right: 19px;
-  border-top: 7px solid var(--error-bubble-bg);
+  border-top: 7px solid var(--settings-feedback-bubble-bg);
   border-bottom: 0;
 }
 
-.settings-action-wrap-bubble-left > .settings-error-bubble::before {
+.settings-action-wrap-bubble-left > .settings-feedback-bubble::before {
   left: 18px;
   right: auto;
 }
 
-.settings-action-wrap-bubble-left > .settings-error-bubble::after {
+.settings-action-wrap-bubble-left > .settings-feedback-bubble::after {
   left: 19px;
   right: auto;
 }
 
-.settings-error-bubble::before {
+.settings-feedback-bubble::before {
   content: "";
   position: absolute;
   top: -9px;
@@ -1277,10 +1290,10 @@ select {
   height: 0;
   border-left: 8px solid transparent;
   border-right: 8px solid transparent;
-  border-bottom: 8px solid var(--error-bubble-border);
+  border-bottom: 8px solid var(--settings-feedback-bubble-border);
 }
 
-.settings-error-bubble::after {
+.settings-feedback-bubble::after {
   content: "";
   position: absolute;
   top: -8px;
@@ -1289,10 +1302,10 @@ select {
   height: 0;
   border-left: 7px solid transparent;
   border-right: 7px solid transparent;
-  border-bottom: 7px solid var(--error-bubble-bg);
+  border-bottom: 7px solid var(--settings-feedback-bubble-bg);
 }
 
-.settings-error-badge {
+.settings-feedback-badge {
   width: 20px;
   height: 20px;
   border-radius: 999px;
@@ -1301,17 +1314,25 @@ select {
   justify-content: center;
   font-weight: 800;
   font-size: 12px;
-  background: var(--badge-err);
-  border: 1px solid var(--badge-err-border);
   color: var(--text);
   flex: 0 0 20px;
 }
 
-.settings-error-text {
+.settings-feedback-badge-error {
+  background: var(--badge-err);
+  border: 1px solid var(--badge-err-border);
+}
+
+.settings-feedback-badge-success {
+  background: var(--badge-on);
+  border: 1px solid var(--badge-on-border);
+}
+
+.settings-feedback-text {
   min-width: 0;
 }
 
-.settings-error-close {
+.settings-feedback-close {
   position: absolute;
   right: 8px;
   width: 24px;
@@ -1330,16 +1351,16 @@ select {
   cursor: pointer;
 }
 
-.settings-error-bubble.is-singleline .settings-error-close {
+.settings-feedback-bubble.is-singleline .settings-feedback-close {
   top: 50%;
   transform: translateY(-50%);
 }
 
-.settings-error-bubble.is-multiline .settings-error-close {
+.settings-feedback-bubble.is-multiline .settings-feedback-close {
   top: 8px;
 }
 
-.settings-error-close:hover {
+.settings-feedback-close:hover {
   background: color-mix(in oklab, var(--surface), transparent 40%);
 }
 
@@ -2136,16 +2157,16 @@ select {
     width: min(100%, 848px);
   }
 
-  .settings-error-bubble {
+  .settings-feedback-bubble {
     max-width: min(320px, calc(100vw - 28px));
     white-space: normal;
   }
 
-  .settings-error-bubble::before {
+  .settings-feedback-bubble::before {
     left: 14px;
   }
 
-  .settings-error-bubble::after {
+  .settings-feedback-bubble::after {
     left: 15px;
   }
 
