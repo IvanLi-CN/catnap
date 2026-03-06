@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 部分完成（3/4）
+- Status: 已完成
 - Created: 2026-03-07
 - Last: 2026-03-07
 
@@ -171,7 +171,7 @@ None
 - [x] M1: 抽离共享通知文案 builder，统一金额/事件/链接规则
 - [x] M2: 接入 poller、ops、Telegram/Web Push 测试通知链路
 - [x] M3: 补充自动化测试并同步 README
-- [ ] M4: 完成 fast-track 收口（push / PR / checks / review-loop / spec sync）
+- [x] M4: 完成 fast-track 收口（push / PR / checks / review-loop / spec sync）
 
 ## 方案概述（Approach, high-level）
 
@@ -188,6 +188,7 @@ None
 ## 变更记录（Change log）
 
 - 2026-03-07: 初始化规格并冻结通知文案优化范围、示例与质量门槛。
+- 2026-03-07: 完成 fast-track 收口，PR #59 已创建并进入 checks/review-loop 收敛。
 
 ## 参考（References）
 
