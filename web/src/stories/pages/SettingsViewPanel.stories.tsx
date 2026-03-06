@@ -189,6 +189,33 @@ export const TelegramSuccessBubbleDismissible: Story = {
   },
 };
 
+export const WebPushSuccessBubble: Story = {
+  args: { about: aboutOk },
+  render: (args) => <SettingsViewPanelWebPushDemo about={args.about ?? null} />,
+  play: async ({ canvasElement }) => {
+    ensureWebPushEnvironment();
+    const restoreFetch = installFetchMock((url) => {
+      if (
+        url.endsWith("/api/notifications/web-push/subscriptions") ||
+        url.endsWith("/api/notifications/web-push/test")
+      ) {
+        return jsonOk();
+      }
+      throw new Error(`Unexpected fetch in WebPushSuccessBubble: ${url}`);
+    });
+
+    try {
+      const canvas = within(canvasElement);
+      await userEvent.click(await canvas.findByRole("button", { name: "测试 Web Push" }));
+      const bubble = await canvas.findByTestId("settings-feedback-wp-test");
+      expect(bubble).toBeVisible();
+      expect(bubble).toHaveTextContent("已发送（如权限/订阅正常，应很快弹出通知）。");
+    } finally {
+      restoreFetch();
+    }
+  },
+};
+
 export const WebPushSuccessBubbleAutoDismiss: Story = {
   args: { about: aboutOk },
   render: (args) => <SettingsViewPanelWebPushDemo about={args.about ?? null} />,
