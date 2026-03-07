@@ -4,6 +4,7 @@ pub mod catalog_refresh;
 pub mod config;
 pub mod db;
 pub mod models;
+mod notification_content;
 pub mod notifications;
 pub mod ops;
 pub mod poller;

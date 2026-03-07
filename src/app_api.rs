@@ -908,21 +908,10 @@ async fn post_telegram_test(
         json_invalid_argument_with_message("缺少 target（可在本次请求提供或先在设置中保存）")
     })?;
 
-    let text = req
-        .text
-        .as_deref()
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| {
-            format!(
-                "catnap 测试消息\nuser={}\n{}",
-                user_id,
-                OffsetDateTime::now_utc()
-                    .format(&Rfc3339)
-                    .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string())
-            )
-        });
+    let text = crate::notification_content::build_telegram_test_text(
+        req.text.as_deref().map(str::trim).filter(|v| !v.is_empty()),
+        OffsetDateTime::now_utc(),
+    );
 
     match crate::notifications::send_telegram(
         &state.config.telegram_api_base_url,
@@ -1020,24 +1009,19 @@ async fn post_web_push_test(
         .build()
         .map_err(|_| json_internal_error_with_message("Web Push: VAPID 签名生成失败"))?;
 
-    let title = req
-        .title
-        .as_deref()
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-        .unwrap_or("catnap");
-    let body = req.body.as_deref().unwrap_or("").to_string();
-    let url = req
-        .url
-        .as_deref()
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-        .unwrap_or("/");
+    let notification = crate::notification_content::build_web_push_test_notification(
+        req.title
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty()),
+        req.body.as_deref().map(str::trim).filter(|v| !v.is_empty()),
+        req.url.as_deref().map(str::trim).filter(|v| !v.is_empty()),
+    );
 
     let payload = serde_json::to_vec(&serde_json::json!({
-        "title": title,
-        "body": body,
-        "url": url,
+        "title": notification.web_push_title,
+        "body": notification.web_push_body,
+        "url": notification.web_push_url,
     }))
     .map_err(|_| json_internal_error())?;
 
