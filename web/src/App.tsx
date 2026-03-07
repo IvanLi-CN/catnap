@@ -23,13 +23,14 @@ import { Icon } from "@iconify/react";
 import {
   type CSSProperties,
   type KeyboardEvent,
+  type RefObject,
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
+import { SettingsFeedbackBubble } from "./ui/feedback/SettingsFeedbackBubble";
 import { AppShell } from "./ui/layout/AppShell";
 import { ThemeMenu } from "./ui/nav/ThemeMenu";
 import "./app.css";
@@ -2476,79 +2477,11 @@ function snapshotToOnSaveInput(
   };
 }
 
-type SettingsFeedbackTone = "error" | "success";
-
 function clearFeedbackTimer(timerRef: { current: number | null }) {
   if (timerRef.current !== null) {
     window.clearTimeout(timerRef.current);
     timerRef.current = null;
   }
-}
-
-function SettingsFeedbackBubble({
-  message,
-  onClose,
-  tone,
-  testId,
-}: {
-  message: string;
-  onClose: () => void;
-  tone: SettingsFeedbackTone;
-  testId?: string;
-}) {
-  const textRef = useRef<HTMLSpanElement | null>(null);
-  const [isMultiline, setIsMultiline] = useState(false);
-  const isSuccess = tone === "success";
-
-  useLayoutEffect(() => {
-    const textEl = textRef.current;
-    if (!textEl) return;
-
-    const update = () => {
-      const lineHeight = Number.parseFloat(window.getComputedStyle(textEl).lineHeight);
-      if (Number.isFinite(lineHeight) && lineHeight > 0) {
-        setIsMultiline(textEl.getBoundingClientRect().height > lineHeight * 1.45);
-        return;
-      }
-      setIsMultiline(textEl.scrollHeight - textEl.clientHeight > 1);
-    };
-
-    update();
-    if (typeof ResizeObserver !== "undefined") {
-      const observer = new ResizeObserver(update);
-      observer.observe(textEl);
-      return () => observer.disconnect();
-    }
-
-    window.addEventListener("resize", update);
-    return () => window.removeEventListener("resize", update);
-  });
-
-  return (
-    <div
-      aria-live={isSuccess ? "polite" : undefined}
-      className={`settings-feedback-bubble settings-feedback-bubble-${tone} ${
-        isMultiline ? "is-multiline" : "is-singleline"
-      }`}
-      data-testid={testId}
-      role={isSuccess ? "status" : "alert"}
-    >
-      <span className={`settings-feedback-badge settings-feedback-badge-${tone}`}>
-        {isSuccess ? "✓" : "!"}
-      </span>
-      <span className="settings-feedback-text" ref={textRef}>
-        {message}
-      </span>
-      <button
-        aria-label="关闭提示"
-        className="settings-feedback-close"
-        onClick={onClose}
-        type="button"
-      >
-        ×
-      </button>
-    </div>
-  );
 }
 
 export function SettingsViewPanel({
@@ -2612,6 +2545,9 @@ export function SettingsViewPanel({
   const autosaveTimerRef = useRef<number | null>(null);
   const tgTestSuccessTimerRef = useRef<number | null>(null);
   const wpTestSuccessTimerRef = useRef<number | null>(null);
+  const tgTestButtonRef = useRef<HTMLButtonElement | null>(null);
+  const wpEnableButtonRef = useRef<HTMLButtonElement | null>(null);
+  const wpTestButtonRef = useRef<HTMLButtonElement | null>(null);
   const saveSeqRef = useRef(0);
   const lastPersistedRef = useRef(lastPersisted);
 
@@ -2960,41 +2896,44 @@ export function SettingsViewPanel({
     return new Date(t).toLocaleString();
   }
 
-  const renderFieldError = (field: SettingsFieldKey) => {
-    const message = fieldErrors[field];
-    if (!message) return null;
-    return (
-      <SettingsFeedbackBubble
-        message={message}
-        onClose={() => setFieldError(field, null)}
-        tone="error"
-      />
-    );
-  };
+  const renderFieldError = (
+    field: SettingsFieldKey,
+    inline = false,
+    anchorRef?: RefObject<HTMLElement | null>,
+    testId?: string,
+  ) => (
+    <SettingsFeedbackBubble
+      anchorRef={anchorRef}
+      inline={inline}
+      message={fieldErrors[field] ?? null}
+      onClose={() => setFieldError(field, null)}
+      open={Boolean(fieldErrors[field])}
+      testId={testId}
+      tone="error"
+    />
+  );
 
   const renderActionFeedback = (
     field: SettingsFieldKey,
     successMessage: string | null,
     onCloseSuccess: () => void,
     successTestId?: string,
+    inlineSuccess = false,
+    successAnchorRef?: RefObject<HTMLElement | null>,
   ) => {
     const errorMessage = fieldErrors[field];
-    if (errorMessage) {
-      return (
-        <SettingsFeedbackBubble
-          message={errorMessage}
-          onClose={() => setFieldError(field, null)}
-          tone="error"
-        />
-      );
-    }
-    if (!successMessage) return null;
+    const activeMessage = errorMessage ?? successMessage;
+    const activeTone = errorMessage ? "error" : "success";
+
     return (
       <SettingsFeedbackBubble
-        message={successMessage}
-        onClose={onCloseSuccess}
-        tone="success"
+        anchorRef={successAnchorRef}
+        inline={inlineSuccess}
+        message={activeMessage}
+        onClose={errorMessage ? () => setFieldError(field, null) : onCloseSuccess}
+        open={Boolean(activeMessage)}
         testId={successTestId}
+        tone={activeTone}
       />
     );
   };
@@ -3292,8 +3231,9 @@ export function SettingsViewPanel({
         </div>
 
         <div className="settings-actions">
-          <div className="settings-action-wrap settings-action-wrap-bubble-left">
+          <div className="settings-action-wrap settings-action-wrap-bubble-left settings-action-wrap-inline-feedback">
             <button
+              ref={tgTestButtonRef}
               type="button"
               className="pill warn center btn"
               disabled={saving || tgTestPending}
@@ -3311,7 +3251,7 @@ export function SettingsViewPanel({
                       text: null,
                     }),
                   });
-                  showTgTestStatus("已发送。");
+                  showTgTestStatus("已发送");
                   setFieldError("tgTestAction", null);
                 } catch (e) {
                   clearTgTestStatus();
@@ -3328,6 +3268,8 @@ export function SettingsViewPanel({
               tgTestStatus,
               clearTgTestStatus,
               "settings-feedback-tg-test",
+              true,
+              tgTestButtonRef,
             )}
           </div>
         </div>
@@ -3369,8 +3311,9 @@ export function SettingsViewPanel({
         ) : null}
         {wpStatus ? <div className="muted">{wpStatus}</div> : null}
         <div className="settings-actions">
-          <div className="settings-action-wrap settings-action-wrap-bubble-left">
+          <div className="settings-action-wrap">
             <button
+              ref={wpEnableButtonRef}
               type="button"
               className="pill warn center btn"
               disabled={saving || !wpKey || !wpSupported}
@@ -3429,11 +3372,17 @@ export function SettingsViewPanel({
             >
               启用推送
             </button>
-            {renderFieldError("wpEnableAction")}
+            {renderFieldError(
+              "wpEnableAction",
+              true,
+              wpEnableButtonRef,
+              "settings-feedback-wp-enable-error",
+            )}
           </div>
 
-          <div className="settings-action-wrap">
+          <div className="settings-action-wrap settings-action-wrap-bubble-left settings-action-wrap-inline-feedback">
             <button
+              ref={wpTestButtonRef}
               type="button"
               className="pill warn center btn"
               disabled={saving || wpTestPending}
@@ -3490,7 +3439,7 @@ export function SettingsViewPanel({
                     }),
                   });
 
-                  showWpTestStatus("已发送（如权限/订阅正常，应很快弹出通知）。");
+                  showWpTestStatus("已发送（如权限/订阅正常，应很快弹出通知）");
                   setFieldError("wpTestAction", null);
                 } catch (e) {
                   clearWpTestStatus();
@@ -3507,6 +3456,8 @@ export function SettingsViewPanel({
               wpTestStatus,
               clearWpTestStatus,
               "settings-feedback-wp-test",
+              true,
+              wpTestButtonRef,
             )}
           </div>
         </div>
@@ -3815,6 +3766,8 @@ function OpsRangePill({ range, onChange }: { range: OpsRange; onChange: (r: OpsR
 }
 
 function OpsSseIndicator({ sse }: { sse: OpsSseUi }) {
+  const anchorRef = useRef<HTMLButtonElement | null>(null);
+  const [tooltipOpen, setTooltipOpen] = useState(false);
   const dotClass =
     sse.status === "connected"
       ? "ops-dot ok"
@@ -3832,26 +3785,50 @@ function OpsSseIndicator({ sse }: { sse: OpsSseUi }) {
     : "无";
 
   return (
-    <div className="ops-sse">
+    <button
+      aria-label="查看 SSE 连接状态"
+      className="ops-sse"
+      type="button"
+      onBlur={(event) => {
+        const nextTarget = event.relatedTarget;
+        if (!(nextTarget instanceof Node) || !event.currentTarget.contains(nextTarget)) {
+          setTooltipOpen(false);
+        }
+      }}
+      onFocus={() => setTooltipOpen(true)}
+      onMouseEnter={() => setTooltipOpen(true)}
+      onMouseLeave={() => setTooltipOpen(false)}
+      ref={anchorRef}
+    >
       <span className="ops-dot-ring" aria-hidden="true">
         <span className={dotClass} />
       </span>
       <span className="ops-sse-label">SSE</span>
-      <div className="ops-sse-tooltip" role="tooltip">
-        <div className="ops-sse-tooltip-title">SSE 连接状态</div>
-        <div className="ops-sse-tooltip-row">
+      <SettingsFeedbackBubble
+        anchorRef={anchorRef}
+        dismissible={false}
+        inline
+        message={null}
+        open={tooltipOpen}
+        placement="bottom-end"
+        role="tooltip"
+        showIcon={false}
+        tone="neutral"
+      >
+        <div className="settings-feedback-title">SSE 连接状态</div>
+        <div className="settings-feedback-row">
           <span className="ops-dot-ring sm" aria-hidden="true">
             <span className={dotClass} />
           </span>
-          <span className="ops-sse-tooltip-key">{statusText}</span>
+          <span className="settings-feedback-key">{statusText}</span>
         </div>
-        <div className="ops-sse-tooltip-line">{`回放窗口：${sse.replayWindowSeconds ? `${Math.round(sse.replayWindowSeconds / 60)}分钟` : "—"}`}</div>
-        <div className="ops-sse-tooltip-line">
+        <div className="settings-feedback-line">{`回放窗口：${sse.replayWindowSeconds ? `${Math.round(sse.replayWindowSeconds / 60)}分钟` : "—"}`}</div>
+        <div className="settings-feedback-line">
           Last-Event-ID：<span className="mono">{sse.lastEventId ?? "—"}</span>
         </div>
-        <div className="ops-sse-tooltip-line">{`最近 reset：${resetText}`}</div>
-      </div>
-    </div>
+        <div className="settings-feedback-line">{`最近 reset：${resetText}`}</div>
+      </SettingsFeedbackBubble>
+    </button>
   );
 }
 

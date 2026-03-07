@@ -73,7 +73,7 @@
 
 - source_type: storybook_canvas
   target_program: mock-only
-  capture_scope: browser-viewport
+  capture_scope: action-region-closeup
   sensitive_exclusion: N/A
   submission_gate: pending-owner-approval
   story_id_or_title: Pages/SettingsViewPanel/TelegramSuccessBubble
@@ -84,7 +84,7 @@
 
 - source_type: storybook_canvas
   target_program: mock-only
-  capture_scope: browser-viewport
+  capture_scope: action-region-closeup
   sensitive_exclusion: N/A
   submission_gate: pending-owner-approval
   story_id_or_title: Pages/SettingsViewPanel/WebPushSuccessBubble
@@ -96,5 +96,6 @@
 ## 变更记录（Change log）
 
 - 2026-03-06: 创建 follow-up spec，范围锁定为设置页通知测试成功反馈气泡化。
+- 2026-03-07: 刷新 PR 视觉证据为按钮与气泡近景截图，确保 success bubble 清晰可见。
 - 2026-03-06: 完成前端 success bubble 与 Storybook 交互验收；待补充 PR 视觉证据。
 - 2026-03-06: 采集 Storybook 视觉证据并写入 spec，等待图片提交授权后推送。

@@ -123,6 +123,57 @@ function installFetchMock(
   };
 }
 
+async function expectActionFeedbackBeforeButton(
+  canvasElement: HTMLElement,
+  buttonName: string,
+  feedbackTestId: string,
+  beforeMetrics: { left: number; top: number; width: number; height: number },
+) {
+  const canvas = within(canvasElement);
+  const button = await canvas.findByRole("button", { name: buttonName });
+  const bubble = await canvas.findByTestId(feedbackTestId);
+  const bubbleRect = bubble.getBoundingClientRect();
+  const afterRect = button.getBoundingClientRect();
+  const afterMetrics = {
+    left: button.offsetLeft,
+    top: button.offsetTop,
+    width: button.offsetWidth,
+    height: button.offsetHeight,
+  };
+  const bubbleClasses = bubble.className;
+
+  expect(afterMetrics.left).toBe(beforeMetrics.left);
+  expect(afterMetrics.top).toBe(beforeMetrics.top);
+  expect(afterMetrics.width).toBe(beforeMetrics.width);
+  expect(afterMetrics.height).toBe(beforeMetrics.height);
+  expect(bubbleRect.left).toBeGreaterThanOrEqual(-1);
+  expect(bubbleRect.right).toBeLessThanOrEqual(window.innerWidth + 1);
+  expect(bubbleRect.height).toBeGreaterThan(28);
+
+  const bubbleCenterY = bubbleRect.top + bubbleRect.height / 2;
+  const buttonCenterY = afterRect.top + afterRect.height / 2;
+
+  if (bubbleClasses.includes("settings-feedback-bubble-inline-side-left")) {
+    expect(bubbleRect.right).toBeLessThanOrEqual(afterRect.left - 8);
+    expect(Math.abs(bubbleCenterY - buttonCenterY)).toBeLessThanOrEqual(8);
+    return;
+  }
+
+  if (bubbleClasses.includes("settings-feedback-bubble-inline-side-right")) {
+    expect(bubbleRect.left).toBeGreaterThanOrEqual(afterRect.right + 8);
+    expect(Math.abs(bubbleCenterY - buttonCenterY)).toBeLessThanOrEqual(8);
+    return;
+  }
+
+  if (bubbleClasses.includes("settings-feedback-bubble-inline-side-top")) {
+    expect(bubbleRect.bottom).toBeLessThanOrEqual(afterRect.top - 8);
+    return;
+  }
+
+  expect(bubbleClasses.includes("settings-feedback-bubble-inline-side-bottom")).toBe(true);
+  expect(bubbleRect.top).toBeGreaterThanOrEqual(afterRect.bottom + 8);
+}
+
 const meta = {
   title: "Pages/SettingsViewPanel",
   component: SettingsViewPanelDemo,
@@ -155,10 +206,25 @@ export const TelegramSuccessBubble: Story = {
 
     try {
       const canvas = within(canvasElement);
-      await userEvent.click(await canvas.findByRole("button", { name: "测试 Telegram" }));
+      const button = await canvas.findByRole("button", { name: "测试 Telegram" });
+      const beforeMetrics = {
+        left: button.offsetLeft,
+        top: button.offsetTop,
+        width: button.offsetWidth,
+        height: button.offsetHeight,
+      };
+      await userEvent.click(button);
       const bubble = await canvas.findByTestId("settings-feedback-tg-test");
-      expect(bubble).toBeVisible();
-      expect(bubble).toHaveTextContent("已发送。");
+      await waitFor(() => {
+        expect(bubble).toBeVisible();
+      });
+      expect(bubble).toHaveTextContent("已发送");
+      await expectActionFeedbackBeforeButton(
+        canvasElement as HTMLElement,
+        "测试 Telegram",
+        "settings-feedback-tg-test",
+        beforeMetrics,
+      );
     } finally {
       restoreFetch();
     }
@@ -206,10 +272,25 @@ export const WebPushSuccessBubble: Story = {
 
     try {
       const canvas = within(canvasElement);
-      await userEvent.click(await canvas.findByRole("button", { name: "测试 Web Push" }));
+      const button = await canvas.findByRole("button", { name: "测试 Web Push" });
+      const beforeMetrics = {
+        left: button.offsetLeft,
+        top: button.offsetTop,
+        width: button.offsetWidth,
+        height: button.offsetHeight,
+      };
+      await userEvent.click(button);
       const bubble = await canvas.findByTestId("settings-feedback-wp-test");
-      expect(bubble).toBeVisible();
-      expect(bubble).toHaveTextContent("已发送（如权限/订阅正常，应很快弹出通知）。");
+      await waitFor(() => {
+        expect(bubble).toBeVisible();
+      });
+      expect(bubble).toHaveTextContent("已发送（如权限/订阅正常，应很快弹出通知）");
+      await expectActionFeedbackBeforeButton(
+        canvasElement as HTMLElement,
+        "测试 Web Push",
+        "settings-feedback-wp-test",
+        beforeMetrics,
+      );
     } finally {
       restoreFetch();
     }
@@ -235,8 +316,10 @@ export const WebPushSuccessBubbleAutoDismiss: Story = {
       const canvas = within(canvasElement);
       await userEvent.click(await canvas.findByRole("button", { name: "测试 Web Push" }));
       const bubble = await canvas.findByTestId("settings-feedback-wp-test");
-      expect(bubble).toBeVisible();
-      expect(bubble).toHaveTextContent("已发送（如权限/订阅正常，应很快弹出通知）。");
+      await waitFor(() => {
+        expect(bubble).toBeVisible();
+      });
+      expect(bubble).toHaveTextContent("已发送（如权限/订阅正常，应很快弹出通知）");
       await waitFor(
         () => {
           expect(canvas.queryByTestId("settings-feedback-wp-test")).toBeNull();

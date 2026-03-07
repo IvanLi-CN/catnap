@@ -16,6 +16,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@floating-ui/react": "^0.27.19",
     "@iconify-icons/flagpack": "^1.2.7",
     "@iconify/react": "^6.0.2",
     "react": "^18.0.0",
@@ -25,6 +26,7 @@
     "@biomejs/biome": "^1.0.0",
     "@commitlint/cli": "^19.0.0",
     "@commitlint/config-conventional": "^19.0.0",
+    "@storybook/addon-docs": "10.1.11",
     "@storybook/addon-vitest": "^10.1.11",
     "@storybook/react-vite": "^10.1.11",
     "@types/react": "^18.0.0",
