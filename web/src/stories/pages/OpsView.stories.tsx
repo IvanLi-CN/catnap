@@ -6,7 +6,13 @@ const demo: OpsStateResponse = {
   serverTime: "2026-01-26T00:00:00Z",
   range: "24h",
   replayWindowSeconds: 3600,
-  queue: { pending: 3, running: 1, deduped: 5 },
+  queue: {
+    pending: 3,
+    running: 1,
+    deduped: 5,
+    oldestWaitSeconds: 42,
+    reasonCounts: { discovery_due: 2, poller_due: 1, manual_refresh: 1 },
+  },
   workers: [
     {
       workerId: "w1",
@@ -40,11 +46,17 @@ const demo: OpsStateResponse = {
     },
   ],
   stats: {
-    collection: { total: 42, success: 40, failure: 2, successRatePct: 95.2 },
+    collection: { total: 42, success: 40, failure: 2, successRatePct: 95.2, cacheHits: 18 },
     notify: {
-      telegram: { total: 12, success: 11, failure: 1, successRatePct: 91.7 },
-      webPush: { total: 6, success: 6, failure: 0, successRatePct: 100.0 },
+      telegram: { total: 12, success: 11, failure: 1, successRatePct: 91.7, cacheHits: 0 },
+      webPush: { total: 6, success: 6, failure: 0, successRatePct: 100.0, cacheHits: 0 },
     },
+  },
+  topology: {
+    status: "success",
+    refreshedAt: "2026-01-26T00:00:00Z",
+    requestCount: 3,
+    message: null,
   },
   sparks: {
     bucketSeconds: 3600,

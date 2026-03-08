@@ -133,3 +133,43 @@ INSERT INTO catalog_configs (
     let state: String = row.get(0);
     assert_eq!(state, "active");
 }
+
+#[tokio::test]
+async fn load_catalog_snapshot_round_trips_topology_state() {
+    let cfg = test_config();
+    let db = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&cfg.db_url)
+        .await
+        .unwrap();
+
+    catnap::db::init_db(&db).await.unwrap();
+
+    let countries = vec![catnap::models::Country {
+        id: "2".to_string(),
+        name: "CN".to_string(),
+    }];
+    let regions = vec![catnap::models::Region {
+        id: "56".to_string(),
+        country_id: "2".to_string(),
+        name: "Hong Kong".to_string(),
+        location_name: Some("Hong Kong".to_string()),
+    }];
+    catnap::db::replace_catalog_topology(&db, "https://example.invalid/cart", &countries, &regions)
+        .await
+        .unwrap();
+    catnap::db::set_catalog_region_notice(&db, "2", Some("56"), Some("notice text"))
+        .await
+        .unwrap();
+
+    let snapshot = catnap::db::load_catalog_snapshot(&db, &cfg.upstream_cart_url)
+        .await
+        .unwrap();
+
+    assert_eq!(snapshot.source_url, "https://example.invalid/cart");
+    assert_eq!(snapshot.topology_status, "success");
+    assert!(snapshot.topology_refreshed_at.is_some());
+    assert_eq!(snapshot.countries.len(), 1);
+    assert_eq!(snapshot.regions.len(), 1);
+    assert_eq!(snapshot.region_notices.len(), 1);
+}

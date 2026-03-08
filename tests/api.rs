@@ -87,6 +87,10 @@ async fn make_app_with_config(cfg: RuntimeConfig) -> TestApp {
         configs: configs.clone(),
         fetched_at: "2026-01-19T00:00:00Z".to_string(),
         source_url: cfg.upstream_cart_url.clone(),
+        topology_refreshed_at: Some("2026-01-19T00:00:00Z".to_string()),
+        topology_request_count: 3,
+        topology_status: "success".to_string(),
+        topology_message: None,
     };
 
     catnap::db::upsert_catalog_configs(&db, &configs)

@@ -231,6 +231,11 @@ async fn catalog_refresh_job_runs_and_persists_url_cache() {
     assert_eq!(row.get::<String, _>(0), "active");
 
     assert_eq!(hits.load(Ordering::SeqCst), baseline_hits);
+
+    // A follow-up manual refresh should reuse the persisted topology + fresh URL cache.
+    assert_eq!(post_refresh(t2.app.clone(), "u_3").await, StatusCode::OK);
+    assert_eq!(wait_refresh_done(t2.app.clone()).await, "success");
+    assert_eq!(hits.load(Ordering::SeqCst), baseline_hits);
 }
 
 #[tokio::test]

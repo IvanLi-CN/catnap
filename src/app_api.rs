@@ -396,6 +396,7 @@ async fn get_ops_stream(
                 success: 0,
                 failure: 0,
                 success_rate_pct: 0.0,
+                cache_hits: 0,
             },
             notify: crate::ops::OpsNotifyStatsView {
                 telegram: None,

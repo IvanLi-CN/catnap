@@ -1,11 +1,15 @@
+use crate::upstream::{catalog_region_key, CatalogSnapshot, UpstreamClient};
 use crate::{app::AppState, db};
 use crate::{models::Money, notification_content};
 use sqlx::Row;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use time::OffsetDateTime;
 use tracing::{info, warn};
 
 const INVENTORY_HISTORY_RETENTION_DAYS: i64 = 30;
+const DISCOVERY_INTERVAL_SECONDS: i64 = 5 * 60;
+const TOPOLOGY_INTERVAL_FALLBACK_MINUTES: i64 = 30;
+const TOPOLOGY_RETRY_SECONDS: i64 = 5 * 60;
 
 pub async fn spawn(state: AppState) {
     tokio::spawn(async move {
@@ -15,11 +19,91 @@ pub async fn spawn(state: AppState) {
     });
 }
 
+pub async fn refresh_catalog_topology(state: &AppState, reason: &str) -> anyhow::Result<()> {
+    let upstream = UpstreamClient::new(state.config.upstream_cart_url.clone())?;
+    match upstream.fetch_topology().await {
+        Ok(topology) => {
+            db::replace_catalog_topology(
+                &state.db,
+                &state.config.upstream_cart_url,
+                &topology.countries,
+                &topology.regions,
+            )
+            .await?;
+            let notice_by_key = topology
+                .region_notices
+                .iter()
+                .map(|notice| {
+                    (
+                        catalog_region_key(&notice.country_id, notice.region_id.as_deref()),
+                        notice,
+                    )
+                })
+                .collect::<HashMap<_, _>>();
+            for url_key in &topology.region_notice_initialized_keys {
+                let (fid, gid) = url_key
+                    .split_once(':')
+                    .map(|(fid, gid)| {
+                        (
+                            fid.to_string(),
+                            if gid == "0" {
+                                None
+                            } else {
+                                Some(gid.to_string())
+                            },
+                        )
+                    })
+                    .unwrap_or_else(|| (url_key.clone(), None));
+                let text = notice_by_key
+                    .get(url_key)
+                    .map(|notice| notice.text.as_str());
+                db::set_catalog_region_notice(&state.db, &fid, gid.as_deref(), text).await?;
+            }
+            apply_topology_snapshot(&state.catalog, topology, &state.config.upstream_cart_url)
+                .await;
+            let _ = state
+                .ops
+                .log(
+                    "info",
+                    "catalog.topology",
+                    &format!("topology refresh ok: reason={reason}"),
+                    Some(serde_json::json!({
+                        "reason": reason,
+                        "requestCount": state.catalog.read().await.topology_request_count,
+                    })),
+                )
+                .await;
+            Ok(())
+        }
+        Err(err) => {
+            let message = err.to_string();
+            {
+                let mut snap = state.catalog.write().await;
+                snap.topology_status = "error".to_string();
+                snap.topology_message = Some(message.clone());
+            }
+            let _ = state
+                .ops
+                .log(
+                    "warn",
+                    "catalog.topology",
+                    "topology refresh failed",
+                    Some(serde_json::json!({
+                        "reason": reason,
+                        "error": message,
+                    })),
+                )
+                .await;
+            Err(err)
+        }
+    }
+}
+
 async fn run(state: AppState) -> anyhow::Result<()> {
     let mut next_due: HashMap<String, OffsetDateTime> = HashMap::new();
     let mut last_cleanup: Option<OffsetDateTime> = None;
-    let mut auto_last_trigger: Option<OffsetDateTime> = None;
-    let mut auto_interval_hours: Option<i64> = None;
+    let mut next_topology_due: Option<OffsetDateTime> = None;
+    let mut next_discovery_due: Option<OffsetDateTime> = None;
 
     loop {
         let users = sqlx::query("SELECT id FROM users")
@@ -30,35 +114,63 @@ async fn run(state: AppState) -> anyhow::Result<()> {
             .collect::<Vec<_>>();
 
         let now = OffsetDateTime::now_utc();
+        let topology_interval = db::get_global_catalog_refresh_interval_hours(&state.db)
+            .await?
+            .filter(|hours| *hours > 0)
+            .map(time::Duration::hours)
+            .unwrap_or_else(|| time::Duration::minutes(TOPOLOGY_INTERVAL_FALLBACK_MINUTES));
 
-        // Global auto refresh scheduler: use the minimum enabled interval across all users.
-        let next_interval_hours = db::get_global_catalog_refresh_interval_hours(&state.db).await?;
-        if next_interval_hours != auto_interval_hours {
-            auto_interval_hours = next_interval_hours;
+        if next_topology_due.is_none() || next_discovery_due.is_none() {
+            let has_topology = db::has_catalog_topology(&state.db).await?;
+            let has_known_targets = !db::list_known_catalog_targets(&state.db).await?.is_empty();
+            if next_topology_due.is_none() {
+                let due = if has_topology {
+                    db::get_catalog_topology_state(&state.db)
+                        .await?
+                        .and_then(|row| {
+                            OffsetDateTime::parse(
+                                &row.last_topology_refresh_at,
+                                &time::format_description::well_known::Rfc3339,
+                            )
+                            .ok()
+                        })
+                        .map(|ts| ts.saturating_add(topology_interval))
+                        .unwrap_or(now.saturating_add(topology_interval))
+                } else if has_known_targets {
+                    now.saturating_add(topology_interval)
+                } else {
+                    now
+                };
+                next_topology_due = Some(due);
+            }
+            if next_discovery_due.is_none() {
+                next_discovery_due = Some(if has_topology || has_known_targets {
+                    now.saturating_add(time::Duration::seconds(DISCOVERY_INTERVAL_SECONDS))
+                } else {
+                    now
+                });
+            }
         }
-        match auto_interval_hours {
-            Some(hours) if hours > 0 => {
-                // Start counting from "now" when auto refresh becomes enabled.
-                if auto_last_trigger.is_none() {
-                    auto_last_trigger = Some(now);
+
+        if next_topology_due.is_some_and(|due| now >= due) {
+            match refresh_catalog_topology(&state, "scheduler").await {
+                Ok(_) => {
+                    next_topology_due = Some(now.saturating_add(topology_interval));
                 }
-                let last = auto_last_trigger.unwrap_or(now);
-                let due = last.saturating_add(time::Duration::hours(hours));
-                if now >= due {
-                    let _ = state
-                        .catalog_refresh
-                        .trigger(
-                            state.clone(),
-                            crate::catalog_refresh::RefreshTrigger::Auto,
-                            None,
-                        )
-                        .await;
-                    auto_last_trigger = Some(now);
+                Err(err) => {
+                    warn!(error = %err, "topology refresh failed");
+                    next_topology_due =
+                        Some(now.saturating_add(time::Duration::seconds(TOPOLOGY_RETRY_SECONDS)));
                 }
             }
-            _ => {
-                auto_last_trigger = None;
+        }
+
+        if next_discovery_due.is_some_and(|due| now >= due) {
+            if let Err(err) = enqueue_discovery_targets(&state).await {
+                warn!(error = %err, "enqueue discovery targets failed");
             }
+            next_discovery_due =
+                Some(now.saturating_add(time::Duration::seconds(DISCOVERY_INTERVAL_SECONDS)));
         }
 
         for user_id in users {
@@ -100,6 +212,117 @@ async fn run(state: AppState) -> anyhow::Result<()> {
     }
 }
 
+async fn enqueue_discovery_targets(state: &AppState) -> anyhow::Result<()> {
+    let targets = known_catalog_targets(state).await?;
+    if targets.is_empty() {
+        return Ok(());
+    }
+
+    for (fid, gid) in targets {
+        state
+            .ops
+            .enqueue_background(&fid, gid.as_deref(), "discovery_due")
+            .await?;
+    }
+
+    Ok(())
+}
+
+pub async fn known_catalog_targets(
+    state: &AppState,
+) -> anyhow::Result<Vec<(String, Option<String>)>> {
+    let mut known = db::list_catalog_task_keys(&state.db).await?;
+    known.extend(db::list_known_catalog_targets(&state.db).await?);
+    let snapshot = state.catalog.read().await.clone();
+    known.extend(catalog_targets_from_snapshot(&snapshot));
+
+    let mut deduped = Vec::new();
+    let mut seen = HashSet::new();
+    for (fid, gid) in known {
+        let key = catalog_region_key(&fid, gid.as_deref());
+        if seen.insert(key) {
+            deduped.push((fid, gid));
+        }
+    }
+    Ok(deduped)
+}
+
+fn catalog_targets_from_snapshot(snapshot: &CatalogSnapshot) -> Vec<(String, Option<String>)> {
+    let mut out = Vec::new();
+    let mut countries_with_regions = HashSet::new();
+
+    for region in &snapshot.regions {
+        countries_with_regions.insert(region.country_id.clone());
+        out.push((region.country_id.clone(), Some(region.id.clone())));
+    }
+
+    for country in &snapshot.countries {
+        if !countries_with_regions.contains(&country.id) {
+            out.push((country.id.clone(), None));
+        }
+    }
+
+    out
+}
+
+async fn apply_topology_snapshot(
+    catalog: &tokio::sync::RwLock<CatalogSnapshot>,
+    topology: crate::upstream::CatalogTopologySnapshot,
+    source_url: &str,
+) {
+    let active_keys = topology
+        .countries
+        .iter()
+        .map(|country| {
+            let has_region = topology
+                .regions
+                .iter()
+                .any(|region| region.country_id == country.id);
+            if has_region {
+                None
+            } else {
+                Some((country.id.clone(), None))
+            }
+        })
+        .chain(
+            topology
+                .regions
+                .iter()
+                .map(|region| Some((region.country_id.clone(), Some(region.id.clone())))),
+        )
+        .flatten()
+        .collect::<HashSet<_>>();
+    let active_url_keys = active_keys
+        .iter()
+        .map(|(fid, gid)| catalog_region_key(fid, gid.as_deref()))
+        .collect::<HashSet<_>>();
+
+    let mut snap = catalog.write().await;
+    snap.countries = topology.countries;
+    snap.regions = topology.regions;
+    snap.region_notices.retain(|notice| {
+        active_keys.contains(&(notice.country_id.clone(), notice.region_id.clone()))
+    });
+    for notice in topology.region_notices {
+        if let Some(existing) = snap.region_notices.iter_mut().find(|current| {
+            current.country_id == notice.country_id && current.region_id == notice.region_id
+        }) {
+            existing.text = notice.text;
+        } else {
+            snap.region_notices.push(notice);
+        }
+    }
+    snap.region_notice_initialized_keys
+        .retain(|key| active_url_keys.contains(key));
+    snap.region_notice_initialized_keys
+        .extend(topology.region_notice_initialized_keys);
+    snap.source_url = source_url.to_string();
+    snap.topology_refreshed_at = Some(topology.refreshed_at);
+    snap.topology_request_count = topology.request_count;
+    snap.topology_status = "success".to_string();
+    snap.topology_message = None;
+}
+
 async fn poll_once(
     state: &AppState,
     user_id: &str,
@@ -125,7 +348,7 @@ async fn poll_once(
         r#"SELECT id, country_id, region_id FROM catalog_configs WHERE id IN ({placeholders})"#
     );
     let mut q = sqlx::query(&sql);
-    for id in enabled.iter() {
+    for id in &enabled {
         q = q.bind(id);
     }
     let rows = q.fetch_all(&state.db).await?;
@@ -146,7 +369,7 @@ async fn poll_once(
                WHERE id IN ({placeholders})"#
         );
         let mut q = sqlx::query(&sql);
-        for id in ids.iter() {
+        for id in &ids {
             q = q.bind(id);
         }
         let old_rows = q.fetch_all(&state.db).await?;
@@ -166,7 +389,6 @@ async fn poll_once(
             );
         }
 
-        // Fetch + apply via global ops queue (dedup across poller + refresh).
         let run = state
             .ops
             .enqueue_and_wait(&fid, gid.as_deref(), "poller_due")

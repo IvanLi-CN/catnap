@@ -11,6 +11,37 @@ use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use tokio::sync::{broadcast, oneshot, Mutex, Notify, RwLock};
 use tracing::warn;
 
+const POLLER_FRESHNESS_WINDOW_SECONDS: i64 = 45;
+const DISCOVERY_FRESHNESS_WINDOW_SECONDS: i64 = 150;
+const MANUAL_REFRESH_FRESHNESS_WINDOW_SECONDS: i64 = 5 * 60;
+const AUTO_REFRESH_FRESHNESS_WINDOW_SECONDS: i64 = 5 * 60;
+
+fn reason_freshness_window_seconds(reason: &str) -> Option<i64> {
+    match reason {
+        "poller_due" => Some(POLLER_FRESHNESS_WINDOW_SECONDS),
+        "discovery_due" => Some(DISCOVERY_FRESHNESS_WINDOW_SECONDS),
+        "manual_refresh" => Some(MANUAL_REFRESH_FRESHNESS_WINDOW_SECONDS),
+        "auto_refresh" => Some(AUTO_REFRESH_FRESHNESS_WINDOW_SECONDS),
+        _ => None,
+    }
+}
+
+fn task_freshness_window_seconds(reason_counts: &HashMap<String, i64>) -> Option<i64> {
+    reason_counts
+        .keys()
+        .filter_map(|reason| reason_freshness_window_seconds(reason))
+        .min()
+}
+
+fn should_emit_lifecycle_notify(reason_counts: &HashMap<String, i64>) -> bool {
+    reason_counts.keys().any(|reason| {
+        matches!(
+            reason.as_str(),
+            "manual_refresh" | "auto_refresh" | "poller_due" | "discovery_due"
+        )
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OpsRange {
     H24,
@@ -231,6 +262,16 @@ LIMIT 2000
         rx.await.map_err(|_| anyhow::anyhow!("ops task canceled"))
     }
 
+    pub async fn enqueue_background(
+        &self,
+        fid: &str,
+        gid: Option<&str>,
+        reason: &str,
+    ) -> anyhow::Result<()> {
+        std::mem::drop(self.enqueue(fid, gid, reason).await?);
+        Ok(())
+    }
+
     pub async fn log(
         &self,
         level: &str,
@@ -338,10 +379,24 @@ VALUES (?, ?, ?, ?, ?)
                 .values()
                 .filter(|t| matches!(t.state, TaskEntryState::Running { .. }))
                 .count() as i64;
+            let oldest_wait_seconds = st
+                .tasks
+                .values()
+                .filter_map(|task| OffsetDateTime::parse(&task.enqueued_at, &Rfc3339).ok())
+                .map(|enqueued_at| (now - enqueued_at).whole_seconds().max(0))
+                .max();
+            let mut queue_reason_counts = HashMap::new();
+            for task in st.tasks.values() {
+                for (reason, count) in &task.reason_counts {
+                    *queue_reason_counts.entry(reason.clone()).or_insert(0) += *count;
+                }
+            }
             let queue = OpsQueueView {
                 pending,
                 running,
                 deduped: st.deduped,
+                oldest_wait_seconds,
+                reason_counts: queue_reason_counts,
             };
 
             let workers = st
@@ -397,6 +452,16 @@ VALUES (?, ?, ?, ?, ?)
             }
         }
 
+        let topology = {
+            let snap = self.inner.catalog.read().await;
+            OpsTopologyView {
+                status: snap.topology_status.clone(),
+                refreshed_at: snap.topology_refreshed_at.clone(),
+                request_count: snap.topology_request_count,
+                message: snap.topology_message.clone(),
+            }
+        };
+
         Ok(OpsStateSnapshot {
             server_time,
             range: range.as_str().to_string(),
@@ -407,6 +472,7 @@ VALUES (?, ?, ?, ?, ?)
             stats,
             sparks,
             log_tail,
+            topology,
         })
     }
 
@@ -424,7 +490,8 @@ VALUES (?, ?, ?, ?, ?)
             r#"
 SELECT
   COUNT(*) as total,
-  SUM(CASE WHEN ok = 1 THEN 1 ELSE 0 END) as success
+  SUM(CASE WHEN ok = 1 THEN 1 ELSE 0 END) as success,
+  SUM(CASE WHEN fetch_action = 'cache' THEN 1 ELSE 0 END) as cache_hits
 FROM ops_task_runs
 WHERE ended_at IS NOT NULL
   AND ended_at >= ?
@@ -435,6 +502,7 @@ WHERE ended_at IS NOT NULL
         .await?;
         let total = row.get::<i64, _>(0);
         let success = row.try_get::<i64, _>(1).unwrap_or(0);
+        let cache_hits = row.try_get::<i64, _>(2).unwrap_or(0);
         let failure = (total - success).max(0);
         let success_rate_pct = if total > 0 {
             (success as f64) * 100.0 / (total as f64)
@@ -475,6 +543,7 @@ WHERE channel = ?
                 success,
                 failure,
                 success_rate_pct,
+                cache_hits: 0,
             }))
         }
 
@@ -487,6 +556,7 @@ WHERE channel = ?
                 success,
                 failure,
                 success_rate_pct,
+                cache_hits,
             },
             notify: OpsNotifyStatsView { telegram, web_push },
         })
@@ -830,11 +900,26 @@ LIMIT 1
                 ),
             };
 
+            let reason_counts_json = {
+                let st = self.inner.state.lock().await;
+                st.tasks
+                    .get(&key)
+                    .map(|entry| {
+                        serde_json::to_string(&entry.reason_counts)
+                            .unwrap_or_else(|_| "{}".to_string())
+                    })
+                    .unwrap_or_else(|| "{}".to_string())
+            };
+
             let _ = sqlx::query(
                 r#"
 UPDATE ops_task_runs SET
   ended_at = ?,
   ok = ?,
+  fetch_action = ?,
+  freshness_window_seconds = ?,
+  reason_counts_json = ?,
+  cache_hit = ?,
   fetch_http_status = ?,
   fetch_bytes = ?,
   fetch_elapsed_ms = ?,
@@ -847,6 +932,14 @@ WHERE id = ?
             )
             .bind(&ended_at)
             .bind(if ok { 1 } else { 0 })
+            .bind(fetch.as_ref().map(|f| f.action.as_str()).unwrap_or("fetch"))
+            .bind(fetch.as_ref().and_then(|f| f.freshness_window_seconds))
+            .bind(&reason_counts_json)
+            .bind(if fetch.as_ref().is_some_and(|f| f.action == "cache") {
+                1
+            } else {
+                0
+            })
             .bind(fetch.as_ref().map(|f| f.http_status as i64))
             .bind(fetch.as_ref().map(|f| f.bytes))
             .bind(fetch.as_ref().map(|f| f.elapsed_ms))
@@ -872,6 +965,8 @@ WHERE id = ?
                             "ok": ok,
                             "fetch": fetch.as_ref().map(|f| serde_json::json!({
                                 "url": f.url,
+                                "action": f.action,
+                                "freshnessWindowSeconds": f.freshness_window_seconds,
                                 "httpStatus": f.http_status,
                                 "bytes": f.bytes,
                                 "elapsedMs": f.elapsed_ms,
@@ -891,16 +986,26 @@ WHERE id = ?
                 .await;
 
             if ok {
+                let fetch_action = fetch
+                    .as_ref()
+                    .map(|item| item.action.as_str())
+                    .unwrap_or("fetch");
                 let _ = self
                     .log(
                         "info",
                         "ops.task",
                         &format!(
-                            "task ok: fid={} gid={}",
+                            "task ok: fid={} gid={} action={fetch_action}",
                             key.fid,
                             key.gid.clone().unwrap_or_default()
                         ),
-                        Some(serde_json::json!({ "runId": run_id, "fid": key.fid.clone(), "gid": key.gid.clone() })),
+                        Some(serde_json::json!({
+                            "runId": run_id,
+                            "fid": key.fid.clone(),
+                            "gid": key.gid.clone(),
+                            "action": fetch_action,
+                            "freshnessWindowSeconds": fetch.as_ref().and_then(|item| item.freshness_window_seconds),
+                        })),
                     )
                     .await;
             } else {
@@ -944,18 +1049,24 @@ WHERE id = ?
                 .tasks
                 .get_mut(key)
                 .ok_or_else(|| anyhow::anyhow!("task missing"))?;
-            let do_lifecycle_notify = entry.reason_counts.contains_key("manual_refresh");
+            let do_lifecycle_notify = should_emit_lifecycle_notify(&entry.reason_counts);
             let reason_counts = entry.reason_counts.clone();
 
+            let reason_counts_json =
+                serde_json::to_string(&reason_counts).unwrap_or_else(|_| "{}".to_string());
             let res = sqlx::query(
                 r#"
-INSERT INTO ops_task_runs (fid, gid, started_at, ended_at, ok)
-VALUES (?, ?, ?, NULL, 0)
+INSERT INTO ops_task_runs (
+  fid, gid, started_at, ended_at, ok,
+  fetch_action, freshness_window_seconds, reason_counts_json, cache_hit
+)
+VALUES (?, ?, ?, NULL, 0, 'fetch', NULL, ?, 0)
 "#,
             )
             .bind(&key.fid)
             .bind(key.gid.as_deref())
             .bind(started_at)
+            .bind(&reason_counts_json)
             .execute(&self.inner.db)
             .await?;
             let run_id = res.last_insert_rowid();
@@ -1066,6 +1177,46 @@ VALUES (?, ?, ?, NULL, 0)
     ) -> Result<TaskOk, TaskErr> {
         let gid = key.gid.as_deref();
         let url_key = format!("{}:{}", key.fid, gid.unwrap_or("0"));
+        let reason_counts = {
+            let st = self.inner.state.lock().await;
+            st.tasks
+                .get(key)
+                .map(|entry| entry.reason_counts.clone())
+                .unwrap_or_default()
+        };
+        let freshness_window_seconds = task_freshness_window_seconds(&reason_counts);
+
+        if let Some(window) = freshness_window_seconds {
+            if let Ok(Some(cache)) =
+                crate::db::get_catalog_url_cache(&self.inner.db, &url_key).await
+            {
+                if let Ok(last_success_at) = OffsetDateTime::parse(&cache.last_success_at, &Rfc3339)
+                {
+                    let age = OffsetDateTime::now_utc() - last_success_at;
+                    if age <= time::Duration::seconds(window) {
+                        let produced_configs =
+                            serde_json::from_str::<Vec<String>>(&cache.config_ids_json)
+                                .map(|ids| ids.len() as i64)
+                                .unwrap_or(0);
+                        return Ok(TaskOk {
+                            fetch: TaskFetchMeta {
+                                url: cache.url,
+                                http_status: 0,
+                                bytes: 0,
+                                elapsed_ms: 0,
+                                action: "cache".to_string(),
+                                freshness_window_seconds: Some(window),
+                            },
+                            parse: TaskParseMeta {
+                                ok: true,
+                                produced_configs,
+                                elapsed_ms: 0,
+                            },
+                        });
+                    }
+                }
+            }
+        }
 
         let fetch = match upstream.fetch_region_configs_detailed(&key.fid, gid).await {
             Ok(v) => v,
@@ -1106,6 +1257,8 @@ VALUES (?, ?, ?, NULL, 0)
                         http_status: fetch.http_status,
                         bytes: fetch.bytes,
                         elapsed_ms: fetch.elapsed_ms,
+                        action: "fetch".to_string(),
+                        freshness_window_seconds,
                     }),
                     parse: Some(TaskParseMeta {
                         ok: false,
@@ -1122,15 +1275,7 @@ VALUES (?, ?, ?, NULL, 0)
             upsert_region_notice_in_snapshot(&mut snap, &key.fid, gid, region_notice.as_deref());
         }
 
-        let do_lifecycle_notify = {
-            let st = self.inner.state.lock().await;
-            st.tasks
-                .get(key)
-                .map(|t| t.reason_counts.contains_key("manual_refresh"))
-                .unwrap_or(false)
-        };
-
-        if do_lifecycle_notify
+        if should_emit_lifecycle_notify(&reason_counts)
             && (!applied.listed_ids.is_empty() || !applied.delisted_ids.is_empty())
         {
             if let Err(err) = self.notify_lifecycle_events(run_id, &applied, key).await {
@@ -1144,6 +1289,8 @@ VALUES (?, ?, ?, NULL, 0)
                 http_status: fetch.http_status,
                 bytes: fetch.bytes,
                 elapsed_ms: fetch.elapsed_ms,
+                action: "fetch".to_string(),
+                freshness_window_seconds,
             },
             parse,
         })
@@ -1499,7 +1646,8 @@ WHERE id IN ({placeholders})
     }
 
     async fn publish_queue_snapshot(&self) -> anyhow::Result<i64> {
-        let (pending, running, deduped) = {
+        let now = OffsetDateTime::now_utc();
+        let (pending, running, deduped, oldest_wait_seconds, reason_counts) = {
             let st = self.inner.state.lock().await;
             let pending = st
                 .tasks
@@ -1511,12 +1659,36 @@ WHERE id IN ({placeholders})
                 .values()
                 .filter(|t| matches!(t.state, TaskEntryState::Running { .. }))
                 .count() as i64;
-            (pending, running, st.deduped)
+            let oldest_wait_seconds = st
+                .tasks
+                .values()
+                .filter_map(|task| OffsetDateTime::parse(&task.enqueued_at, &Rfc3339).ok())
+                .map(|enqueued_at| (now - enqueued_at).whole_seconds().max(0))
+                .max();
+            let mut reason_counts = HashMap::new();
+            for task in st.tasks.values() {
+                for (reason, count) in &task.reason_counts {
+                    *reason_counts.entry(reason.clone()).or_insert(0) += *count;
+                }
+            }
+            (
+                pending,
+                running,
+                st.deduped,
+                oldest_wait_seconds,
+                reason_counts,
+            )
         };
         self.publish_event(
             "ops.queue",
             serde_json::json!({
-                "queue": { "pending": pending, "running": running, "deduped": deduped },
+                "queue": {
+                    "pending": pending,
+                    "running": running,
+                    "deduped": deduped,
+                    "oldestWaitSeconds": oldest_wait_seconds,
+                    "reasonCounts": reason_counts,
+                },
             }),
         )
         .await
@@ -1601,6 +1773,8 @@ struct TaskFetchMeta {
     http_status: u16,
     bytes: i64,
     elapsed_ms: i64,
+    action: String,
+    freshness_window_seconds: Option<i64>,
 }
 
 #[derive(Debug, Clone)]
@@ -1661,6 +1835,8 @@ pub struct OpsQueueView {
     pub pending: i64,
     pub running: i64,
     pub deduped: i64,
+    pub oldest_wait_seconds: Option<i64>,
+    pub reason_counts: HashMap<String, i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1704,6 +1880,7 @@ pub struct OpsRateBucketView {
     pub success: i64,
     pub failure: i64,
     pub success_rate_pct: f64,
+    pub cache_hits: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1718,6 +1895,15 @@ pub struct OpsNotifyStatsView {
 pub struct OpsStatsView {
     pub collection: OpsRateBucketView,
     pub notify: OpsNotifyStatsView,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpsTopologyView {
+    pub status: String,
+    pub refreshed_at: Option<String>,
+    pub request_count: i64,
+    pub message: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1743,6 +1929,7 @@ pub struct OpsStateSnapshot {
     pub stats: OpsStatsView,
     pub sparks: OpsSparksView,
     pub log_tail: Vec<OpsLogEntryView>,
+    pub topology: OpsTopologyView,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

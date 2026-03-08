@@ -96,8 +96,12 @@ async fn ops_state_snapshot_works() {
     let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert!(json.get("serverTime").is_some());
     assert!(json.get("queue").is_some());
+    assert!(json["queue"].get("oldestWaitSeconds").is_some());
+    assert!(json["queue"].get("reasonCounts").is_some());
     assert!(json.get("workers").is_some());
     assert!(json.get("stats").is_some());
+    assert!(json["stats"]["collection"].get("cacheHits").is_some());
+    assert!(json.get("topology").is_some());
     assert!(json.get("logTail").is_some());
 }
 

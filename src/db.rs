@@ -102,6 +102,38 @@ CREATE TABLE IF NOT EXISTS catalog_url_cache (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS catalog_countries (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  sort_index INTEGER NOT NULL,
+  has_regions INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS catalog_regions (
+  id TEXT PRIMARY KEY,
+  country_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  location_name TEXT NULL,
+  sort_index INTEGER NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS catalog_region_notices (
+  url_key TEXT PRIMARY KEY,
+  country_id TEXT NOT NULL,
+  region_id TEXT NULL,
+  text TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS catalog_topology_state (
+  state_key TEXT PRIMARY KEY,
+  source_url TEXT NOT NULL,
+  last_topology_refresh_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS inventory_samples_1m (
   config_id TEXT NOT NULL,
   ts_minute TEXT NOT NULL,
@@ -174,6 +206,8 @@ CREATE TABLE IF NOT EXISTS ops_task_runs (
   started_at TEXT NOT NULL,
   ended_at TEXT NULL,
   ok INTEGER NOT NULL,
+  fetch_action TEXT NOT NULL DEFAULT 'fetch',
+  freshness_window_seconds INTEGER NULL,
   fetch_http_status INTEGER NULL,
   fetch_bytes INTEGER NULL,
   fetch_elapsed_ms INTEGER NULL,
@@ -196,6 +230,8 @@ CREATE INDEX IF NOT EXISTS idx_event_logs_user_ts ON event_logs (user_id, ts DES
 CREATE INDEX IF NOT EXISTS idx_event_logs_ts ON event_logs (ts DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_inventory_samples_1m_ts ON inventory_samples_1m (ts_minute);
 CREATE INDEX IF NOT EXISTS idx_catalog_url_cache_last_success_at ON catalog_url_cache (last_success_at DESC, url_key);
+CREATE INDEX IF NOT EXISTS idx_catalog_countries_sort ON catalog_countries (sort_index, id);
+CREATE INDEX IF NOT EXISTS idx_catalog_regions_country_sort ON catalog_regions (country_id, sort_index, id);
 CREATE INDEX IF NOT EXISTS idx_user_config_archives_user_cleaned_at ON user_config_archives (user_id, cleaned_at DESC);
 CREATE INDEX IF NOT EXISTS idx_user_config_archives_config_id ON user_config_archives (config_id);
 
@@ -236,6 +272,15 @@ CREATE INDEX IF NOT EXISTS idx_ops_notify_runs_channel_ts ON ops_notify_runs (ch
     add_column_if_missing(db, "catalog_configs", "source_fid", "TEXT NULL").await?;
     add_column_if_missing(db, "catalog_configs", "source_gid", "TEXT NULL").await?;
 
+    add_column_if_missing(db, "ops_task_runs", "reason_counts_json", "TEXT NULL").await?;
+    add_column_if_missing(
+        db,
+        "ops_task_runs",
+        "cache_hit",
+        "INTEGER NOT NULL DEFAULT 0",
+    )
+    .await?;
+
     add_column_if_missing(
         db,
         "settings",
@@ -255,6 +300,20 @@ CREATE INDEX IF NOT EXISTS idx_ops_notify_runs_channel_ts ON ops_notify_runs (ch
         "settings",
         "monitoring_events_delisted_enabled",
         "INTEGER NOT NULL DEFAULT 0",
+    )
+    .await?;
+    add_column_if_missing(
+        db,
+        "ops_task_runs",
+        "fetch_action",
+        "TEXT NOT NULL DEFAULT 'fetch'",
+    )
+    .await?;
+    add_column_if_missing(
+        db,
+        "ops_task_runs",
+        "freshness_window_seconds",
+        "INTEGER NULL",
     )
     .await?;
 
@@ -277,6 +336,326 @@ SET
     .execute(db)
     .await?;
     Ok(())
+}
+
+#[derive(Debug, Clone)]
+pub struct CatalogTopologyStateRow {
+    pub source_url: String,
+    pub last_topology_refresh_at: String,
+}
+
+pub async fn replace_catalog_topology(
+    db: &SqlitePool,
+    source_url: &str,
+    countries: &[Country],
+    regions: &[Region],
+) -> anyhow::Result<()> {
+    let now = now_rfc3339();
+    let mut tx = db.begin().await?;
+
+    sqlx::query("DELETE FROM catalog_countries")
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM catalog_regions")
+        .execute(&mut *tx)
+        .await?;
+
+    let region_country_ids = regions
+        .iter()
+        .map(|r| r.country_id.as_str())
+        .collect::<std::collections::HashSet<_>>();
+
+    for (idx, country) in countries.iter().enumerate() {
+        sqlx::query(
+            r#"
+INSERT INTO catalog_countries (id, name, sort_index, has_regions, updated_at)
+VALUES (?, ?, ?, ?, ?)
+"#,
+        )
+        .bind(&country.id)
+        .bind(&country.name)
+        .bind(idx as i64)
+        .bind(if region_country_ids.contains(country.id.as_str()) {
+            1
+        } else {
+            0
+        })
+        .bind(&now)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    for (idx, region) in regions.iter().enumerate() {
+        sqlx::query(
+            r#"
+INSERT INTO catalog_regions (id, country_id, name, location_name, sort_index, updated_at)
+VALUES (?, ?, ?, ?, ?, ?)
+"#,
+        )
+        .bind(&region.id)
+        .bind(&region.country_id)
+        .bind(&region.name)
+        .bind(region.location_name.as_deref())
+        .bind(idx as i64)
+        .bind(&now)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    let active_url_keys = countries
+        .iter()
+        .filter(|country| !region_country_ids.contains(country.id.as_str()))
+        .map(|country| format!("{}:0", country.id))
+        .chain(
+            regions
+                .iter()
+                .map(|region| format!("{}:{}", region.country_id, region.id)),
+        )
+        .collect::<Vec<_>>();
+
+    sqlx::query(
+        r#"
+INSERT INTO catalog_topology_state (state_key, source_url, last_topology_refresh_at, updated_at)
+VALUES ('default', ?, ?, ?)
+ON CONFLICT(state_key) DO UPDATE SET
+  source_url = excluded.source_url,
+  last_topology_refresh_at = excluded.last_topology_refresh_at,
+  updated_at = excluded.updated_at
+"#,
+    )
+    .bind(source_url)
+    .bind(&now)
+    .bind(&now)
+    .execute(&mut *tx)
+    .await?;
+
+    if active_url_keys.is_empty() {
+        sqlx::query("DELETE FROM catalog_region_notices")
+            .execute(&mut *tx)
+            .await?;
+    } else {
+        let placeholders = std::iter::repeat_n("?", active_url_keys.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql =
+            format!("DELETE FROM catalog_region_notices WHERE url_key NOT IN ({placeholders})");
+        let mut q = sqlx::query(&sql);
+        for key in &active_url_keys {
+            q = q.bind(key);
+        }
+        q.execute(&mut *tx).await?;
+    }
+
+    tx.commit().await?;
+    Ok(())
+}
+
+pub async fn set_catalog_region_notice(
+    db: &SqlitePool,
+    fid: &str,
+    gid: Option<&str>,
+    text: Option<&str>,
+) -> anyhow::Result<()> {
+    let now = now_rfc3339();
+    let url_key = crate::upstream::catalog_region_key(fid, gid);
+    let text = text.map(str::trim).filter(|v| !v.is_empty());
+    if let Some(text) = text {
+        sqlx::query(
+            r#"
+INSERT INTO catalog_region_notices (url_key, country_id, region_id, text, updated_at)
+VALUES (?, ?, ?, ?, ?)
+ON CONFLICT(url_key) DO UPDATE SET
+  country_id = excluded.country_id,
+  region_id = excluded.region_id,
+  text = excluded.text,
+  updated_at = excluded.updated_at
+"#,
+        )
+        .bind(&url_key)
+        .bind(fid)
+        .bind(gid)
+        .bind(text)
+        .bind(&now)
+        .execute(db)
+        .await?;
+    } else {
+        sqlx::query("DELETE FROM catalog_region_notices WHERE url_key = ?")
+            .bind(&url_key)
+            .execute(db)
+            .await?;
+    }
+    Ok(())
+}
+
+pub async fn get_catalog_topology_state(
+    db: &SqlitePool,
+) -> anyhow::Result<Option<CatalogTopologyStateRow>> {
+    let row = sqlx::query(
+        r#"
+SELECT source_url, last_topology_refresh_at
+FROM catalog_topology_state
+WHERE state_key = 'default'
+"#,
+    )
+    .fetch_optional(db)
+    .await?;
+    Ok(row.map(|row| CatalogTopologyStateRow {
+        source_url: row.get::<String, _>(0),
+        last_topology_refresh_at: row.get::<String, _>(1),
+    }))
+}
+
+pub async fn has_catalog_topology(db: &SqlitePool) -> anyhow::Result<bool> {
+    let row = sqlx::query("SELECT COUNT(*) FROM catalog_countries")
+        .fetch_one(db)
+        .await?;
+    Ok(row.get::<i64, _>(0) > 0)
+}
+
+pub async fn list_catalog_task_keys(
+    db: &SqlitePool,
+) -> anyhow::Result<Vec<(String, Option<String>)>> {
+    let countries = sqlx::query(
+        r#"
+SELECT id
+FROM catalog_countries
+WHERE has_regions = 0
+ORDER BY sort_index ASC, id ASC
+"#,
+    )
+    .fetch_all(db)
+    .await?;
+
+    let regions = sqlx::query(
+        r#"
+SELECT country_id, id
+FROM catalog_regions
+ORDER BY sort_index ASC, id ASC
+"#,
+    )
+    .fetch_all(db)
+    .await?;
+
+    let mut out = countries
+        .into_iter()
+        .map(|row| (row.get::<String, _>(0), None))
+        .collect::<Vec<_>>();
+    out.extend(
+        regions
+            .into_iter()
+            .map(|row| (row.get::<String, _>(0), Some(row.get::<String, _>(1)))),
+    );
+    Ok(out)
+}
+
+pub async fn load_catalog_snapshot(
+    db: &SqlitePool,
+    source_url: &str,
+) -> anyhow::Result<crate::upstream::CatalogSnapshot> {
+    let country_rows = sqlx::query(
+        r#"
+SELECT id, name
+FROM catalog_countries
+ORDER BY sort_index ASC, id ASC
+"#,
+    )
+    .fetch_all(db)
+    .await?;
+    let countries = country_rows
+        .into_iter()
+        .map(|row| Country {
+            id: row.get::<String, _>(0),
+            name: row.get::<String, _>(1),
+        })
+        .collect::<Vec<_>>();
+
+    let region_rows = sqlx::query(
+        r#"
+SELECT id, country_id, name, location_name
+FROM catalog_regions
+ORDER BY sort_index ASC, id ASC
+"#,
+    )
+    .fetch_all(db)
+    .await?;
+    let regions = region_rows
+        .into_iter()
+        .map(|row| Region {
+            id: row.get::<String, _>(0),
+            country_id: row.get::<String, _>(1),
+            name: row.get::<String, _>(2),
+            location_name: row.get::<Option<String>, _>(3),
+        })
+        .collect::<Vec<_>>();
+
+    let notice_rows = sqlx::query(
+        r#"
+SELECT country_id, region_id, text
+FROM catalog_region_notices
+ORDER BY url_key ASC
+"#,
+    )
+    .fetch_all(db)
+    .await?;
+    let region_notices = notice_rows
+        .into_iter()
+        .map(|row| RegionNotice {
+            country_id: row.get::<String, _>(0),
+            region_id: row.get::<Option<String>, _>(1),
+            text: row.get::<String, _>(2),
+        })
+        .collect::<Vec<_>>();
+
+    let cache_rows = sqlx::query("SELECT url_key FROM catalog_url_cache")
+        .fetch_all(db)
+        .await?;
+    let region_notice_initialized_keys = cache_rows
+        .into_iter()
+        .map(|row| row.get::<String, _>(0))
+        .collect::<std::collections::HashSet<_>>();
+
+    let fetched_at = sqlx::query(
+        r#"
+SELECT COALESCE(
+  (SELECT MAX(checked_at) FROM catalog_configs),
+  (SELECT last_topology_refresh_at FROM catalog_topology_state WHERE state_key = 'default'),
+  ?
+)
+"#,
+    )
+    .bind(now_rfc3339())
+    .fetch_one(db)
+    .await?
+    .get::<String, _>(0);
+
+    let topology_state = get_catalog_topology_state(db).await?;
+    let effective_source_url = topology_state
+        .as_ref()
+        .map(|row| row.source_url.clone())
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| source_url.to_string());
+    let topology_refreshed_at = topology_state
+        .as_ref()
+        .map(|row| row.last_topology_refresh_at.clone());
+    let topology_status = if topology_refreshed_at.is_some() {
+        "success".to_string()
+    } else {
+        "idle".to_string()
+    };
+
+    Ok(crate::upstream::CatalogSnapshot {
+        countries,
+        regions,
+        region_notices,
+        region_notice_initialized_keys,
+        configs: Vec::new(),
+        fetched_at,
+        source_url: effective_source_url,
+        topology_refreshed_at,
+        topology_request_count: 0,
+        topology_status,
+        topology_message: None,
+    })
 }
 
 async fn add_column_if_missing(
@@ -719,6 +1098,40 @@ LIMIT 200
     .fetch_all(db)
     .await?;
     rows.iter().map(config_view_from_row).collect()
+}
+
+pub async fn get_catalog_latest_checked_at(db: &SqlitePool) -> anyhow::Result<Option<String>> {
+    let row = sqlx::query("SELECT MAX(checked_at) FROM catalog_configs")
+        .fetch_one(db)
+        .await?;
+    Ok(row.get::<Option<String>, _>(0))
+}
+
+pub async fn list_known_catalog_targets(
+    db: &SqlitePool,
+) -> anyhow::Result<Vec<(String, Option<String>)>> {
+    let rows = sqlx::query(
+        r#"
+SELECT DISTINCT source_fid, source_gid
+FROM catalog_configs
+WHERE source_fid IS NOT NULL AND TRIM(source_fid) != ''
+ORDER BY source_fid ASC, source_gid ASC
+"#,
+    )
+    .fetch_all(db)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            let fid = row.get::<String, _>(0).trim().to_string();
+            let gid = row
+                .get::<Option<String>, _>(1)
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty());
+            (fid, gid)
+        })
+        .filter(|(fid, _)| !fid.is_empty())
+        .collect())
 }
 
 pub async fn get_global_catalog_refresh_interval_hours(

@@ -218,6 +218,7 @@ export type OpsRateBucket = {
   success: number;
   failure: number;
   successRatePct: number;
+  cacheHits: number;
 };
 
 export type OpsSparksResponse = {
@@ -239,7 +240,13 @@ export type OpsStateResponse = {
   serverTime: string;
   range: OpsRange;
   replayWindowSeconds: number;
-  queue: { pending: number; running: number; deduped: number };
+  queue: {
+    pending: number;
+    running: number;
+    deduped: number;
+    oldestWaitSeconds: number | null;
+    reasonCounts: Record<string, number>;
+  };
   workers: Array<{
     workerId: string;
     state: "idle" | "running" | "error";
@@ -259,6 +266,12 @@ export type OpsStateResponse = {
     notify: { telegram?: OpsRateBucket; webPush?: OpsRateBucket };
   };
   sparks: OpsSparksResponse;
+  topology: {
+    status: string;
+    refreshedAt: string | null;
+    requestCount: number;
+    message: string | null;
+  };
   logTail: Array<{
     eventId: number;
     ts: string;
@@ -732,6 +745,13 @@ export function App() {
     if (!hasBootstrap) return;
     if (route !== "monitoring") return;
     void refreshMonitoringSilently();
+  }, [hasBootstrap, refreshMonitoringSilently, route]);
+  useEffect(() => {
+    if (!hasBootstrap) return;
+    if (route !== "monitoring") return;
+
+    const id = window.setInterval(() => void refreshMonitoringSilently(), 15_000);
+    return () => window.clearInterval(id);
   }, [hasBootstrap, refreshMonitoringSilently, route]);
 
   useEffect(() => {
@@ -1236,14 +1256,14 @@ export function App() {
     ) : (
       <>
         {isRefreshing ? (
-          <span className="pill">{`全量刷新中（${catalogRefresh?.done ?? 0}/${catalogRefresh?.total || "?"}）`}</span>
+          <span className="pill">{`目录刷新中（${catalogRefresh?.done ?? 0}/${catalogRefresh?.total || "?"}）`}</span>
         ) : null}
         {route === "products" ? (
           <button
             type="button"
             className="pill"
             disabled={loading || isRefreshing}
-            title="强制抓取上游并全量刷新（30s 限流）"
+            title="按低压策略刷新已知目录页（优先 cache hit）"
             onClick={() => void startCatalogRefresh()}
           >
             {refreshButtonText}
@@ -1258,7 +1278,7 @@ export function App() {
                 type="button"
                 className="pill"
                 disabled={isRefreshing}
-                title="强制抓取上游并全量刷新（30s 限流）"
+                title="按低压策略刷新已知目录页（优先 cache hit）"
                 onClick={() => void startCatalogRefresh()}
               >
                 <span className={refreshIconClass} aria-hidden="true">
@@ -3062,10 +3082,12 @@ export function SettingsViewPanel({
       </div>
 
       <div className="panel-section">
-        <div className="panel-title">全量刷新（Catalog refresh）</div>
-        <div className="panel-subtitle">手动“立即刷新”与系统自动刷新共用</div>
+        <div className="panel-title">目录拓扑复扫（Catalog topology refresh）</div>
+        <div className="panel-subtitle">
+          控制 root/fid 拓扑复扫频率；已知 URL 轻扫与监控快扫会复用结果
+        </div>
         <div className="settings-grid">
-          <div>自动全量刷新</div>
+          <div>自动目录拓扑复扫</div>
           <div className="settings-action-wrap">
             <button
               type="button"
@@ -3090,7 +3112,7 @@ export function SettingsViewPanel({
             </button>
             {renderFieldError("autoRefreshEnabled")}
           </div>
-          <div className="hint">全局间隔取“所有用户启用值”的最小值</div>
+          <div className="hint">全局间隔取“所有用户启用值”的最小值；不会强制绕过 cache</div>
 
           <div>间隔（小时）</div>
           <div className="settings-input-wrap">
@@ -4192,7 +4214,7 @@ export function OpsView({
                   <span className="ops-kpi-unit">待处理</span>
                 </div>
                 <div className="ops-kpi-sub">{`运行中：${snap.queue.running} • 合并：${snap.queue.deduped}`}</div>
-                <div className="ops-kpi-meta">{`更新：${formatClock(snap.serverTime)}${loading ? "（刷新中）" : ""}`}</div>
+                <div className="ops-kpi-meta">{`最老等待：${snap.queue.oldestWaitSeconds ?? 0}s • 更新：${formatClock(snap.serverTime)}${loading ? "（刷新中）" : ""}`}</div>
                 <Sparkline values={snap.sparks.volume} stroke="var(--ops-green)" />
               </div>
 
@@ -4210,7 +4232,7 @@ export function OpsView({
                   <span className="ops-kpi-value">{`${snap.stats.collection.successRatePct.toFixed(1)}%`}</span>
                 </div>
                 <div className="ops-kpi-sub">{`成功：${snap.stats.collection.success} • 失败：${snap.stats.collection.failure}`}</div>
-                <div className="ops-kpi-meta">{`口径：${rangeText}`}</div>
+                <div className="ops-kpi-meta">{`cache hit：${snap.stats.collection.cacheHits} • 口径：${rangeText}`}</div>
                 <Sparkline values={snap.sparks.collectionSuccessRatePct} stroke="var(--ops-blue)" />
               </div>
 
@@ -4254,22 +4276,14 @@ export function OpsView({
                   <span className="ops-dot-ring" aria-hidden="true">
                     <span className="ops-dot orange" />
                   </span>
-                  <span className="ops-kpi-label">采集量</span>
+                  <span className="ops-kpi-label">目录拓扑</span>
                 </div>
                 <div className="ops-kpi-value-row">
-                  <span className="ops-kpi-value">
-                    {formatCompactCount(snap.stats.collection.total)}
-                  </span>
-                  <span className="ops-kpi-unit">任务</span>
+                  <span className="ops-kpi-value">{snap.topology.status || "idle"}</span>
+                  <span className="ops-kpi-unit">状态</span>
                 </div>
-                <div className="ops-kpi-sub">{`速率：${
-                  range === "24h"
-                    ? `${Math.round(snap.stats.collection.total / 24)}/小时`
-                    : range === "7d"
-                      ? `${Math.round(snap.stats.collection.total / 7)}/天`
-                      : `${Math.round(snap.stats.collection.total / 30)}/天`
-                } • 失败：${snap.stats.collection.failure}`}</div>
-                <div className="ops-kpi-meta">{`口径：${rangeText}`}</div>
+                <div className="ops-kpi-sub">{`请求：${snap.topology.requestCount} • 最近：${snap.topology.refreshedAt ? formatClock(snap.topology.refreshedAt) : "—"}`}</div>
+                <div className="ops-kpi-meta">{snap.topology.message ?? `口径：${rangeText}`}</div>
                 <Sparkline values={snap.sparks.volume} stroke="var(--ops-orange)" />
               </div>
             </div>
@@ -4331,6 +4345,7 @@ export function OpsView({
               <section className="ops-block">
                 <div className="ops-block-head">
                   <div className="ops-block-title">队列任务</div>
+                  <div className="ops-block-subtitle muted">{`discovery=${snap.queue.reasonCounts.discovery_due ?? 0} • poller=${snap.queue.reasonCounts.poller_due ?? 0} • manual=${snap.queue.reasonCounts.manual_refresh ?? 0}`}</div>
                 </div>
                 <div className="ops-block-divider" />
                 <div className="ops-tasks">

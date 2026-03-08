@@ -2,9 +2,11 @@ use crate::models::{Country, Inventory, Money, Region, RegionNotice, Spec};
 use scraper::{ElementRef, Html, Selector};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use tokio::sync::Mutex;
+
+const UPSTREAM_REQUEST_COOLDOWN_MS: u64 = 500;
 
 #[derive(Debug, Clone)]
 pub struct CatalogSnapshot {
@@ -15,6 +17,20 @@ pub struct CatalogSnapshot {
     pub configs: Vec<ConfigBase>,
     pub fetched_at: String,
     pub source_url: String,
+    pub topology_refreshed_at: Option<String>,
+    pub topology_request_count: i64,
+    pub topology_status: String,
+    pub topology_message: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CatalogTopologySnapshot {
+    pub countries: Vec<Country>,
+    pub regions: Vec<Region>,
+    pub region_notices: Vec<RegionNotice>,
+    pub region_notice_initialized_keys: HashSet<String>,
+    pub refreshed_at: String,
+    pub request_count: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -43,6 +59,10 @@ impl CatalogSnapshot {
             configs: Vec::new(),
             fetched_at: now_rfc3339(),
             source_url,
+            topology_refreshed_at: None,
+            topology_request_count: 0,
+            topology_status: "idle".to_string(),
+            topology_message: None,
         }
     }
 
@@ -69,6 +89,11 @@ impl CatalogSnapshot {
             source_gid: c.source_gid.clone(),
         }
     }
+}
+
+fn upstream_request_gate() -> &'static Mutex<()> {
+    static GATE: OnceLock<Mutex<()>> = OnceLock::new();
+    GATE.get_or_init(|| Mutex::new(()))
 }
 
 fn now_rfc3339() -> String {
@@ -111,6 +136,49 @@ impl UpstreamClient {
         self.fetch_html(url).await
     }
 
+    pub async fn fetch_topology(&self) -> anyhow::Result<CatalogTopologySnapshot> {
+        let root_html = self.fetch_html(&self.cart_url).await?;
+        let countries = parse_countries(&root_html);
+
+        let mut regions = Vec::new();
+        let mut region_notices = BTreeMap::<(String, Option<String>), String>::new();
+        let mut region_notice_initialized_keys = HashSet::new();
+        let mut request_count = 1_i64;
+
+        for c in &countries {
+            let fid = &c.id;
+            let fid_url = format!("{}?fid={fid}", self.cart_url);
+            let fid_html = self.fetch_html(&fid_url).await?;
+            request_count += 1;
+
+            let mut fid_regions = parse_regions(fid, &fid_html);
+            if fid_regions.is_empty() {
+                region_notice_initialized_keys.insert(catalog_region_key(fid, None));
+                if let Some(text) = parse_region_notice(&fid_html) {
+                    upsert_region_notice(&mut region_notices, fid, None, &text);
+                }
+            } else {
+                regions.append(&mut fid_regions);
+            }
+        }
+
+        Ok(CatalogTopologySnapshot {
+            countries,
+            regions,
+            region_notices: region_notices
+                .into_iter()
+                .map(|((country_id, region_id), text)| RegionNotice {
+                    country_id,
+                    region_id,
+                    text,
+                })
+                .collect(),
+            region_notice_initialized_keys,
+            refreshed_at: now_rfc3339(),
+            request_count,
+        })
+    }
+
     pub async fn fetch_catalog(&self) -> anyhow::Result<CatalogSnapshot> {
         let root_html = self.fetch_html(&self.cart_url).await?;
         let countries = parse_countries(&root_html);
@@ -149,10 +217,7 @@ impl UpstreamClient {
                 }
                 let parsed = parse_configs(fid, Some(gid), &gid_html);
                 configs.extend(parsed);
-                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
             }
-
-            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
         }
 
         let fetched_at = now_rfc3339();
@@ -176,6 +241,10 @@ impl UpstreamClient {
             configs,
             fetched_at,
             source_url: self.cart_url.clone(),
+            topology_refreshed_at: Some(now_rfc3339()),
+            topology_request_count: 0,
+            topology_status: "success".to_string(),
+            topology_message: None,
         })
     }
 
@@ -207,6 +276,8 @@ impl UpstreamClient {
         };
 
         let start = Instant::now();
+        let gate = upstream_request_gate();
+        let _guard = gate.lock().await;
         let res = self.client.get(&url).send().await?;
         let status = res.status();
         let http_status = status.as_u16();
@@ -216,6 +287,10 @@ impl UpstreamClient {
         let html = res.text().await?;
         let elapsed_ms = start.elapsed().as_millis() as i64;
         let bytes = html.len() as i64;
+        tokio::time::sleep(std::time::Duration::from_millis(
+            UPSTREAM_REQUEST_COOLDOWN_MS,
+        ))
+        .await;
 
         let parse_start = Instant::now();
         let configs = parse_configs(fid, gid, &html);
@@ -238,24 +313,31 @@ impl UpstreamClient {
     }
 
     async fn fetch_html(&self, url: &str) -> anyhow::Result<String> {
+        let gate = upstream_request_gate();
+        let _guard = gate.lock().await;
         let res = self.client.get(url).send().await?;
         let status = res.status();
         if !status.is_success() {
             anyhow::bail!("upstream http {status} for {url}");
         }
-        Ok(res.text().await?)
+        let body = res.text().await?;
+        tokio::time::sleep(std::time::Duration::from_millis(
+            UPSTREAM_REQUEST_COOLDOWN_MS,
+        ))
+        .await;
+        Ok(body)
     }
 
     async fn resolve_missing_source_pids(&self, configs: &mut [ConfigBase]) {
         let mut unresolved_by_name: HashMap<String, Vec<usize>> = HashMap::new();
-        let mut max_known_pid: u32 = 0;
+        let mut recovered_from_cards = HashMap::<String, String>::new();
         for (idx, cfg) in configs.iter().enumerate() {
             if let Some(pid) = cfg
                 .source_pid
                 .as_deref()
                 .and_then(|v| v.parse::<u32>().ok())
             {
-                max_known_pid = max_known_pid.max(pid);
+                recovered_from_cards.insert(cfg.name.clone(), pid.to_string());
                 continue;
             }
             unresolved_by_name
@@ -266,6 +348,12 @@ impl UpstreamClient {
         if unresolved_by_name.is_empty() {
             return;
         }
+
+        for (name, pid) in &recovered_from_cards {
+            let mut cache = self.pid_name_cache.lock().await;
+            cache.entry(name.clone()).or_insert_with(|| pid.clone());
+        }
+
         for (name, idxs) in &unresolved_by_name {
             if let Some(pid) = known_pid_fallback(name) {
                 for idx in idxs {
@@ -278,57 +366,12 @@ impl UpstreamClient {
         if unresolved_by_name.is_empty() {
             return;
         }
-        {
-            let cache = self.pid_name_cache.lock().await;
-            for (name, idxs) in &unresolved_by_name {
-                if let Some(pid) = cache.get(name) {
-                    for idx in idxs {
-                        configs[*idx].source_pid = Some(pid.clone());
-                    }
-                }
-            }
-        }
-        unresolved_by_name
-            .retain(|_, idxs| idxs.iter().any(|idx| configs[*idx].source_pid.is_none()));
-        if unresolved_by_name.is_empty() {
-            return;
-        }
-
-        // Probe configureproduct pages to recover pids hidden on sold-out cards.
-        // Keep this bounded and conservative to avoid overloading upstream.
-        let probe_max = max_known_pid.max(200);
-        let mut recovered: HashMap<String, String> = HashMap::new();
-        for pid in 1..=probe_max {
-            if unresolved_by_name
-                .keys()
-                .all(|name| recovered.contains_key(name))
-            {
-                break;
-            }
-            let url = format!("{}?action=configureproduct&pid={pid}", self.cart_url);
-            let Ok(html) = self.fetch_html(&url).await else {
-                continue;
-            };
-            let Some(title) = parse_configureproduct_title(&html) else {
-                continue;
-            };
-            if unresolved_by_name.contains_key(&title) {
-                recovered.entry(title).or_insert_with(|| pid.to_string());
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(40)).await;
-        }
-
-        for (name, idxs) in unresolved_by_name {
-            if let Some(pid) = recovered.get(&name) {
+        let cache = self.pid_name_cache.lock().await;
+        for (name, idxs) in &unresolved_by_name {
+            if let Some(pid) = cache.get(name) {
                 for idx in idxs {
-                    configs[idx].source_pid = Some(pid.clone());
+                    configs[*idx].source_pid = Some(pid.clone());
                 }
-            }
-        }
-        if !recovered.is_empty() {
-            let mut cache = self.pid_name_cache.lock().await;
-            for (name, pid) in recovered {
-                cache.insert(name, pid);
             }
         }
     }
@@ -767,6 +810,7 @@ fn split_kv(s: &str) -> Option<(String, String)> {
     }
 }
 
+#[cfg(test)]
 fn parse_configureproduct_title(html: &str) -> Option<String> {
     let doc = Html::parse_document(html);
     let h4 = Selector::parse("h4").ok()?;
