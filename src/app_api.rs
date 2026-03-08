@@ -788,16 +788,6 @@ async fn put_settings(
     if req.poll.interval_minutes < 1 || !(0.0..=1.0).contains(&req.poll.jitter_pct) {
         return Err(json_invalid_argument());
     }
-    if let Some(ref cr) = req.catalog_refresh {
-        if let Some(hours) = cr.auto_interval_hours {
-            if !(1..=24 * 30).contains(&hours) {
-                return Err(json_invalid_argument_with_message(
-                    "自动全量刷新间隔（小时）必须在 1..=720，或设为 null 关闭",
-                ));
-            }
-        }
-    }
-
     let settings = db::update_settings(&state.db, &user.0.id, req)
         .await
         .map_err(|_| json_invalid_argument())?;

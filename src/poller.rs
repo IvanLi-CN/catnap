@@ -1,3 +1,4 @@
+use crate::defaults::FIXED_CATALOG_TOPOLOGY_REFRESH_INTERVAL_HOURS;
 use crate::upstream::{catalog_region_key, CatalogSnapshot, UpstreamClient};
 use crate::{app::AppState, db};
 use crate::{models::Money, notification_content};
@@ -8,7 +9,6 @@ use tracing::{info, warn};
 
 const INVENTORY_HISTORY_RETENTION_DAYS: i64 = 30;
 const DISCOVERY_INTERVAL_SECONDS: i64 = 5 * 60;
-const TOPOLOGY_INTERVAL_FALLBACK_MINUTES: i64 = 30;
 const TOPOLOGY_RETRY_SECONDS: i64 = 5 * 60;
 
 fn initial_topology_due(
@@ -156,11 +156,8 @@ async fn run(state: AppState) -> anyhow::Result<()> {
             .collect::<Vec<_>>();
 
         let now = OffsetDateTime::now_utc();
-        let topology_interval = db::get_global_catalog_refresh_interval_hours(&state.db)
-            .await?
-            .filter(|hours| *hours > 0)
-            .map(time::Duration::hours)
-            .unwrap_or_else(|| time::Duration::minutes(TOPOLOGY_INTERVAL_FALLBACK_MINUTES));
+        let topology_interval =
+            time::Duration::hours(FIXED_CATALOG_TOPOLOGY_REFRESH_INTERVAL_HOURS);
 
         if next_topology_due.is_none() || next_discovery_due.is_none() {
             let has_topology = db::has_catalog_topology(&state.db).await?;

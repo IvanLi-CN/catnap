@@ -1,4 +1,5 @@
 use crate::config::RuntimeConfig;
+use crate::defaults::FIXED_CATALOG_TOPOLOGY_REFRESH_INTERVAL_HOURS;
 use crate::models::*;
 use sqlx::{Row, SqlitePool};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime, UtcOffset};
@@ -33,7 +34,7 @@ impl SettingsRow {
             },
             site_base_url: self.site_base_url.clone(),
             catalog_refresh: SettingsCatalogRefreshView {
-                auto_interval_hours: self.catalog_refresh_auto_interval_hours,
+                auto_interval_hours: Some(FIXED_CATALOG_TOPOLOGY_REFRESH_INTERVAL_HOURS),
             },
             monitoring_events: SettingsMonitoringEventsView {
                 listed_enabled: self.monitoring_events_listed_enabled,
@@ -737,11 +738,12 @@ pub async fn ensure_user(
             web_push_enabled,
             created_at,
             updated_at
-        ) VALUES (?, ?, ?, NULL, 6, 0, 0, 0, NULL, NULL, 0, ?, ?)"#,
+        ) VALUES (?, ?, ?, NULL, ?, 0, 0, 0, NULL, NULL, 0, ?, ?)"#,
     )
     .bind(user_id)
     .bind(cfg.default_poll_interval_minutes)
     .bind(cfg.default_poll_jitter_pct)
+    .bind(FIXED_CATALOG_TOPOLOGY_REFRESH_INTERVAL_HOURS)
     .bind(&now)
     .bind(&now)
     .execute(db)
@@ -798,7 +800,6 @@ pub async fn update_settings(
     let existing = get_settings(db, user_id).await?;
     let existing_bot_token = existing.telegram_bot_token;
     let existing_target = existing.telegram_target;
-    let existing_auto_interval_hours = existing.catalog_refresh_auto_interval_hours;
     let existing_listed_enabled = existing.monitoring_events_listed_enabled;
     let existing_delisted_enabled = existing.monitoring_events_delisted_enabled;
 
@@ -817,10 +818,7 @@ pub async fn update_settings(
         .filter(|v| !v.is_empty())
         .or(existing_target);
 
-    let auto_interval_hours = req
-        .catalog_refresh
-        .map(|v| v.auto_interval_hours)
-        .unwrap_or(existing_auto_interval_hours);
+    let auto_interval_hours = existing.catalog_refresh_auto_interval_hours;
     let listed_enabled = req
         .monitoring_events
         .as_ref()

@@ -40,8 +40,8 @@
 - 变更类型：Modify
 - 字段 shape：保留 `settings.catalogRefresh.autoIntervalHours`
 - 语义调整：
-  - 前后端文案统一解释为“目录拓扑复扫间隔（小时）”。
-  - `null` 仍表示关闭自动拓扑复扫。
+  - 该字段改为只读的有效值，固定返回 `12`（小时）。
+  - `PUT /api/settings` 继续接受该字段以保持兼容，但服务端忽略用户传入值。
   - 本计划不新增终端用户可配置的 discovery 频率字段。
 
 ## GET /api/ops/state

@@ -2360,8 +2360,6 @@ type SettingsFieldKey =
   | "jitterPct"
   | "siteBaseUrl"
   | "siteAutofill"
-  | "autoRefreshEnabled"
-  | "autoIntervalHours"
   | "listedEnabled"
   | "delistedEnabled"
   | "tgEnabled"
@@ -2381,8 +2379,6 @@ type SettingsDraft = {
   intervalMinutesInput: string;
   jitterPctInput: string;
   siteBaseUrlInput: string;
-  autoRefreshEnabled: boolean;
-  autoIntervalHoursInput: string;
   listedEnabled: boolean;
   delistedEnabled: boolean;
   tgEnabled: boolean;
@@ -2528,12 +2524,6 @@ export function SettingsViewPanel({
   const [siteBaseUrlInput, setSiteBaseUrlInput] = useState<string>(
     bootstrap.settings.siteBaseUrl ?? "",
   );
-  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState<boolean>(
-    bootstrap.settings.catalogRefresh.autoIntervalHours !== null,
-  );
-  const [autoIntervalHoursInput, setAutoIntervalHoursInput] = useState<string>(
-    String(bootstrap.settings.catalogRefresh.autoIntervalHours ?? 6),
-  );
   const [listedEnabled, setListedEnabled] = useState<boolean>(
     bootstrap.settings.monitoringEvents.listedEnabled,
   );
@@ -2635,13 +2625,13 @@ export function SettingsViewPanel({
   const updateAvailable = update?.updateAvailable ?? false;
   const updateMessage = update?.message ?? aboutError;
 
+  const topologyRefreshHours = lastPersisted.catalogRefresh.autoIntervalHours ?? 12;
+
   const buildDraft = useCallback(
     (overrides: Partial<SettingsDraft> = {}): SettingsDraft => ({
       intervalMinutesInput,
       jitterPctInput,
       siteBaseUrlInput,
-      autoRefreshEnabled,
-      autoIntervalHoursInput,
       listedEnabled,
       delistedEnabled,
       tgEnabled,
@@ -2654,8 +2644,6 @@ export function SettingsViewPanel({
       intervalMinutesInput,
       jitterPctInput,
       siteBaseUrlInput,
-      autoRefreshEnabled,
-      autoIntervalHoursInput,
       listedEnabled,
       delistedEnabled,
       tgEnabled,
@@ -2720,16 +2708,7 @@ export function SettingsViewPanel({
           }
         }
       } else {
-        if (!draft.autoRefreshEnabled) {
-          value = null;
-        } else {
-          const parsed = parseStrictInteger(draft.autoIntervalHoursInput);
-          if (parsed === null || parsed < 1 || parsed > 720) {
-            message = "间隔（小时）必须是 1..720 的整数";
-          } else {
-            value = parsed;
-          }
-        }
+        value = null;
       }
 
       setFieldError(field, message);
@@ -2747,19 +2726,15 @@ export function SettingsViewPanel({
       const intervalMinutes = validateDraftField("intervalMinutes", draft, reportInvalid);
       const jitterPct = validateDraftField("jitterPct", draft, reportInvalid);
       const siteBaseUrl = validateDraftField("siteBaseUrl", draft, reportInvalid);
-      const autoIntervalHours = validateDraftField("autoIntervalHours", draft, reportInvalid);
-
       const computedInvalid: SettingsFieldKey[] = [];
       if (!intervalMinutes.valid) computedInvalid.push("intervalMinutes");
       if (!jitterPct.valid) computedInvalid.push("jitterPct");
       if (!siteBaseUrl.valid) computedInvalid.push("siteBaseUrl");
-      if (!autoIntervalHours.valid) computedInvalid.push("autoIntervalHours");
 
       return {
         intervalMinutes,
         jitterPct,
         siteBaseUrl,
-        autoIntervalHours,
         invalidFields: computedInvalid,
       };
     },
@@ -2792,14 +2767,6 @@ export function SettingsViewPanel({
         const value = validated.siteBaseUrl.value as string | null;
         if (value !== next.siteBaseUrl) {
           next.siteBaseUrl = value;
-          changed = true;
-        }
-      }
-
-      if (validated.autoIntervalHours.valid) {
-        const value = validated.autoIntervalHours.value as number | null;
-        if (value !== next.catalogRefresh.autoIntervalHours) {
-          next.catalogRefresh.autoIntervalHours = value;
           changed = true;
         }
       }
@@ -3084,63 +3051,16 @@ export function SettingsViewPanel({
       <div className="panel-section">
         <div className="panel-title">目录拓扑复扫（Catalog topology refresh）</div>
         <div className="panel-subtitle">
-          控制 root/fid 拓扑复扫频率；已知 URL 轻扫与监控快扫会复用结果
+          这项频率改为系统托管，不再单独设置；只用于发现全新的国家/区域拓扑
         </div>
         <div className="settings-grid">
-          <div>自动目录拓扑复扫</div>
+          <div>系统固定间隔</div>
           <div className="settings-action-wrap">
-            <button
-              type="button"
-              className={`pill sm center ${autoRefreshEnabled ? "on" : ""}`}
-              style={{ width: "92px" }}
-              onClick={() => {
-                const next = !autoRefreshEnabled;
-                setAutoRefreshEnabled(next);
-                setFieldError("autoRefreshEnabled", null);
-                if (!next) {
-                  setFieldError("autoIntervalHours", null);
-                }
-                void validateDraftField(
-                  "autoIntervalHours",
-                  buildDraft({ autoRefreshEnabled: next }),
-                  false,
-                );
-                void flushAutosaveImmediate({ autoRefreshEnabled: next }, "autoRefreshEnabled");
-              }}
-            >
-              {autoRefreshEnabled ? "启用" : "关闭"}
-            </button>
-            {renderFieldError("autoRefreshEnabled")}
+            <span className="pill sm center on" style={{ width: "92px" }}>
+              {`${topologyRefreshHours} 小时`}
+            </span>
           </div>
-          <div className="hint">全局间隔取“所有用户启用值”的最小值；不会强制绕过 cache</div>
-
-          <div>间隔（小时）</div>
-          <div className="settings-input-wrap">
-            <div className="pill num" style={{ width: "92px" }}>
-              <input
-                type="number"
-                min={1}
-                max={720}
-                disabled={!autoRefreshEnabled}
-                value={autoIntervalHoursInput}
-                onChange={(e) => {
-                  const value = e.target.value;
-                  setAutoIntervalHoursInput(value);
-                  void validateDraftField(
-                    "autoIntervalHours",
-                    buildDraft({ autoIntervalHoursInput: value }),
-                    false,
-                  );
-                  scheduleAutosave({ autoIntervalHoursInput: value }, "autoIntervalHours");
-                }}
-                onBlur={() => {
-                  void validateDraftField("autoIntervalHours", buildDraft(), true);
-                }}
-              />
-            </div>
-            {renderFieldError("autoIntervalHours")}
-          </div>
-          <div className="hint">默认 6；范围 1..720；关闭=设为 null</div>
+          <div className="hint">已知 URL 的新机发现仍走 5 分钟 discovery 轻扫，不受这里影响</div>
 
           <div>上架监控</div>
           <div className="settings-action-wrap">
