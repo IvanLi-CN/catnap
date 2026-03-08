@@ -40,7 +40,8 @@
 - 变更类型：Modify
 - 字段 shape：保留 `settings.catalogRefresh.autoIntervalHours`
 - 语义调整：
-  - 该字段改为只读的有效值，固定返回 `1`（小时）。
+  - 该字段改为只读的有效值，固定返回 `1`（小时），表示正式 topology refresh 周期。
+  - 服务端同时运行不可配置的 `topology_probe = 15 分钟`，用于更早发现新国家/新地域。
   - `PUT /api/settings` 继续接受该字段以保持兼容，但服务端忽略用户传入值。
   - 本计划不新增终端用户可配置的 discovery 频率字段。
 

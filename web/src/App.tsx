@@ -40,6 +40,7 @@ type ApiError = {
 };
 
 export const SETTINGS_TEST_SUCCESS_BUBBLE_MS = 4_000;
+const TOPOLOGY_PROBE_MINUTES = 15;
 
 class ApiHttpError extends Error {
   status: number;
@@ -3051,16 +3052,28 @@ export function SettingsViewPanel({
       <div className="panel-section">
         <div className="panel-title">目录拓扑复扫（Catalog topology refresh）</div>
         <div className="panel-subtitle">
-          这项频率改为系统托管，不再单独设置；只用于发现全新的国家/区域拓扑
+          这项频率改为系统托管，不再单独设置；新区/新地域先做轻探测，再由正式复扫收敛
         </div>
         <div className="settings-grid">
-          <div>系统固定间隔</div>
+          <div>新区轻探测</div>
           <div className="settings-action-wrap">
-            <span className="pill sm center on" style={{ width: "92px" }}>
+            <span className="pill sm center on" style={{ width: "108px" }}>
+              {`${TOPOLOGY_PROBE_MINUTES} 分钟`}
+            </span>
+          </div>
+          <div className="hint">
+            只扫 root + fid，把新国家/新地域尽快纳入后续 5 分钟 discovery 范围
+          </div>
+
+          <div>正式拓扑复扫</div>
+          <div className="settings-action-wrap">
+            <span className="pill sm center on" style={{ width: "108px" }}>
               {`${topologyRefreshHours} 小时`}
             </span>
           </div>
-          <div className="hint">已知 URL 的新机发现仍走 5 分钟 discovery 轻扫，不受这里影响</div>
+          <div className="hint">
+            用于保守收敛拓扑变化与移除目标；已知 URL 的新机发现仍走 5 分钟轻扫
+          </div>
 
           <div>上架监控</div>
           <div className="settings-action-wrap">

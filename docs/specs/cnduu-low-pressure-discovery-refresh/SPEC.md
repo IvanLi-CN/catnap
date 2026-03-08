@@ -32,10 +32,10 @@
 ### In scope
 
 - 启动链路：`DB-first` catalog 启动、空库拓扑初始化、禁用启动阶段 `configureproduct` 热路径补扫。
-- 调度链路：新增 `topology_refresh`、`discovery_due`，保留 `poller_due` 与 `manual_refresh`，并为不同 reason 定义固定 freshness window。
+- 调度链路：新增 `topology_probe`（15 分钟轻探测）、`topology_refresh`（1 小时正式复扫）、`discovery_due`，保留 `poller_due` 与 `manual_refresh`，并为不同 reason 定义固定 freshness window。
 - 上游抓取协调器：host 级限流（单并发 + 冷却）、recent success 复用、统一 queue reason 与 cache hit 语义。
 - 生命周期事件：任意成功抓取后统一 diff 与通知，且保证同一状态迁移只通知一次。
-- Web UI：监控页 `recentListed24h` 后台刷新；设置页不再暴露拓扑复扫开关，仅展示系统固定的拓扑复扫间隔。
+- Web UI：监控页 `recentListed24h` 后台刷新；设置页不再暴露拓扑复扫开关，仅展示系统固定的 15 分钟轻探测与 1 小时正式复扫。
 - Ops 观测：展示 discovery/cache-hit、最近一次 topology refresh、队列最老等待时长。
 
 ### Out of scope
@@ -64,13 +64,13 @@
 - `poller_due`、`discovery_due`、`manual_refresh` 任一成功抓取后，均需执行生命周期差异计算与通知分发；listed/delisted/relisted 的去重语义必须与当前状态机一致。
 - 若 `manual_refresh` 的强制 real-fetch 请求在同一 `url_key` 任务已进入 cache-hit 判定后才合并进来，协调器仍必须补做真实抓取，不能让 late joiner 只拿到旧 cache-hit 结果。
 - 监控页 `recentListed24h` 必须在 DB 中出现新上架后 `<=30s` 内可见，无需等待手动全量刷新结束。
-- `settings.catalogRefresh.autoIntervalHours` 字段保留，但改为只读的系统固定值 `1`（小时），不再作为终端用户可编辑设置。
+- `settings.catalogRefresh.autoIntervalHours` 字段保留，但改为只读的系统固定值 `1`（小时）；服务端另有不可配置的 `topology_probe = 15 分钟`。
 
 ### SHOULD
 
 - `discovery_due` 应覆盖所有已知 `url_key`，并采用分摊式渐进扫描，避免单轮扫完整站。
 - 空库启动后，已知 `gid/url_key` 应在 `<=5 分钟` 内完成首轮 discovery 建档。
-- Ops 仪表盘应能明确区分 `fetch` 与 `cache hit`，并按 reason 聚合 `discovery_due`、`poller_due`、`manual_refresh`、`topology_refresh`。
+- Ops 仪表盘应能明确区分 `fetch` 与 `cache hit`，并按 reason 聚合 `discovery_due`、`poller_due`、`manual_refresh`、`topology_probe`、`topology_refresh`。
 
 ### COULD
 
@@ -161,7 +161,7 @@
 
 - 低压优先的请求预算（单并发 + `500ms` 冷却）已冻结。
 - freshness window 已冻结为 `45s / 150s / 300s / 1800s`。
-- `autoIntervalHours` 的新语义已确认：表示系统固定的目录拓扑复扫间隔 `1h`，而不是强制全量刷新周期。
+- `autoIntervalHours` 的新语义已确认：表示系统固定的正式目录拓扑复扫间隔 `1h`；另有 `15m` 轻探测，不再暴露给终端用户。
 - 不新增新的终端用户 discovery 配置项。
 
 ## 非功能性验收 / 质量门槛（Quality Gates）
@@ -182,7 +182,7 @@
 
 - Stories to add/update:
   - Monitoring 页面：`recentListed24h` 后台刷新后的状态
-  - Settings 页面：展示系统固定的 `1h` 目录拓扑复扫间隔（只读）
+  - Settings 页面：展示系统固定的 `15m` 新区轻探测 + `1h` 目录拓扑复扫（只读）
   - Ops 页面：discovery/cache-hit 指标展示
 
 ### Quality checks
