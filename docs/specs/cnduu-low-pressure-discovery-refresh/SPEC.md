@@ -64,7 +64,7 @@
 - `poller_due`、`discovery_due`、`manual_refresh` 任一成功抓取后，均需执行生命周期差异计算与通知分发；listed/delisted/relisted 的去重语义必须与当前状态机一致。
 - 若 `manual_refresh` 的强制 real-fetch 请求在同一 `url_key` 任务已进入 cache-hit 判定后才合并进来，协调器仍必须补做真实抓取，不能让 late joiner 只拿到旧 cache-hit 结果。
 - 监控页 `recentListed24h` 必须在 DB 中出现新上架后 `<=30s` 内可见，无需等待手动全量刷新结束。
-- `settings.catalogRefresh.autoIntervalHours` 字段保留，但改为只读的系统固定值 `12`（小时），不再作为终端用户可编辑设置。
+- `settings.catalogRefresh.autoIntervalHours` 字段保留，但改为只读的系统固定值 `1`（小时），不再作为终端用户可编辑设置。
 
 ### SHOULD
 
@@ -161,7 +161,7 @@
 
 - 低压优先的请求预算（单并发 + `500ms` 冷却）已冻结。
 - freshness window 已冻结为 `45s / 150s / 300s / 1800s`。
-- `autoIntervalHours` 的新语义已确认：表示系统固定的目录拓扑复扫间隔 `12h`，而不是强制全量刷新周期。
+- `autoIntervalHours` 的新语义已确认：表示系统固定的目录拓扑复扫间隔 `1h`，而不是强制全量刷新周期。
 - 不新增新的终端用户 discovery 配置项。
 
 ## 非功能性验收 / 质量门槛（Quality Gates）
@@ -182,7 +182,7 @@
 
 - Stories to add/update:
   - Monitoring 页面：`recentListed24h` 后台刷新后的状态
-  - Settings 页面：展示系统固定的 `12h` 目录拓扑复扫间隔（只读）
+  - Settings 页面：展示系统固定的 `1h` 目录拓扑复扫间隔（只读）
   - Ops 页面：discovery/cache-hit 指标展示
 
 ### Quality checks

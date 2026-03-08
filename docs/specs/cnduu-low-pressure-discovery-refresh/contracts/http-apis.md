@@ -40,7 +40,7 @@
 - 变更类型：Modify
 - 字段 shape：保留 `settings.catalogRefresh.autoIntervalHours`
 - 语义调整：
-  - 该字段改为只读的有效值，固定返回 `12`（小时）。
+  - 该字段改为只读的有效值，固定返回 `1`（小时）。
   - `PUT /api/settings` 继续接受该字段以保持兼容，但服务端忽略用户传入值。
   - 本计划不新增终端用户可配置的 discovery 频率字段。
 

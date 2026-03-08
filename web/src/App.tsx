@@ -2625,7 +2625,7 @@ export function SettingsViewPanel({
   const updateAvailable = update?.updateAvailable ?? false;
   const updateMessage = update?.message ?? aboutError;
 
-  const topologyRefreshHours = lastPersisted.catalogRefresh.autoIntervalHours ?? 12;
+  const topologyRefreshHours = lastPersisted.catalogRefresh.autoIntervalHours ?? 1;
 
   const buildDraft = useCallback(
     (overrides: Partial<SettingsDraft> = {}): SettingsDraft => ({
