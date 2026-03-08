@@ -792,7 +792,7 @@ export function App() {
 
   useEffect(() => {
     if (!hasBootstrap) return;
-    const missingCatalogTopology = catalogCountriesLen === 0 || catalogRegionsLen === 0;
+    const missingCatalogTopology = catalogCountriesLen === 0;
     if (missingCatalogTopology) {
       catalogBackfillPendingRef.current = true;
     }
@@ -855,7 +855,7 @@ export function App() {
           };
         });
 
-        const topologyReady = json.catalog.countries.length > 0 && json.catalog.regions.length > 0;
+        const topologyReady = json.catalog.countries.length > 0;
         const noticesReady = json.catalog.regionNotices.length > 0;
         const reachedAttemptCap = attempts >= topologyRetryLimit;
         if (!topologyReady && !reachedAttemptCap) {
@@ -891,7 +891,7 @@ export function App() {
       cancelled = true;
       if (timeoutId !== null) window.clearTimeout(timeoutId);
     };
-  }, [catalogCountriesLen, catalogRegionsLen, hasBootstrap]);
+  }, [catalogCountriesLen, hasBootstrap]);
 
   useEffect(() => {
     if (!hasBootstrap) return;
