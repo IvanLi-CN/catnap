@@ -62,6 +62,7 @@
 - 当多个 reason 合并到同一任务时，freshness window 以其中最宽的窗口为准，避免因队列去重反向放大上游请求。
 - `configureproduct` / `pid` 探测不得出现在启动、discovery、monitoring 热路径；发现链路中的相关请求数必须为 `0`。
 - `poller_due`、`discovery_due`、`manual_refresh` 任一成功抓取后，均需执行生命周期差异计算与通知分发；listed/delisted/relisted 的去重语义必须与当前状态机一致。
+- 若 `manual_refresh` 的强制 real-fetch 请求在同一 `url_key` 任务已进入 cache-hit 判定后才合并进来，协调器仍必须补做真实抓取，不能让 late joiner 只拿到旧 cache-hit 结果。
 - 监控页 `recentListed24h` 必须在 DB 中出现新上架后 `<=30s` 内可见，无需等待手动全量刷新结束。
 - `settings.catalogRefresh.autoIntervalHours` 字段保留，但前后端文案语义调整为“目录拓扑复扫间隔（小时）”。
 
@@ -96,8 +97,8 @@
   - 仍按用户监控配置驱动，但调用同一抓取协调器。
   - 若目标 `url_key` 在 45 秒窗口内已有成功抓取，则直接复用结果，不重复打站。
 - manual_refresh / topology_refresh
-  - `manual_refresh` 仍以“推进所有已知 URL 子任务”为语义，但优先 cache hit，不提供强制 bypass。
-  - `topology_refresh` 负责低频更新 root/fid/gid 拓扑，并刷新已知 `url_key` 集合；其 UI 文案统一解释为“目录拓扑复扫”。
+  - `manual_refresh` 仍以“推进所有已知 URL 子任务”为语义，默认优先 cache hit；仅在 region notice 初始化缺失时允许对单个 `url_key` 触发真实抓取补齐状态。
+  - `topology_refresh` 负责低频更新 root/fid/gid 拓扑，并刷新已知 `url_key` 集合；若某个 `fid` 页面既解析不到 region 也解析不到 config，则必须保留该国家既有 region 拓扑，不能直接 retire 旧 target。其 UI 文案统一解释为“目录拓扑复扫”。
 - UI 可见性
   - `products` 继续按现有 10–30 秒后台刷新策略拉取 `/api/products`。
   - `monitoring` 在现有进入页面刷新之外，增加 10–30 秒后台刷新 `/api/monitoring`，确保 `recentListed24h` 能及时反映 discovery 结果。

@@ -114,8 +114,7 @@ async fn refresh_catalog_topology_retires_removed_targets() {
   <span class="yy-bth-text-a">JP</span>
 </div>
 "#;
-    let fid_html =
-        "<!doctype html><html><body><div class='no-regions'>country-only</div></body></html>";
+    let fid_html = include_str!("fixtures/cart-fid-7.html");
 
     #[derive(serde::Deserialize)]
     struct CartQuery {
@@ -181,4 +180,98 @@ async fn refresh_catalog_topology_retires_removed_targets() {
 
     let known_targets = catnap::db::list_known_catalog_targets(&db).await.unwrap();
     assert!(known_targets.is_empty());
+}
+
+#[tokio::test]
+async fn refresh_catalog_topology_preserves_regions_when_country_page_is_ambiguous() {
+    let root_html = r#"
+<!doctype html>
+<div class="firstgroup_item" onclick="window.location.href='/cart?fid=2'">
+  <span class="yy-bth-text-a">CN</span>
+</div>
+"#;
+    let ambiguous_fid_html = "<!doctype html><html><body>temporary upstream issue</body></html>";
+
+    #[derive(serde::Deserialize)]
+    struct CartQuery {
+        fid: Option<String>,
+    }
+
+    let upstream = Router::new().route(
+        "/cart",
+        axum::routing::get(
+            move |axum::extract::Query(q): axum::extract::Query<CartQuery>| async move {
+                match q.fid.as_deref() {
+                    None => root_html,
+                    Some("2") => ambiguous_fid_html,
+                    Some(_) => "not found",
+                }
+            },
+        ),
+    );
+    let base = spawn_stub_server(upstream).await;
+
+    let mut cfg = test_config();
+    cfg.upstream_cart_url = format!("{base}/cart");
+
+    let db = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&cfg.db_url)
+        .await
+        .unwrap();
+    catnap::db::init_db(&db).await.unwrap();
+
+    let countries = vec![catnap::models::Country {
+        id: "2".to_string(),
+        name: "CN".to_string(),
+    }];
+    let regions = vec![catnap::models::Region {
+        id: "56".to_string(),
+        country_id: "2".to_string(),
+        name: "HKG Premium".to_string(),
+        location_name: Some("湾仔".to_string()),
+    }];
+    catnap::db::replace_catalog_topology(&db, &cfg.upstream_cart_url, &countries, &regions)
+        .await
+        .unwrap();
+
+    let mut configs = catnap::upstream::parse_configs(
+        "2",
+        Some("56"),
+        include_str!("fixtures/cart-fid-2-gid-56.html"),
+    );
+    configs.truncate(1);
+    catnap::db::upsert_catalog_configs(&db, &configs)
+        .await
+        .unwrap();
+
+    let state = build_state(cfg.clone(), db.clone()).await;
+    catnap::poller::refresh_catalog_topology(&state, "test")
+        .await
+        .unwrap();
+
+    let known_targets = catnap::db::list_known_catalog_targets(&db).await.unwrap();
+    assert_eq!(
+        known_targets,
+        vec![("2".to_string(), Some("56".to_string()))]
+    );
+
+    let row = sqlx::query("SELECT lifecycle_state FROM catalog_configs WHERE id = ?")
+        .bind(&configs[0].id)
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    assert_eq!(row.get::<String, _>(0), "active");
+
+    let row = sqlx::query("SELECT has_regions FROM catalog_countries WHERE id = '2'")
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    assert_eq!(row.get::<i64, _>(0), 1);
+
+    let row = sqlx::query("SELECT COUNT(*) FROM catalog_regions WHERE country_id = '2'")
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    assert_eq!(row.get::<i64, _>(0), 1);
 }

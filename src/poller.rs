@@ -42,10 +42,13 @@ pub async fn refresh_catalog_topology(state: &AppState, reason: &str) -> anyhow:
     let has_existing_catalog_state = db::has_catalog_topology(&state.db).await?
         || !db::list_known_catalog_targets(&state.db).await?.is_empty();
     match upstream.fetch_topology().await {
-        Ok(topology) => {
+        Ok(mut topology) => {
             if topology.countries.is_empty() && has_existing_catalog_state {
                 anyhow::bail!("refusing empty topology refresh while catalog state already exists");
             }
+            let previous_snapshot = state.catalog.read().await.clone();
+            let preserved_ambiguous_countries =
+                preserve_ambiguous_country_regions(&mut topology, &previous_snapshot);
             let previous_targets = db::list_catalog_task_keys(&state.db).await?;
             db::replace_catalog_topology(
                 &state.db,
@@ -108,6 +111,7 @@ pub async fn refresh_catalog_topology(state: &AppState, reason: &str) -> anyhow:
                         "requestCount": state.catalog.read().await.topology_request_count,
                         "removedTargetCount": removed_targets.len(),
                         "retiredConfigCount": retired_ids.len(),
+                        "preservedAmbiguousCountryCount": preserved_ambiguous_countries.len(),
                     })),
                 )
                 .await;
@@ -296,6 +300,66 @@ fn catalog_targets_from_snapshot(snapshot: &CatalogSnapshot) -> Vec<(String, Opt
     }
 
     out
+}
+
+fn preserve_ambiguous_country_regions(
+    topology: &mut crate::upstream::CatalogTopologySnapshot,
+    previous: &CatalogSnapshot,
+) -> Vec<String> {
+    let mut preserved_countries = Vec::new();
+
+    for country_id in topology.ambiguous_country_ids.iter() {
+        let previous_regions = previous
+            .regions
+            .iter()
+            .filter(|region| region.country_id == *country_id)
+            .cloned()
+            .collect::<Vec<_>>();
+        if previous_regions.is_empty() {
+            continue;
+        }
+
+        preserved_countries.push(country_id.clone());
+        let mut existing_region_ids = topology
+            .regions
+            .iter()
+            .filter(|region| region.country_id == *country_id)
+            .map(|region| region.id.clone())
+            .collect::<HashSet<_>>();
+        let mut preserved_url_keys = HashSet::new();
+
+        for region in previous_regions {
+            let url_key = catalog_region_key(&region.country_id, Some(region.id.as_str()));
+            preserved_url_keys.insert(url_key);
+            if existing_region_ids.insert(region.id.clone()) {
+                topology.regions.push(region);
+            }
+        }
+
+        topology.region_notice_initialized_keys.extend(
+            previous
+                .region_notice_initialized_keys
+                .iter()
+                .filter(|key| preserved_url_keys.contains(*key))
+                .cloned(),
+        );
+        for notice in previous
+            .region_notices
+            .iter()
+            .filter(|notice| notice.country_id == *country_id)
+        {
+            let notice_key = catalog_region_key(&notice.country_id, notice.region_id.as_deref());
+            if preserved_url_keys.contains(&notice_key)
+                && !topology.region_notices.iter().any(|current| {
+                    current.country_id == notice.country_id && current.region_id == notice.region_id
+                })
+            {
+                topology.region_notices.push(notice.clone());
+            }
+        }
+    }
+
+    preserved_countries
 }
 
 async fn apply_topology_snapshot(

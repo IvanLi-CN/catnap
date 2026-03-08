@@ -900,7 +900,17 @@ LIMIT 1
                 }
             };
 
-            let res = self.run_task(&upstream, &key, run_id).await;
+            let (res, completion) = loop {
+                let res = self.run_task(&upstream, &key, run_id).await;
+                if matches!(&res, Ok(task_ok) if task_ok.fetch.action == "cache") {
+                    if let Some(completion) = self.complete_or_retry_cache_hit(&key).await {
+                        break (res, completion);
+                    }
+                    continue;
+                }
+                let completion = self.seal_task_for_completion(&key).await;
+                break (res, completion);
+            };
             let ended_at = now_rfc3339();
 
             let (ok, fetch, parse, error_code, error_message) = match res {
@@ -914,16 +924,7 @@ LIMIT 1
                 ),
             };
 
-            let reason_counts_json = {
-                let st = self.inner.state.lock().await;
-                st.tasks
-                    .get(&key)
-                    .map(|entry| {
-                        serde_json::to_string(&entry.reason_counts)
-                            .unwrap_or_else(|_| "{}".to_string())
-                    })
-                    .unwrap_or_else(|| "{}".to_string())
-            };
+            let reason_counts_json = completion.reason_counts_json;
 
             let _ = sqlx::query(
                 r#"
@@ -1038,7 +1039,9 @@ WHERE id = ?
                     .await;
             }
 
-            let _ = self.finish_task(worker_idx, &key, run_id, ok).await;
+            let _ = self
+                .finish_task(worker_idx, run_id, ok, completion.joiners)
+                .await;
             let _ = self.publish_queue_snapshot().await;
         }
     }
@@ -1132,11 +1135,11 @@ VALUES (?, ?, ?, NULL, 0, 'fetch', NULL, ?, 0)
     async fn finish_task(
         &self,
         worker_idx: usize,
-        key: &TaskKey,
         run_id: i64,
         ok: bool,
+        joiners: Vec<oneshot::Sender<OpsRunOutcome>>,
     ) -> anyhow::Result<()> {
-        let joiners = {
+        {
             let mut st = self.inner.state.lock().await;
             let w = st
                 .workers
@@ -1145,9 +1148,7 @@ VALUES (?, ?, ?, NULL, 0, 'fetch', NULL, ?, 0)
             w.state = WorkerState::Idle;
             w.task = None;
             w.started_at = None;
-
-            st.tasks.remove(key).map(|t| t.joiners).unwrap_or_default()
-        };
+        }
 
         for j in joiners {
             let _ = j.send(OpsRunOutcome { run_id, ok });
@@ -1183,6 +1184,19 @@ VALUES (?, ?, ?, NULL, 0, 'fetch', NULL, ?, 0)
         Ok(())
     }
 
+    async fn complete_or_retry_cache_hit(&self, key: &TaskKey) -> Option<TaskCompletion> {
+        let mut st = self.inner.state.lock().await;
+        if st.tasks.get(key).is_some_and(|entry| entry.force_fetch) {
+            return None;
+        }
+        Some(remove_task_completion(&mut st, key))
+    }
+
+    async fn seal_task_for_completion(&self, key: &TaskKey) -> TaskCompletion {
+        let mut st = self.inner.state.lock().await;
+        remove_task_completion(&mut st, key)
+    }
+
     async fn run_task(
         &self,
         upstream: &UpstreamClient,
@@ -1214,6 +1228,8 @@ VALUES (?, ?, ?, NULL, 0, 'fetch', NULL, ?, 0)
                                 serde_json::from_str::<Vec<String>>(&cache.config_ids_json)
                                     .map(|ids| ids.len() as i64)
                                     .unwrap_or(0);
+                            #[cfg(test)]
+                            pause_before_cache_hit_return().await;
                             return Ok(TaskOk {
                                 fetch: TaskFetchMeta {
                                     url: cache.url,
@@ -1772,6 +1788,27 @@ WHERE id IN ({placeholders})
 }
 
 #[derive(Debug)]
+struct TaskCompletion {
+    reason_counts_json: String,
+    joiners: Vec<oneshot::Sender<OpsRunOutcome>>,
+}
+
+fn remove_task_completion(st: &mut RuntimeState, key: &TaskKey) -> TaskCompletion {
+    let task = st.tasks.remove(key);
+    let reason_counts_json = task
+        .as_ref()
+        .map(|entry| {
+            serde_json::to_string(&entry.reason_counts).unwrap_or_else(|_| "{}".to_string())
+        })
+        .unwrap_or_else(|| "{}".to_string());
+    let joiners = task.map(|entry| entry.joiners).unwrap_or_default();
+    TaskCompletion {
+        reason_counts_json,
+        joiners,
+    }
+}
+
+#[derive(Debug)]
 struct TaskOk {
     fetch: TaskFetchMeta,
     parse: TaskParseMeta,
@@ -1817,6 +1854,35 @@ fn now_rfc3339() -> String {
         .format(&Rfc3339)
         .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string())
 }
+
+#[cfg(test)]
+#[derive(Clone)]
+struct CacheHitTestHook {
+    entered: Arc<Notify>,
+    release: Arc<Notify>,
+}
+
+#[cfg(test)]
+async fn set_cache_hit_test_hook(hook: Option<CacheHitTestHook>) {
+    let store = std::sync::OnceLock::get_or_init(&CACHE_HIT_TEST_HOOK, || Mutex::new(None));
+    *store.lock().await = hook;
+}
+
+#[cfg(test)]
+async fn pause_before_cache_hit_return() {
+    let hook = {
+        let store = std::sync::OnceLock::get_or_init(&CACHE_HIT_TEST_HOOK, || Mutex::new(None));
+        store.lock().await.clone()
+    };
+    if let Some(hook) = hook {
+        hook.entered.notify_waiters();
+        hook.release.notified().await;
+    }
+}
+
+#[cfg(test)]
+static CACHE_HIT_TEST_HOOK: std::sync::OnceLock<Mutex<Option<CacheHitTestHook>>> =
+    std::sync::OnceLock::new();
 
 fn upsert_region_notice_in_snapshot(
     snap: &mut CatalogSnapshot,
@@ -1963,6 +2029,64 @@ pub struct OpsSparksView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::{extract::Query, http::StatusCode, routing::get, Router};
+    use sqlx::sqlite::SqlitePoolOptions;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use time::format_description::well_known::Rfc3339;
+
+    fn test_config(upstream_cart_url: String) -> RuntimeConfig {
+        RuntimeConfig {
+            bind_addr: "127.0.0.1:0".to_string(),
+            effective_version: "test".to_string(),
+            repo_url: "https://example.com/repo".to_string(),
+            update_repo: "example/repo".to_string(),
+            update_check_enabled: false,
+            update_check_ttl_seconds: 0,
+            update_check_timeout_ms: 1500,
+            github_api_base_url: "https://api.github.com".to_string(),
+            upstream_cart_url,
+            telegram_api_base_url: "https://api.telegram.org".to_string(),
+            auth_user_header: Some("x-user".to_string()),
+            dev_user_id: None,
+            default_poll_interval_minutes: 1,
+            default_poll_jitter_pct: 0.1,
+            log_retention_days: 7,
+            log_retention_max_rows: 10_000,
+            ops_worker_concurrency: 1,
+            ops_sse_replay_window_seconds: 3600,
+            ops_log_retention_days: 7,
+            ops_log_tail_limit_default: 200,
+            ops_queue_task_limit_default: 200,
+            db_url: "sqlite::memory:".to_string(),
+            web_push_vapid_public_key: None,
+            web_push_vapid_private_key: None,
+            web_push_vapid_subject: None,
+            allow_insecure_local_web_push_endpoints: true,
+        }
+    }
+
+    async fn spawn_stub_server(app: Router) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        format!("http://{}", addr)
+    }
+
+    async fn build_ops_manager(upstream_cart_url: String) -> (OpsManager, SqlitePool) {
+        let cfg = test_config(upstream_cart_url.clone());
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(&cfg.db_url)
+            .await
+            .unwrap();
+        crate::db::init_db(&db).await.unwrap();
+        let catalog = Arc::new(RwLock::new(CatalogSnapshot::empty(upstream_cart_url)));
+        let ops = OpsManager::new(cfg, db.clone(), catalog);
+        ops.start();
+        (ops, db)
+    }
 
     #[test]
     fn merged_task_prefers_broadest_freshness_window() {
@@ -1974,5 +2098,91 @@ mod tests {
             task_freshness_window_seconds(&reason_counts),
             Some(MANUAL_REFRESH_FRESHNESS_WINDOW_SECONDS)
         );
+    }
+
+    #[tokio::test]
+    async fn late_force_fetch_retries_after_cache_hit() {
+        #[derive(serde::Deserialize)]
+        struct CartQuery {
+            fid: Option<String>,
+            gid: Option<String>,
+        }
+
+        let hits = Arc::new(AtomicUsize::new(0));
+        let hits_for_handler = hits.clone();
+        let upstream = Router::new().route(
+            "/cart",
+            get(move |Query(q): Query<CartQuery>| {
+                let hits_for_handler = hits_for_handler.clone();
+                async move {
+                    hits_for_handler.fetch_add(1, Ordering::SeqCst);
+                    match (q.fid.as_deref(), q.gid.as_deref()) {
+                        (Some("2"), Some("56")) => (
+                            StatusCode::OK,
+                            include_str!("../tests/fixtures/cart-fid-2-gid-56.html"),
+                        ),
+                        _ => (StatusCode::NOT_FOUND, "not found"),
+                    }
+                }
+            }),
+        );
+        let base = spawn_stub_server(upstream).await;
+        let (ops, db) = build_ops_manager(format!("{base}/cart")).await;
+
+        let now = OffsetDateTime::now_utc().format(&Rfc3339).unwrap();
+        sqlx::query(
+            "INSERT INTO catalog_url_cache (url_key, url, config_ids_json, last_success_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind("2:56")
+        .bind(format!("{base}/cart?fid=2&gid=56"))
+        .bind("[]")
+        .bind(&now)
+        .bind(&now)
+        .execute(&db)
+        .await
+        .unwrap();
+
+        let entered = Arc::new(Notify::new());
+        let release = Arc::new(Notify::new());
+        set_cache_hit_test_hook(Some(CacheHitTestHook {
+            entered: entered.clone(),
+            release: release.clone(),
+        }))
+        .await;
+
+        ops.enqueue_background("2", Some("56"), "poller_due")
+            .await
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(2), entered.notified())
+            .await
+            .unwrap();
+
+        let ops_for_force = ops.clone();
+        let force_task = tokio::spawn(async move {
+            ops_for_force
+                .enqueue_and_wait_force_fetch("2", Some("56"), "manual_refresh")
+                .await
+                .unwrap()
+        });
+        tokio::task::yield_now().await;
+        release.notify_waiters();
+
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(5), force_task)
+            .await
+            .unwrap()
+            .unwrap();
+        set_cache_hit_test_hook(None).await;
+
+        assert!(outcome.ok);
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+
+        let row = sqlx::query(
+            "SELECT fetch_action, cache_hit FROM ops_task_runs ORDER BY id DESC LIMIT 1",
+        )
+        .fetch_one(&db)
+        .await
+        .unwrap();
+        assert_eq!(row.get::<String, _>(0), "fetch");
+        assert_eq!(row.get::<i64, _>(1), 0);
     }
 }

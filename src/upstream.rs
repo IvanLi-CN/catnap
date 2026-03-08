@@ -29,6 +29,7 @@ pub struct CatalogTopologySnapshot {
     pub regions: Vec<Region>,
     pub region_notices: Vec<RegionNotice>,
     pub region_notice_initialized_keys: HashSet<String>,
+    pub ambiguous_country_ids: HashSet<String>,
     pub refreshed_at: String,
     pub request_count: i64,
 }
@@ -143,6 +144,7 @@ impl UpstreamClient {
         let mut regions = Vec::new();
         let mut region_notices = BTreeMap::<(String, Option<String>), String>::new();
         let mut region_notice_initialized_keys = HashSet::new();
+        let mut ambiguous_country_ids = HashSet::new();
         let mut request_count = 1_i64;
 
         for c in &countries {
@@ -153,6 +155,10 @@ impl UpstreamClient {
 
             let mut fid_regions = parse_regions(fid, &fid_html);
             if fid_regions.is_empty() {
+                if parse_configs(fid, None, &fid_html).is_empty() {
+                    ambiguous_country_ids.insert(fid.clone());
+                    continue;
+                }
                 region_notice_initialized_keys.insert(catalog_region_key(fid, None));
                 if let Some(text) = parse_region_notice(&fid_html) {
                     upsert_region_notice(&mut region_notices, fid, None, &text);
@@ -174,6 +180,7 @@ impl UpstreamClient {
                 })
                 .collect(),
             region_notice_initialized_keys,
+            ambiguous_country_ids,
             refreshed_at: now_rfc3339(),
             request_count,
         })
