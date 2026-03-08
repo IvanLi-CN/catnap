@@ -606,12 +606,22 @@ ORDER BY url_key ASC
         })
         .collect::<Vec<_>>();
 
+    let active_url_keys = countries
+        .iter()
+        .filter(|country| !regions.iter().any(|region| region.country_id == country.id))
+        .map(|country| crate::upstream::catalog_region_key(&country.id, None))
+        .chain(regions.iter().map(|region| {
+            crate::upstream::catalog_region_key(&region.country_id, Some(region.id.as_str()))
+        }))
+        .collect::<std::collections::HashSet<_>>();
+
     let cache_rows = sqlx::query("SELECT url_key FROM catalog_url_cache")
         .fetch_all(db)
         .await?;
     let region_notice_initialized_keys = cache_rows
         .into_iter()
         .map(|row| row.get::<String, _>(0))
+        .filter(|key| active_url_keys.contains(key))
         .collect::<std::collections::HashSet<_>>();
 
     let fetched_at = sqlx::query(
@@ -1114,7 +1124,9 @@ pub async fn list_known_catalog_targets(
         r#"
 SELECT DISTINCT source_fid, source_gid
 FROM catalog_configs
-WHERE source_fid IS NOT NULL AND TRIM(source_fid) != ''
+WHERE source_fid IS NOT NULL
+  AND TRIM(source_fid) != ''
+  AND lifecycle_state = 'active'
 ORDER BY source_fid ASC, source_gid ASC
 "#,
     )
@@ -1132,6 +1144,71 @@ ORDER BY source_fid ASC, source_gid ASC
         })
         .filter(|(fid, _)| !fid.is_empty())
         .collect())
+}
+
+pub async fn retire_catalog_targets(
+    db: &SqlitePool,
+    targets: &[(String, Option<String>)],
+) -> anyhow::Result<Vec<String>> {
+    if targets.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let retired_at = now_rfc3339();
+    let mut tx = db.begin().await?;
+    let mut retired_ids = Vec::new();
+
+    for (fid, gid) in targets {
+        let gid = gid.as_deref();
+        let rows = sqlx::query(
+            r#"
+SELECT id
+FROM catalog_configs
+WHERE source_fid = ?
+  AND (
+    (? IS NULL AND source_gid IS NULL)
+    OR (? IS NOT NULL AND source_gid = ?)
+  )
+  AND lifecycle_state != 'delisted'
+"#,
+        )
+        .bind(fid)
+        .bind(gid)
+        .bind(gid)
+        .bind(gid)
+        .fetch_all(&mut *tx)
+        .await?;
+        retired_ids.extend(rows.into_iter().map(|row| row.get::<String, _>(0)));
+
+        sqlx::query(
+            r#"
+UPDATE catalog_configs
+SET lifecycle_state = 'delisted',
+    lifecycle_delisted_at = ?
+WHERE source_fid = ?
+  AND (
+    (? IS NULL AND source_gid IS NULL)
+    OR (? IS NOT NULL AND source_gid = ?)
+  )
+  AND lifecycle_state != 'delisted'
+"#,
+        )
+        .bind(&retired_at)
+        .bind(fid)
+        .bind(gid)
+        .bind(gid)
+        .bind(gid)
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query("DELETE FROM catalog_url_cache WHERE url_key = ?")
+            .bind(crate::upstream::catalog_region_key(fid, gid))
+            .execute(&mut *tx)
+            .await?;
+    }
+
+    tx.commit().await?;
+    Ok(retired_ids)
 }
 
 pub async fn get_global_catalog_refresh_interval_hours(
@@ -1245,6 +1322,7 @@ pub async fn apply_catalog_url_fetch_success(
     url_key: &str,
     url: &str,
     mut configs: Vec<crate::upstream::ConfigBase>,
+    region_notice: Option<&str>,
 ) -> anyhow::Result<ApplyCatalogUrlResult> {
     let fetched_at = now_rfc3339();
     for c in configs.iter_mut() {
@@ -1435,6 +1513,35 @@ ON CONFLICT(url_key) DO UPDATE SET
     .bind(&fetched_at)
     .execute(&mut *tx)
     .await?;
+
+    let notice = region_notice
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if let Some(notice) = notice {
+        sqlx::query(
+            r#"
+INSERT INTO catalog_region_notices (url_key, country_id, region_id, text, updated_at)
+VALUES (?, ?, ?, ?, ?)
+ON CONFLICT(url_key) DO UPDATE SET
+  country_id = excluded.country_id,
+  region_id = excluded.region_id,
+  text = excluded.text,
+  updated_at = excluded.updated_at
+"#,
+        )
+        .bind(url_key)
+        .bind(fid)
+        .bind(gid)
+        .bind(notice)
+        .bind(&fetched_at)
+        .execute(&mut *tx)
+        .await?;
+    } else {
+        sqlx::query("DELETE FROM catalog_region_notices WHERE url_key = ?")
+            .bind(url_key)
+            .execute(&mut *tx)
+            .await?;
+    }
 
     tx.commit().await?;
 

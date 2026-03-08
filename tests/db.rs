@@ -116,6 +116,7 @@ INSERT INTO catalog_configs (
         "2:56",
         "https://example.invalid/cart?fid=2&gid=56",
         vec![],
+        None,
     )
     .await
     .unwrap_err();
@@ -132,6 +133,134 @@ INSERT INTO catalog_configs (
         .unwrap();
     let state: String = row.get(0);
     assert_eq!(state, "active");
+}
+
+#[tokio::test]
+async fn apply_catalog_url_fetch_success_persists_region_notice() {
+    let cfg = test_config();
+    let db = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&cfg.db_url)
+        .await
+        .unwrap();
+
+    catnap::db::init_db(&db).await.unwrap();
+
+    let mut configs =
+        catnap::upstream::parse_configs("7", Some("40"), include_str!("fixtures/cart-fid-7.html"));
+    configs.truncate(1);
+    assert_eq!(configs.len(), 1);
+
+    catnap::db::apply_catalog_url_fetch_success(
+        &db,
+        "7",
+        Some("40"),
+        "7:40",
+        "https://example.invalid/cart?fid=7&gid=40",
+        configs,
+        Some("第一条说明"),
+    )
+    .await
+    .unwrap();
+
+    let row = sqlx::query("SELECT text FROM catalog_region_notices WHERE url_key = ?")
+        .bind("7:40")
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    assert_eq!(row.get::<String, _>(0), "第一条说明");
+}
+
+#[tokio::test]
+async fn load_catalog_snapshot_ignores_stale_initialized_notice_keys() {
+    let cfg = test_config();
+    let db = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&cfg.db_url)
+        .await
+        .unwrap();
+
+    catnap::db::init_db(&db).await.unwrap();
+
+    let countries = vec![catnap::models::Country {
+        id: "2".to_string(),
+        name: "CN".to_string(),
+    }];
+    catnap::db::replace_catalog_topology(&db, "https://example.invalid/cart", &countries, &[])
+        .await
+        .unwrap();
+
+    sqlx::query(
+        "INSERT INTO catalog_url_cache (url_key, url, config_ids_json, last_success_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind("2:0")
+    .bind("https://example.invalid/cart?fid=2")
+    .bind("[]")
+    .bind("2026-01-01T00:00:00Z")
+    .bind("2026-01-01T00:00:00Z")
+    .execute(&db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO catalog_url_cache (url_key, url, config_ids_json, last_success_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind("9:99")
+    .bind("https://example.invalid/cart?fid=9&gid=99")
+    .bind("[]")
+    .bind("2026-01-01T00:00:00Z")
+    .bind("2026-01-01T00:00:00Z")
+    .execute(&db)
+    .await
+    .unwrap();
+
+    let snapshot = catnap::db::load_catalog_snapshot(&db, &cfg.upstream_cart_url)
+        .await
+        .unwrap();
+
+    assert!(snapshot.region_notice_initialized_keys.contains("2:0"));
+    assert!(!snapshot.region_notice_initialized_keys.contains("9:99"));
+}
+
+#[tokio::test]
+async fn retire_catalog_targets_delists_configs_and_hides_known_targets() {
+    let cfg = test_config();
+    let db = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&cfg.db_url)
+        .await
+        .unwrap();
+
+    catnap::db::init_db(&db).await.unwrap();
+
+    let mut configs =
+        catnap::upstream::parse_configs("7", Some("40"), include_str!("fixtures/cart-fid-7.html"));
+    configs.truncate(1);
+    catnap::db::upsert_catalog_configs(&db, &configs)
+        .await
+        .unwrap();
+
+    let known_before = catnap::db::list_known_catalog_targets(&db).await.unwrap();
+    assert_eq!(
+        known_before,
+        vec![("7".to_string(), Some("40".to_string()))]
+    );
+
+    let retired =
+        catnap::db::retire_catalog_targets(&db, &[("7".to_string(), Some("40".to_string()))])
+            .await
+            .unwrap();
+    assert_eq!(retired, vec![configs[0].id.clone()]);
+
+    let row = sqlx::query("SELECT lifecycle_state FROM catalog_configs WHERE id = ?")
+        .bind(&configs[0].id)
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    assert_eq!(row.get::<String, _>(0), "delisted");
+    assert!(catnap::db::list_known_catalog_targets(&db)
+        .await
+        .unwrap()
+        .is_empty());
 }
 
 #[tokio::test]

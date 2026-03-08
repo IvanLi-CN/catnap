@@ -11,6 +11,24 @@ const DISCOVERY_INTERVAL_SECONDS: i64 = 5 * 60;
 const TOPOLOGY_INTERVAL_FALLBACK_MINUTES: i64 = 30;
 const TOPOLOGY_RETRY_SECONDS: i64 = 5 * 60;
 
+fn initial_topology_due(
+    now: OffsetDateTime,
+    topology_interval: time::Duration,
+    has_topology: bool,
+    last_topology_refresh_at: Option<&str>,
+) -> OffsetDateTime {
+    if !has_topology {
+        return now;
+    }
+
+    last_topology_refresh_at
+        .and_then(|value| {
+            OffsetDateTime::parse(value, &time::format_description::well_known::Rfc3339).ok()
+        })
+        .map(|ts| ts.saturating_add(topology_interval))
+        .unwrap_or(now.saturating_add(topology_interval))
+}
+
 pub async fn spawn(state: AppState) {
     tokio::spawn(async move {
         if let Err(err) = run(state).await {
@@ -21,8 +39,14 @@ pub async fn spawn(state: AppState) {
 
 pub async fn refresh_catalog_topology(state: &AppState, reason: &str) -> anyhow::Result<()> {
     let upstream = UpstreamClient::new(state.config.upstream_cart_url.clone())?;
+    let has_existing_catalog_state = db::has_catalog_topology(&state.db).await?
+        || !db::list_known_catalog_targets(&state.db).await?.is_empty();
     match upstream.fetch_topology().await {
         Ok(topology) => {
+            if topology.countries.is_empty() && has_existing_catalog_state {
+                anyhow::bail!("refusing empty topology refresh while catalog state already exists");
+            }
+            let previous_targets = db::list_catalog_task_keys(&state.db).await?;
             db::replace_catalog_topology(
                 &state.db,
                 &state.config.upstream_cart_url,
@@ -30,6 +54,18 @@ pub async fn refresh_catalog_topology(state: &AppState, reason: &str) -> anyhow:
                 &topology.regions,
             )
             .await?;
+            let current_targets = db::list_catalog_task_keys(&state.db).await?;
+            let current_target_keys = current_targets
+                .iter()
+                .map(|(fid, gid)| catalog_region_key(fid, gid.as_deref()))
+                .collect::<HashSet<_>>();
+            let removed_targets = previous_targets
+                .into_iter()
+                .filter(|(fid, gid)| {
+                    !current_target_keys.contains(&catalog_region_key(fid, gid.as_deref()))
+                })
+                .collect::<Vec<_>>();
+            let retired_ids = db::retire_catalog_targets(&state.db, &removed_targets).await?;
             let notice_by_key = topology
                 .region_notices
                 .iter()
@@ -70,6 +106,8 @@ pub async fn refresh_catalog_topology(state: &AppState, reason: &str) -> anyhow:
                     Some(serde_json::json!({
                         "reason": reason,
                         "requestCount": state.catalog.read().await.topology_request_count,
+                        "removedTargetCount": removed_targets.len(),
+                        "retiredConfigCount": retired_ids.len(),
                     })),
                 )
                 .await;
@@ -123,25 +161,20 @@ async fn run(state: AppState) -> anyhow::Result<()> {
         if next_topology_due.is_none() || next_discovery_due.is_none() {
             let has_topology = db::has_catalog_topology(&state.db).await?;
             let has_known_targets = !db::list_known_catalog_targets(&state.db).await?.is_empty();
+            let last_topology_refresh_at = if has_topology {
+                db::get_catalog_topology_state(&state.db)
+                    .await?
+                    .map(|row| row.last_topology_refresh_at)
+            } else {
+                None
+            };
             if next_topology_due.is_none() {
-                let due = if has_topology {
-                    db::get_catalog_topology_state(&state.db)
-                        .await?
-                        .and_then(|row| {
-                            OffsetDateTime::parse(
-                                &row.last_topology_refresh_at,
-                                &time::format_description::well_known::Rfc3339,
-                            )
-                            .ok()
-                        })
-                        .map(|ts| ts.saturating_add(topology_interval))
-                        .unwrap_or(now.saturating_add(topology_interval))
-                } else if has_known_targets {
-                    now.saturating_add(topology_interval)
-                } else {
-                    now
-                };
-                next_topology_due = Some(due);
+                next_topology_due = Some(initial_topology_due(
+                    now,
+                    topology_interval,
+                    has_topology,
+                    last_topology_refresh_at.as_deref(),
+                ));
             }
             if next_discovery_due.is_none() {
                 next_discovery_due = Some(if has_topology || has_known_targets {
@@ -544,4 +577,27 @@ async fn poll_once(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn initial_topology_due_is_immediate_when_topology_is_missing() {
+        let now = OffsetDateTime::UNIX_EPOCH;
+        let due = initial_topology_due(now, time::Duration::minutes(30), false, None);
+        assert_eq!(due, now);
+    }
+
+    #[test]
+    fn initial_topology_due_uses_last_refresh_when_topology_exists() {
+        let now = OffsetDateTime::UNIX_EPOCH;
+        let last = "1970-01-01T00:05:00Z";
+        let due = initial_topology_due(now, time::Duration::minutes(30), true, Some(last));
+        assert_eq!(
+            due,
+            OffsetDateTime::UNIX_EPOCH + time::Duration::minutes(35)
+        );
+    }
 }

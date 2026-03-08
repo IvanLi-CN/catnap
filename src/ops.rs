@@ -30,7 +30,7 @@ fn task_freshness_window_seconds(reason_counts: &HashMap<String, i64>) -> Option
     reason_counts
         .keys()
         .filter_map(|reason| reason_freshness_window_seconds(reason))
-        .min()
+        .max()
 }
 
 fn should_emit_lifecycle_notify(reason_counts: &HashMap<String, i64>) -> bool {
@@ -96,6 +96,7 @@ struct TaskEntry {
     state: TaskEntryState,
     enqueued_at: String,
     reason_counts: HashMap<String, i64>,
+    force_fetch: bool,
     joiners: Vec<oneshot::Sender<OpsRunOutcome>>,
 }
 
@@ -258,7 +259,17 @@ LIMIT 2000
         gid: Option<&str>,
         reason: &str,
     ) -> anyhow::Result<OpsRunOutcome> {
-        let rx = self.enqueue(fid, gid, reason).await?;
+        let rx = self.enqueue(fid, gid, reason, false).await?;
+        rx.await.map_err(|_| anyhow::anyhow!("ops task canceled"))
+    }
+
+    pub async fn enqueue_and_wait_force_fetch(
+        &self,
+        fid: &str,
+        gid: Option<&str>,
+        reason: &str,
+    ) -> anyhow::Result<OpsRunOutcome> {
+        let rx = self.enqueue(fid, gid, reason, true).await?;
         rx.await.map_err(|_| anyhow::anyhow!("ops task canceled"))
     }
 
@@ -268,7 +279,7 @@ LIMIT 2000
         gid: Option<&str>,
         reason: &str,
     ) -> anyhow::Result<()> {
-        std::mem::drop(self.enqueue(fid, gid, reason).await?);
+        std::mem::drop(self.enqueue(fid, gid, reason, false).await?);
         Ok(())
     }
 
@@ -784,6 +795,7 @@ LIMIT 1
         fid: &str,
         gid: Option<&str>,
         reason: &str,
+        force_fetch: bool,
     ) -> anyhow::Result<oneshot::Receiver<OpsRunOutcome>> {
         let fid = fid.trim();
         if fid.is_empty() {
@@ -808,6 +820,7 @@ LIMIT 1
                 st.deduped += 1;
                 let entry = st.tasks.get_mut(&key).unwrap();
                 *entry.reason_counts.entry(reason.to_string()).or_insert(0) += 1;
+                entry.force_fetch |= force_fetch;
                 entry.joiners.push(tx);
                 (
                     false,
@@ -828,6 +841,7 @@ LIMIT 1
                         state: TaskEntryState::Pending,
                         enqueued_at: now.clone(),
                         reason_counts,
+                        force_fetch,
                         joiners: vec![tx],
                     },
                 );
@@ -1177,42 +1191,45 @@ VALUES (?, ?, ?, NULL, 0, 'fetch', NULL, ?, 0)
     ) -> Result<TaskOk, TaskErr> {
         let gid = key.gid.as_deref();
         let url_key = format!("{}:{}", key.fid, gid.unwrap_or("0"));
-        let reason_counts = {
+        let (reason_counts, force_fetch) = {
             let st = self.inner.state.lock().await;
             st.tasks
                 .get(key)
-                .map(|entry| entry.reason_counts.clone())
-                .unwrap_or_default()
+                .map(|entry| (entry.reason_counts.clone(), entry.force_fetch))
+                .unwrap_or_else(|| (HashMap::new(), false))
         };
         let freshness_window_seconds = task_freshness_window_seconds(&reason_counts);
 
-        if let Some(window) = freshness_window_seconds {
-            if let Ok(Some(cache)) =
-                crate::db::get_catalog_url_cache(&self.inner.db, &url_key).await
-            {
-                if let Ok(last_success_at) = OffsetDateTime::parse(&cache.last_success_at, &Rfc3339)
+        if !force_fetch {
+            if let Some(window) = freshness_window_seconds {
+                if let Ok(Some(cache)) =
+                    crate::db::get_catalog_url_cache(&self.inner.db, &url_key).await
                 {
-                    let age = OffsetDateTime::now_utc() - last_success_at;
-                    if age <= time::Duration::seconds(window) {
-                        let produced_configs =
-                            serde_json::from_str::<Vec<String>>(&cache.config_ids_json)
-                                .map(|ids| ids.len() as i64)
-                                .unwrap_or(0);
-                        return Ok(TaskOk {
-                            fetch: TaskFetchMeta {
-                                url: cache.url,
-                                http_status: 0,
-                                bytes: 0,
-                                elapsed_ms: 0,
-                                action: "cache".to_string(),
-                                freshness_window_seconds: Some(window),
-                            },
-                            parse: TaskParseMeta {
-                                ok: true,
-                                produced_configs,
-                                elapsed_ms: 0,
-                            },
-                        });
+                    if let Ok(last_success_at) =
+                        OffsetDateTime::parse(&cache.last_success_at, &Rfc3339)
+                    {
+                        let age = OffsetDateTime::now_utc() - last_success_at;
+                        if age <= time::Duration::seconds(window) {
+                            let produced_configs =
+                                serde_json::from_str::<Vec<String>>(&cache.config_ids_json)
+                                    .map(|ids| ids.len() as i64)
+                                    .unwrap_or(0);
+                            return Ok(TaskOk {
+                                fetch: TaskFetchMeta {
+                                    url: cache.url,
+                                    http_status: 0,
+                                    bytes: 0,
+                                    elapsed_ms: 0,
+                                    action: "cache".to_string(),
+                                    freshness_window_seconds: Some(window),
+                                },
+                                parse: TaskParseMeta {
+                                    ok: true,
+                                    produced_configs,
+                                    elapsed_ms: 0,
+                                },
+                            });
+                        }
                     }
                 }
             }
@@ -1244,6 +1261,7 @@ VALUES (?, ?, ?, NULL, 0, 'fetch', NULL, ?, 0)
             &url_key,
             &fetch.url,
             fetch.configs,
+            region_notice.as_deref(),
         )
         .await
         {
@@ -1940,4 +1958,21 @@ pub struct OpsSparksView {
     pub collection_success_rate_pct: Vec<f64>,
     pub notify_telegram_success_rate_pct: Vec<f64>,
     pub notify_web_push_success_rate_pct: Vec<f64>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn merged_task_prefers_broadest_freshness_window() {
+        let reason_counts = HashMap::from([
+            ("poller_due".to_string(), 1_i64),
+            ("manual_refresh".to_string(), 1_i64),
+        ]);
+        assert_eq!(
+            task_freshness_window_seconds(&reason_counts),
+            Some(MANUAL_REFRESH_FRESHNESS_WINDOW_SECONDS)
+        );
+    }
 }

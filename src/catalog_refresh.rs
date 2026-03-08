@@ -215,6 +215,7 @@ async fn run_full_refresh_job(
 
         let mut action = "fetch".to_string();
         let mut note: Option<String> = None;
+        let mut force_fetch = false;
         if let Some(cache) = db::get_catalog_url_cache(&app.db, &url_key).await? {
             if let Ok(last) = OffsetDateTime::parse(&cache.last_success_at, &Rfc3339) {
                 let now = OffsetDateTime::now_utc();
@@ -238,6 +239,7 @@ async fn run_full_refresh_job(
                 // This avoids stale empty state while preserving cache for initialized keys.
                 action = "fetch".to_string();
                 note = Some("cache bypass: region notice key not initialized".to_string());
+                force_fetch = true;
             }
         }
 
@@ -253,10 +255,15 @@ async fn run_full_refresh_job(
         )
         .await;
 
-        let _ = app
-            .ops
-            .enqueue_and_wait(&fid, gid.as_deref(), refresh_reason)
-            .await?;
+        let _ = if force_fetch {
+            app.ops
+                .enqueue_and_wait_force_fetch(&fid, gid.as_deref(), refresh_reason)
+                .await?
+        } else {
+            app.ops
+                .enqueue_and_wait(&fid, gid.as_deref(), refresh_reason)
+                .await?
+        };
 
         done += 1;
         mgr.update_progress(done, total, None).await;

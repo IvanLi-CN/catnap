@@ -59,6 +59,7 @@
   - `manual_refresh = 300s`
   - `auto/topology_refresh = 1800s`
 - 若同一 `url_key` 在对应 freshness window 内已有成功抓取，则后续任务必须走 cache hit，不再请求上游，但仍需正常推进队列、日志与状态展示。
+- 当多个 reason 合并到同一任务时，freshness window 以其中最宽的窗口为准，避免因队列去重反向放大上游请求。
 - `configureproduct` / `pid` 探测不得出现在启动、discovery、monitoring 热路径；发现链路中的相关请求数必须为 `0`。
 - `poller_due`、`discovery_due`、`manual_refresh` 任一成功抓取后，均需执行生命周期差异计算与通知分发；listed/delisted/relisted 的去重语义必须与当前状态机一致。
 - 监控页 `recentListed24h` 必须在 DB 中出现新上架后 `<=30s` 内可见，无需等待手动全量刷新结束。
@@ -81,6 +82,7 @@
 - 启动（非空 DB）
   - 服务启动时读取 DB 中已有 catalog snapshot 与已知 `url_key`。
   - 若存在可用 catalog，则 API 直接返回 DB 数据，不触发全量上游 warm-up。
+  - 若 catalog 配置已存在但拓扑表缺失，则后台需立即补一次 `root + fid` 拓扑初始化，避免升级后长时间返回空 countries/regions。
   - 后台仅按计划启动 `topology_refresh` / `discovery_due` / `poller_due` 调度。
 - 启动（空库）
   - 服务启动后请求 root 页面，枚举 `fid`。
@@ -215,7 +217,7 @@ None
 ## 方案概述（Approach, high-level）
 
 - 以“已知 `url_key` 的轻量 discovery”替代“频繁全量刷新”，将上游请求从 burst 型改为均匀分摊型。
-- 启动阶段优先利用 DB 中已知 catalog 与 URL 拓扑，只有在空库时才做最小必要的 root/fid 初始化。
+- 启动阶段优先利用 DB 中已知 catalog 与 URL 拓扑；若拓扑数据缺失，仅补最小必要的 root/fid 初始化，不恢复全站 warm-up。
 - 所有抓取入口统一接入同一协调器，保证限流、去重、cache hit、lifecycle diff、通知与 ops 观测口径一致。
 
 ## 风险 / 开放问题 / 假设（Risks, Open Questions, Assumptions）
