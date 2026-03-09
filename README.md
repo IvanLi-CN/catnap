@@ -242,6 +242,7 @@ docker compose up -d --build
 - Tags（最低集合）：
   - `v<semver>`
   - `latest`（跟随仓库“最高 stable semver tag”的发布结果）
+- 发布链路会复用已产出的 linux gnu release binaries 来封装 GHCR 镜像，避免在多架构 Docker build 中重复编译 Rust。
 
 示例：
 

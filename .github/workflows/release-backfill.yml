@@ -45,6 +45,12 @@ jobs:
           fetch-tags: true
           ref: ${{ inputs.tag }}
 
+      - name: Checkout workflow support files
+        uses: actions/checkout@v6
+        with:
+          path: .ci-support
+          ref: main
+
       - name: Set up Bun (optional)
         if: hashFiles('web/package.json') != ''
         uses: oven-sh/setup-bun@v2
@@ -166,6 +172,14 @@ jobs:
         run: |
           bash ./.github/scripts/smoke-test.sh ./target/x86_64-unknown-linux-gnu/release/catnap
 
+      - name: Prepare Docker runtime binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          CATNAP_DOCKER_BINARY_SOURCE_ROOT="$PWD/target" \
+          CATNAP_DOCKER_BINARY_OUTPUT_ROOT="$PWD/dist/docker" \
+            bash ./.ci-support/.github/scripts/prepare-docker-binaries.sh
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
@@ -222,8 +236,8 @@ jobs:
         uses: docker/build-push-action@v6
         continue-on-error: true
         with:
-          context: .
-          file: ./Dockerfile
+          context: ./dist/docker
+          file: ./dist/docker/Dockerfile.release
           platforms: ${{ env.PLATFORMS }}
           push: true
           tags: ${{ steps.image-tags.outputs.tags }}
@@ -247,8 +261,8 @@ jobs:
         id: docker-push-fallback
         uses: docker/build-push-action@v6
         with:
-          context: .
-          file: ./Dockerfile
+          context: ./dist/docker
+          file: ./dist/docker/Dockerfile.release
           platforms: ${{ env.PLATFORMS }}
           push: true
           tags: ${{ steps.image-tags.outputs.tags }}
