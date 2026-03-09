@@ -36,3 +36,5 @@
 
 # Local build/runtime outputs
 /out
+
+/dist/docker
