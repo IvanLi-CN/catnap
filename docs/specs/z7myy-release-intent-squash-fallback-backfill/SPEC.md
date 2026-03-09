@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 已完成
+- Status: 部分完成（5/6）
 - Created: 2026-03-09
 - Last: 2026-03-09
 
@@ -121,7 +121,7 @@
 - [x] M3: 接入脚本级回归测试与 README 文档同步。
 - [x] M4: 让 release / backfill workflow 复用预构建 binaries 完成 GHCR 镜像封装，并补齐 PR smoke 验证。
 - [x] M5: 触发 `workflow_dispatch ref=main + bump_level=minor` 补齐 `v0.6.0` 并完成对账。
-- [x] M6: 创建并收敛 `type:skip` 修复 PR，确保后续 squash merge 不再漏判且不会额外发 stable release。
+- [ ] M6: 创建并收敛 `type:skip` 修复 PR，确保后续 squash merge 不再漏判且不会额外发 stable release。
 
 ## 方案概述（Approach, high-level）
 
