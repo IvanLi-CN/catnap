@@ -233,7 +233,7 @@ export const demoBootstrap: BootstrapResponse = {
   settings: {
     poll: { intervalMinutes: 1, jitterPct: 0.2 },
     siteBaseUrl: "https://lxc.lazycat.wiki",
-    catalogRefresh: { autoIntervalHours: 6 },
+    catalogRefresh: { autoIntervalHours: 1 },
     monitoringEvents: { listedEnabled: true, delistedEnabled: true },
     notifications: {
       telegram: { enabled: true, configured: true, target: "@catnap" },

@@ -11,6 +11,37 @@ use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use tokio::sync::{broadcast, oneshot, Mutex, Notify, RwLock};
 use tracing::warn;
 
+const POLLER_FRESHNESS_WINDOW_SECONDS: i64 = 45;
+const DISCOVERY_FRESHNESS_WINDOW_SECONDS: i64 = 150;
+const MANUAL_REFRESH_FRESHNESS_WINDOW_SECONDS: i64 = 5 * 60;
+const AUTO_REFRESH_FRESHNESS_WINDOW_SECONDS: i64 = 5 * 60;
+
+fn reason_freshness_window_seconds(reason: &str) -> Option<i64> {
+    match reason {
+        "poller_due" => Some(POLLER_FRESHNESS_WINDOW_SECONDS),
+        "discovery_due" => Some(DISCOVERY_FRESHNESS_WINDOW_SECONDS),
+        "manual_refresh" => Some(MANUAL_REFRESH_FRESHNESS_WINDOW_SECONDS),
+        "auto_refresh" => Some(AUTO_REFRESH_FRESHNESS_WINDOW_SECONDS),
+        _ => None,
+    }
+}
+
+fn task_freshness_window_seconds(reason_counts: &HashMap<String, i64>) -> Option<i64> {
+    reason_counts
+        .keys()
+        .filter_map(|reason| reason_freshness_window_seconds(reason))
+        .max()
+}
+
+fn should_emit_lifecycle_notify(reason_counts: &HashMap<String, i64>) -> bool {
+    reason_counts.keys().any(|reason| {
+        matches!(
+            reason.as_str(),
+            "manual_refresh" | "auto_refresh" | "poller_due" | "discovery_due"
+        )
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OpsRange {
     H24,
@@ -65,6 +96,7 @@ struct TaskEntry {
     state: TaskEntryState,
     enqueued_at: String,
     reason_counts: HashMap<String, i64>,
+    force_fetch: bool,
     joiners: Vec<oneshot::Sender<OpsRunOutcome>>,
 }
 
@@ -227,8 +259,28 @@ LIMIT 2000
         gid: Option<&str>,
         reason: &str,
     ) -> anyhow::Result<OpsRunOutcome> {
-        let rx = self.enqueue(fid, gid, reason).await?;
+        let rx = self.enqueue(fid, gid, reason, false).await?;
         rx.await.map_err(|_| anyhow::anyhow!("ops task canceled"))
+    }
+
+    pub async fn enqueue_and_wait_force_fetch(
+        &self,
+        fid: &str,
+        gid: Option<&str>,
+        reason: &str,
+    ) -> anyhow::Result<OpsRunOutcome> {
+        let rx = self.enqueue(fid, gid, reason, true).await?;
+        rx.await.map_err(|_| anyhow::anyhow!("ops task canceled"))
+    }
+
+    pub async fn enqueue_background(
+        &self,
+        fid: &str,
+        gid: Option<&str>,
+        reason: &str,
+    ) -> anyhow::Result<()> {
+        std::mem::drop(self.enqueue(fid, gid, reason, false).await?);
+        Ok(())
     }
 
     pub async fn log(
@@ -338,10 +390,24 @@ VALUES (?, ?, ?, ?, ?)
                 .values()
                 .filter(|t| matches!(t.state, TaskEntryState::Running { .. }))
                 .count() as i64;
+            let oldest_wait_seconds = st
+                .tasks
+                .values()
+                .filter_map(|task| OffsetDateTime::parse(&task.enqueued_at, &Rfc3339).ok())
+                .map(|enqueued_at| (now - enqueued_at).whole_seconds().max(0))
+                .max();
+            let mut queue_reason_counts = HashMap::new();
+            for task in st.tasks.values() {
+                for (reason, count) in &task.reason_counts {
+                    *queue_reason_counts.entry(reason.clone()).or_insert(0) += *count;
+                }
+            }
             let queue = OpsQueueView {
                 pending,
                 running,
                 deduped: st.deduped,
+                oldest_wait_seconds,
+                reason_counts: queue_reason_counts,
             };
 
             let workers = st
@@ -397,6 +463,16 @@ VALUES (?, ?, ?, ?, ?)
             }
         }
 
+        let topology = {
+            let snap = self.inner.catalog.read().await;
+            OpsTopologyView {
+                status: snap.topology_status.clone(),
+                refreshed_at: snap.topology_refreshed_at.clone(),
+                request_count: snap.topology_request_count,
+                message: snap.topology_message.clone(),
+            }
+        };
+
         Ok(OpsStateSnapshot {
             server_time,
             range: range.as_str().to_string(),
@@ -407,6 +483,7 @@ VALUES (?, ?, ?, ?, ?)
             stats,
             sparks,
             log_tail,
+            topology,
         })
     }
 
@@ -424,7 +501,8 @@ VALUES (?, ?, ?, ?, ?)
             r#"
 SELECT
   COUNT(*) as total,
-  SUM(CASE WHEN ok = 1 THEN 1 ELSE 0 END) as success
+  SUM(CASE WHEN ok = 1 THEN 1 ELSE 0 END) as success,
+  SUM(CASE WHEN fetch_action = 'cache' THEN 1 ELSE 0 END) as cache_hits
 FROM ops_task_runs
 WHERE ended_at IS NOT NULL
   AND ended_at >= ?
@@ -435,6 +513,7 @@ WHERE ended_at IS NOT NULL
         .await?;
         let total = row.get::<i64, _>(0);
         let success = row.try_get::<i64, _>(1).unwrap_or(0);
+        let cache_hits = row.try_get::<i64, _>(2).unwrap_or(0);
         let failure = (total - success).max(0);
         let success_rate_pct = if total > 0 {
             (success as f64) * 100.0 / (total as f64)
@@ -475,6 +554,7 @@ WHERE channel = ?
                 success,
                 failure,
                 success_rate_pct,
+                cache_hits: 0,
             }))
         }
 
@@ -487,6 +567,7 @@ WHERE channel = ?
                 success,
                 failure,
                 success_rate_pct,
+                cache_hits,
             },
             notify: OpsNotifyStatsView { telegram, web_push },
         })
@@ -714,6 +795,7 @@ LIMIT 1
         fid: &str,
         gid: Option<&str>,
         reason: &str,
+        force_fetch: bool,
     ) -> anyhow::Result<oneshot::Receiver<OpsRunOutcome>> {
         let fid = fid.trim();
         if fid.is_empty() {
@@ -738,6 +820,7 @@ LIMIT 1
                 st.deduped += 1;
                 let entry = st.tasks.get_mut(&key).unwrap();
                 *entry.reason_counts.entry(reason.to_string()).or_insert(0) += 1;
+                entry.force_fetch |= force_fetch;
                 entry.joiners.push(tx);
                 (
                     false,
@@ -758,6 +841,7 @@ LIMIT 1
                         state: TaskEntryState::Pending,
                         enqueued_at: now.clone(),
                         reason_counts,
+                        force_fetch,
                         joiners: vec![tx],
                     },
                 );
@@ -816,7 +900,17 @@ LIMIT 1
                 }
             };
 
-            let res = self.run_task(&upstream, &key, run_id).await;
+            let (res, completion) = loop {
+                let res = self.run_task(&upstream, &key, run_id).await;
+                if matches!(&res, Ok(task_ok) if task_ok.fetch.action == "cache") {
+                    if let Some(completion) = self.complete_or_retry_cache_hit(&key).await {
+                        break (res, completion);
+                    }
+                    continue;
+                }
+                let completion = self.seal_task_for_completion(&key).await;
+                break (res, completion);
+            };
             let ended_at = now_rfc3339();
 
             let (ok, fetch, parse, error_code, error_message) = match res {
@@ -830,11 +924,17 @@ LIMIT 1
                 ),
             };
 
+            let reason_counts_json = completion.reason_counts_json;
+
             let _ = sqlx::query(
                 r#"
 UPDATE ops_task_runs SET
   ended_at = ?,
   ok = ?,
+  fetch_action = ?,
+  freshness_window_seconds = ?,
+  reason_counts_json = ?,
+  cache_hit = ?,
   fetch_http_status = ?,
   fetch_bytes = ?,
   fetch_elapsed_ms = ?,
@@ -847,6 +947,14 @@ WHERE id = ?
             )
             .bind(&ended_at)
             .bind(if ok { 1 } else { 0 })
+            .bind(fetch.as_ref().map(|f| f.action.as_str()).unwrap_or("fetch"))
+            .bind(fetch.as_ref().and_then(|f| f.freshness_window_seconds))
+            .bind(&reason_counts_json)
+            .bind(if fetch.as_ref().is_some_and(|f| f.action == "cache") {
+                1
+            } else {
+                0
+            })
             .bind(fetch.as_ref().map(|f| f.http_status as i64))
             .bind(fetch.as_ref().map(|f| f.bytes))
             .bind(fetch.as_ref().map(|f| f.elapsed_ms))
@@ -872,6 +980,8 @@ WHERE id = ?
                             "ok": ok,
                             "fetch": fetch.as_ref().map(|f| serde_json::json!({
                                 "url": f.url,
+                                "action": f.action,
+                                "freshnessWindowSeconds": f.freshness_window_seconds,
                                 "httpStatus": f.http_status,
                                 "bytes": f.bytes,
                                 "elapsedMs": f.elapsed_ms,
@@ -891,16 +1001,26 @@ WHERE id = ?
                 .await;
 
             if ok {
+                let fetch_action = fetch
+                    .as_ref()
+                    .map(|item| item.action.as_str())
+                    .unwrap_or("fetch");
                 let _ = self
                     .log(
                         "info",
                         "ops.task",
                         &format!(
-                            "task ok: fid={} gid={}",
+                            "task ok: fid={} gid={} action={fetch_action}",
                             key.fid,
                             key.gid.clone().unwrap_or_default()
                         ),
-                        Some(serde_json::json!({ "runId": run_id, "fid": key.fid.clone(), "gid": key.gid.clone() })),
+                        Some(serde_json::json!({
+                            "runId": run_id,
+                            "fid": key.fid.clone(),
+                            "gid": key.gid.clone(),
+                            "action": fetch_action,
+                            "freshnessWindowSeconds": fetch.as_ref().and_then(|item| item.freshness_window_seconds),
+                        })),
                     )
                     .await;
             } else {
@@ -919,7 +1039,9 @@ WHERE id = ?
                     .await;
             }
 
-            let _ = self.finish_task(worker_idx, &key, run_id, ok).await;
+            let _ = self
+                .finish_task(worker_idx, run_id, ok, completion.joiners)
+                .await;
             let _ = self.publish_queue_snapshot().await;
         }
     }
@@ -944,18 +1066,24 @@ WHERE id = ?
                 .tasks
                 .get_mut(key)
                 .ok_or_else(|| anyhow::anyhow!("task missing"))?;
-            let do_lifecycle_notify = entry.reason_counts.contains_key("manual_refresh");
+            let do_lifecycle_notify = should_emit_lifecycle_notify(&entry.reason_counts);
             let reason_counts = entry.reason_counts.clone();
 
+            let reason_counts_json =
+                serde_json::to_string(&reason_counts).unwrap_or_else(|_| "{}".to_string());
             let res = sqlx::query(
                 r#"
-INSERT INTO ops_task_runs (fid, gid, started_at, ended_at, ok)
-VALUES (?, ?, ?, NULL, 0)
+INSERT INTO ops_task_runs (
+  fid, gid, started_at, ended_at, ok,
+  fetch_action, freshness_window_seconds, reason_counts_json, cache_hit
+)
+VALUES (?, ?, ?, NULL, 0, 'fetch', NULL, ?, 0)
 "#,
             )
             .bind(&key.fid)
             .bind(key.gid.as_deref())
             .bind(started_at)
+            .bind(&reason_counts_json)
             .execute(&self.inner.db)
             .await?;
             let run_id = res.last_insert_rowid();
@@ -1007,11 +1135,11 @@ VALUES (?, ?, ?, NULL, 0)
     async fn finish_task(
         &self,
         worker_idx: usize,
-        key: &TaskKey,
         run_id: i64,
         ok: bool,
+        joiners: Vec<oneshot::Sender<OpsRunOutcome>>,
     ) -> anyhow::Result<()> {
-        let joiners = {
+        {
             let mut st = self.inner.state.lock().await;
             let w = st
                 .workers
@@ -1020,9 +1148,7 @@ VALUES (?, ?, ?, NULL, 0)
             w.state = WorkerState::Idle;
             w.task = None;
             w.started_at = None;
-
-            st.tasks.remove(key).map(|t| t.joiners).unwrap_or_default()
-        };
+        }
 
         for j in joiners {
             let _ = j.send(OpsRunOutcome { run_id, ok });
@@ -1058,6 +1184,19 @@ VALUES (?, ?, ?, NULL, 0)
         Ok(())
     }
 
+    async fn complete_or_retry_cache_hit(&self, key: &TaskKey) -> Option<TaskCompletion> {
+        let mut st = self.inner.state.lock().await;
+        if st.tasks.get(key).is_some_and(|entry| entry.force_fetch) {
+            return None;
+        }
+        Some(remove_task_completion(&mut st, key))
+    }
+
+    async fn seal_task_for_completion(&self, key: &TaskKey) -> TaskCompletion {
+        let mut st = self.inner.state.lock().await;
+        remove_task_completion(&mut st, key)
+    }
+
     async fn run_task(
         &self,
         upstream: &UpstreamClient,
@@ -1066,6 +1205,51 @@ VALUES (?, ?, ?, NULL, 0)
     ) -> Result<TaskOk, TaskErr> {
         let gid = key.gid.as_deref();
         let url_key = format!("{}:{}", key.fid, gid.unwrap_or("0"));
+        let (reason_counts, force_fetch) = {
+            let st = self.inner.state.lock().await;
+            st.tasks
+                .get(key)
+                .map(|entry| (entry.reason_counts.clone(), entry.force_fetch))
+                .unwrap_or_else(|| (HashMap::new(), false))
+        };
+        let freshness_window_seconds = task_freshness_window_seconds(&reason_counts);
+
+        if !force_fetch {
+            if let Some(window) = freshness_window_seconds {
+                if let Ok(Some(cache)) =
+                    crate::db::get_catalog_url_cache(&self.inner.db, &url_key).await
+                {
+                    if let Ok(last_success_at) =
+                        OffsetDateTime::parse(&cache.last_success_at, &Rfc3339)
+                    {
+                        let age = OffsetDateTime::now_utc() - last_success_at;
+                        if age <= time::Duration::seconds(window) {
+                            let produced_configs =
+                                serde_json::from_str::<Vec<String>>(&cache.config_ids_json)
+                                    .map(|ids| ids.len() as i64)
+                                    .unwrap_or(0);
+                            #[cfg(test)]
+                            pause_before_cache_hit_return().await;
+                            return Ok(TaskOk {
+                                fetch: TaskFetchMeta {
+                                    url: cache.url,
+                                    http_status: 0,
+                                    bytes: 0,
+                                    elapsed_ms: 0,
+                                    action: "cache".to_string(),
+                                    freshness_window_seconds: Some(window),
+                                },
+                                parse: TaskParseMeta {
+                                    ok: true,
+                                    produced_configs,
+                                    elapsed_ms: 0,
+                                },
+                            });
+                        }
+                    }
+                }
+            }
+        }
 
         let fetch = match upstream.fetch_region_configs_detailed(&key.fid, gid).await {
             Ok(v) => v,
@@ -1093,6 +1277,7 @@ VALUES (?, ?, ?, NULL, 0)
             &url_key,
             &fetch.url,
             fetch.configs,
+            region_notice.as_deref(),
         )
         .await
         {
@@ -1106,6 +1291,8 @@ VALUES (?, ?, ?, NULL, 0)
                         http_status: fetch.http_status,
                         bytes: fetch.bytes,
                         elapsed_ms: fetch.elapsed_ms,
+                        action: "fetch".to_string(),
+                        freshness_window_seconds,
                     }),
                     parse: Some(TaskParseMeta {
                         ok: false,
@@ -1122,15 +1309,7 @@ VALUES (?, ?, ?, NULL, 0)
             upsert_region_notice_in_snapshot(&mut snap, &key.fid, gid, region_notice.as_deref());
         }
 
-        let do_lifecycle_notify = {
-            let st = self.inner.state.lock().await;
-            st.tasks
-                .get(key)
-                .map(|t| t.reason_counts.contains_key("manual_refresh"))
-                .unwrap_or(false)
-        };
-
-        if do_lifecycle_notify
+        if should_emit_lifecycle_notify(&reason_counts)
             && (!applied.listed_ids.is_empty() || !applied.delisted_ids.is_empty())
         {
             if let Err(err) = self.notify_lifecycle_events(run_id, &applied, key).await {
@@ -1144,6 +1323,8 @@ VALUES (?, ?, ?, NULL, 0)
                 http_status: fetch.http_status,
                 bytes: fetch.bytes,
                 elapsed_ms: fetch.elapsed_ms,
+                action: "fetch".to_string(),
+                freshness_window_seconds,
             },
             parse,
         })
@@ -1499,7 +1680,8 @@ WHERE id IN ({placeholders})
     }
 
     async fn publish_queue_snapshot(&self) -> anyhow::Result<i64> {
-        let (pending, running, deduped) = {
+        let now = OffsetDateTime::now_utc();
+        let (pending, running, deduped, oldest_wait_seconds, reason_counts) = {
             let st = self.inner.state.lock().await;
             let pending = st
                 .tasks
@@ -1511,12 +1693,36 @@ WHERE id IN ({placeholders})
                 .values()
                 .filter(|t| matches!(t.state, TaskEntryState::Running { .. }))
                 .count() as i64;
-            (pending, running, st.deduped)
+            let oldest_wait_seconds = st
+                .tasks
+                .values()
+                .filter_map(|task| OffsetDateTime::parse(&task.enqueued_at, &Rfc3339).ok())
+                .map(|enqueued_at| (now - enqueued_at).whole_seconds().max(0))
+                .max();
+            let mut reason_counts = HashMap::new();
+            for task in st.tasks.values() {
+                for (reason, count) in &task.reason_counts {
+                    *reason_counts.entry(reason.clone()).or_insert(0) += *count;
+                }
+            }
+            (
+                pending,
+                running,
+                st.deduped,
+                oldest_wait_seconds,
+                reason_counts,
+            )
         };
         self.publish_event(
             "ops.queue",
             serde_json::json!({
-                "queue": { "pending": pending, "running": running, "deduped": deduped },
+                "queue": {
+                    "pending": pending,
+                    "running": running,
+                    "deduped": deduped,
+                    "oldestWaitSeconds": oldest_wait_seconds,
+                    "reasonCounts": reason_counts,
+                },
             }),
         )
         .await
@@ -1582,6 +1788,27 @@ WHERE id IN ({placeholders})
 }
 
 #[derive(Debug)]
+struct TaskCompletion {
+    reason_counts_json: String,
+    joiners: Vec<oneshot::Sender<OpsRunOutcome>>,
+}
+
+fn remove_task_completion(st: &mut RuntimeState, key: &TaskKey) -> TaskCompletion {
+    let task = st.tasks.remove(key);
+    let reason_counts_json = task
+        .as_ref()
+        .map(|entry| {
+            serde_json::to_string(&entry.reason_counts).unwrap_or_else(|_| "{}".to_string())
+        })
+        .unwrap_or_else(|| "{}".to_string());
+    let joiners = task.map(|entry| entry.joiners).unwrap_or_default();
+    TaskCompletion {
+        reason_counts_json,
+        joiners,
+    }
+}
+
+#[derive(Debug)]
 struct TaskOk {
     fetch: TaskFetchMeta,
     parse: TaskParseMeta,
@@ -1601,6 +1828,8 @@ struct TaskFetchMeta {
     http_status: u16,
     bytes: i64,
     elapsed_ms: i64,
+    action: String,
+    freshness_window_seconds: Option<i64>,
 }
 
 #[derive(Debug, Clone)]
@@ -1625,6 +1854,35 @@ fn now_rfc3339() -> String {
         .format(&Rfc3339)
         .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string())
 }
+
+#[cfg(test)]
+#[derive(Clone)]
+struct CacheHitTestHook {
+    entered: Arc<Notify>,
+    release: Arc<Notify>,
+}
+
+#[cfg(test)]
+async fn set_cache_hit_test_hook(hook: Option<CacheHitTestHook>) {
+    let store = std::sync::OnceLock::get_or_init(&CACHE_HIT_TEST_HOOK, || Mutex::new(None));
+    *store.lock().await = hook;
+}
+
+#[cfg(test)]
+async fn pause_before_cache_hit_return() {
+    let hook = {
+        let store = std::sync::OnceLock::get_or_init(&CACHE_HIT_TEST_HOOK, || Mutex::new(None));
+        store.lock().await.clone()
+    };
+    if let Some(hook) = hook {
+        hook.entered.notify_waiters();
+        hook.release.notified().await;
+    }
+}
+
+#[cfg(test)]
+static CACHE_HIT_TEST_HOOK: std::sync::OnceLock<Mutex<Option<CacheHitTestHook>>> =
+    std::sync::OnceLock::new();
 
 fn upsert_region_notice_in_snapshot(
     snap: &mut CatalogSnapshot,
@@ -1661,6 +1919,8 @@ pub struct OpsQueueView {
     pub pending: i64,
     pub running: i64,
     pub deduped: i64,
+    pub oldest_wait_seconds: Option<i64>,
+    pub reason_counts: HashMap<String, i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1704,6 +1964,7 @@ pub struct OpsRateBucketView {
     pub success: i64,
     pub failure: i64,
     pub success_rate_pct: f64,
+    pub cache_hits: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1718,6 +1979,15 @@ pub struct OpsNotifyStatsView {
 pub struct OpsStatsView {
     pub collection: OpsRateBucketView,
     pub notify: OpsNotifyStatsView,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpsTopologyView {
+    pub status: String,
+    pub refreshed_at: Option<String>,
+    pub request_count: i64,
+    pub message: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1743,6 +2013,7 @@ pub struct OpsStateSnapshot {
     pub stats: OpsStatsView,
     pub sparks: OpsSparksView,
     pub log_tail: Vec<OpsLogEntryView>,
+    pub topology: OpsTopologyView,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1753,4 +2024,165 @@ pub struct OpsSparksView {
     pub collection_success_rate_pct: Vec<f64>,
     pub notify_telegram_success_rate_pct: Vec<f64>,
     pub notify_web_push_success_rate_pct: Vec<f64>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{extract::Query, http::StatusCode, routing::get, Router};
+    use sqlx::sqlite::SqlitePoolOptions;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use time::format_description::well_known::Rfc3339;
+
+    fn test_config(upstream_cart_url: String) -> RuntimeConfig {
+        RuntimeConfig {
+            bind_addr: "127.0.0.1:0".to_string(),
+            effective_version: "test".to_string(),
+            repo_url: "https://example.com/repo".to_string(),
+            update_repo: "example/repo".to_string(),
+            update_check_enabled: false,
+            update_check_ttl_seconds: 0,
+            update_check_timeout_ms: 1500,
+            github_api_base_url: "https://api.github.com".to_string(),
+            upstream_cart_url,
+            telegram_api_base_url: "https://api.telegram.org".to_string(),
+            auth_user_header: Some("x-user".to_string()),
+            dev_user_id: None,
+            default_poll_interval_minutes: 1,
+            default_poll_jitter_pct: 0.1,
+            log_retention_days: 7,
+            log_retention_max_rows: 10_000,
+            ops_worker_concurrency: 1,
+            ops_sse_replay_window_seconds: 3600,
+            ops_log_retention_days: 7,
+            ops_log_tail_limit_default: 200,
+            ops_queue_task_limit_default: 200,
+            db_url: "sqlite::memory:".to_string(),
+            web_push_vapid_public_key: None,
+            web_push_vapid_private_key: None,
+            web_push_vapid_subject: None,
+            allow_insecure_local_web_push_endpoints: true,
+        }
+    }
+
+    async fn spawn_stub_server(app: Router) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        format!("http://{}", addr)
+    }
+
+    async fn build_ops_manager(upstream_cart_url: String) -> (OpsManager, SqlitePool) {
+        let cfg = test_config(upstream_cart_url.clone());
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(&cfg.db_url)
+            .await
+            .unwrap();
+        crate::db::init_db(&db).await.unwrap();
+        let catalog = Arc::new(RwLock::new(CatalogSnapshot::empty(upstream_cart_url)));
+        let ops = OpsManager::new(cfg, db.clone(), catalog);
+        ops.start();
+        (ops, db)
+    }
+
+    #[test]
+    fn merged_task_prefers_broadest_freshness_window() {
+        let reason_counts = HashMap::from([
+            ("poller_due".to_string(), 1_i64),
+            ("manual_refresh".to_string(), 1_i64),
+        ]);
+        assert_eq!(
+            task_freshness_window_seconds(&reason_counts),
+            Some(MANUAL_REFRESH_FRESHNESS_WINDOW_SECONDS)
+        );
+    }
+
+    #[tokio::test]
+    async fn late_force_fetch_retries_after_cache_hit() {
+        #[derive(serde::Deserialize)]
+        struct CartQuery {
+            fid: Option<String>,
+            gid: Option<String>,
+        }
+
+        let hits = Arc::new(AtomicUsize::new(0));
+        let hits_for_handler = hits.clone();
+        let upstream = Router::new().route(
+            "/cart",
+            get(move |Query(q): Query<CartQuery>| {
+                let hits_for_handler = hits_for_handler.clone();
+                async move {
+                    hits_for_handler.fetch_add(1, Ordering::SeqCst);
+                    match (q.fid.as_deref(), q.gid.as_deref()) {
+                        (Some("2"), Some("56")) => (
+                            StatusCode::OK,
+                            include_str!("../tests/fixtures/cart-fid-2-gid-56.html"),
+                        ),
+                        _ => (StatusCode::NOT_FOUND, "not found"),
+                    }
+                }
+            }),
+        );
+        let base = spawn_stub_server(upstream).await;
+        let (ops, db) = build_ops_manager(format!("{base}/cart")).await;
+
+        let now = OffsetDateTime::now_utc().format(&Rfc3339).unwrap();
+        sqlx::query(
+            "INSERT INTO catalog_url_cache (url_key, url, config_ids_json, last_success_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind("2:56")
+        .bind(format!("{base}/cart?fid=2&gid=56"))
+        .bind("[]")
+        .bind(&now)
+        .bind(&now)
+        .execute(&db)
+        .await
+        .unwrap();
+
+        let entered = Arc::new(Notify::new());
+        let release = Arc::new(Notify::new());
+        set_cache_hit_test_hook(Some(CacheHitTestHook {
+            entered: entered.clone(),
+            release: release.clone(),
+        }))
+        .await;
+
+        ops.enqueue_background("2", Some("56"), "poller_due")
+            .await
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(2), entered.notified())
+            .await
+            .unwrap();
+
+        let ops_for_force = ops.clone();
+        let force_task = tokio::spawn(async move {
+            ops_for_force
+                .enqueue_and_wait_force_fetch("2", Some("56"), "manual_refresh")
+                .await
+                .unwrap()
+        });
+        tokio::task::yield_now().await;
+        release.notify_waiters();
+
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(5), force_task)
+            .await
+            .unwrap()
+            .unwrap();
+        set_cache_hit_test_hook(None).await;
+
+        assert!(outcome.ok);
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+
+        let row = sqlx::query(
+            "SELECT fetch_action, cache_hit FROM ops_task_runs ORDER BY id DESC LIMIT 1",
+        )
+        .fetch_one(&db)
+        .await
+        .unwrap();
+        assert_eq!(row.get::<String, _>(0), "fetch");
+        assert_eq!(row.get::<i64, _>(1), 0);
+    }
 }

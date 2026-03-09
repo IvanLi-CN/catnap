@@ -1,7 +1,6 @@
 use crate::app::AppState;
 use crate::db;
 use crate::models::{CatalogRefreshCurrent, CatalogRefreshStatus};
-use crate::upstream::UpstreamClient;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
@@ -184,51 +183,15 @@ async fn run_full_refresh_job(
     job_id: String,
     trigger: RefreshTrigger,
 ) -> anyhow::Result<()> {
-    let upstream = UpstreamClient::new(app.config.upstream_cart_url.clone())?;
+    let refresh_reason = match trigger {
+        RefreshTrigger::Manual => "manual_refresh",
+        RefreshTrigger::Auto => "auto_refresh",
+    };
 
-    // Enumerate URL tasks by parsing the upstream cart root.
-    let root_html = upstream
-        .fetch_html_raw(&app.config.upstream_cart_url)
-        .await?;
-    let countries = crate::upstream::parse_countries(&root_html);
-
-    let mut regions = Vec::new();
-    let mut tasks: Vec<(String, Option<String>)> = Vec::new();
-
-    for c in &countries {
-        let fid = &c.id;
-        let fid_url = format!("{}?fid={fid}", app.config.upstream_cart_url);
-        let fid_html = upstream.fetch_html_raw(&fid_url).await?;
-
-        let mut fid_regions = crate::upstream::parse_regions(fid, &fid_html);
-        if fid_regions.is_empty() {
-            tasks.push((fid.clone(), None));
-        } else {
-            regions.append(&mut fid_regions);
-            for r in regions.iter().filter(|r| &r.country_id == fid) {
-                tasks.push((fid.clone(), Some(r.id.clone())));
-            }
-        }
-    }
-
-    let active_task_keys = tasks
-        .iter()
-        .map(|(fid, gid)| (fid.clone(), gid.clone()))
-        .collect::<HashSet<_>>();
-    let active_url_keys = tasks
-        .iter()
-        .map(|(fid, gid)| crate::upstream::catalog_region_key(fid, gid.as_deref()))
-        .collect::<HashSet<_>>();
-
-    {
-        let mut snap = app.catalog.write().await;
-        snap.countries = countries;
-        snap.regions = regions;
-        snap.region_notices
-            .retain(|n| active_task_keys.contains(&(n.country_id.clone(), n.region_id.clone())));
-        snap.region_notice_initialized_keys
-            .retain(|key| active_url_keys.contains(key));
-        snap.source_url = app.config.upstream_cart_url.clone();
+    let mut tasks = crate::poller::known_catalog_targets(&app).await?;
+    if tasks.is_empty() {
+        crate::poller::refresh_catalog_topology(&app, refresh_reason).await?;
+        tasks = crate::poller::known_catalog_targets(&app).await?;
     }
 
     let total = tasks.len().max(1) as i64;
@@ -252,6 +215,7 @@ async fn run_full_refresh_job(
 
         let mut action = "fetch".to_string();
         let mut note: Option<String> = None;
+        let mut force_fetch = false;
         if let Some(cache) = db::get_catalog_url_cache(&app.db, &url_key).await? {
             if let Ok(last) = OffsetDateTime::parse(&cache.last_success_at, &Rfc3339) {
                 let now = OffsetDateTime::now_utc();
@@ -275,6 +239,7 @@ async fn run_full_refresh_job(
                 // This avoids stale empty state while preserving cache for initialized keys.
                 action = "fetch".to_string();
                 note = Some("cache bypass: region notice key not initialized".to_string());
+                force_fetch = true;
             }
         }
 
@@ -290,12 +255,15 @@ async fn run_full_refresh_job(
         )
         .await;
 
-        if action == "fetch" {
-            let _ = app
-                .ops
-                .enqueue_and_wait(&fid, gid.as_deref(), "manual_refresh")
-                .await?;
-        }
+        let _ = if force_fetch {
+            app.ops
+                .enqueue_and_wait_force_fetch(&fid, gid.as_deref(), refresh_reason)
+                .await?
+        } else {
+            app.ops
+                .enqueue_and_wait(&fid, gid.as_deref(), refresh_reason)
+                .await?
+        };
 
         done += 1;
         mgr.update_progress(done, total, None).await;

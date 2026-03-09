@@ -44,6 +44,7 @@ fn base_test_config() -> RuntimeConfig {
 struct TestApp {
     app: axum::Router,
     db: SqlitePool,
+    catalog: std::sync::Arc<tokio::sync::RwLock<catnap::upstream::CatalogSnapshot>>,
 }
 
 async fn make_app_with_config(cfg: RuntimeConfig) -> TestApp {
@@ -62,7 +63,7 @@ async fn make_app_with_config(cfg: RuntimeConfig) -> TestApp {
     let state = AppState {
         config: cfg,
         db: db.clone(),
-        catalog,
+        catalog: catalog.clone(),
         catalog_refresh: catnap::catalog_refresh::CatalogRefreshManager::new(),
         ops,
         update_cache: catnap::update_check::new_cache(),
@@ -71,6 +72,7 @@ async fn make_app_with_config(cfg: RuntimeConfig) -> TestApp {
     TestApp {
         app: build_app(state),
         db,
+        catalog,
     }
 }
 
@@ -231,6 +233,22 @@ async fn catalog_refresh_job_runs_and_persists_url_cache() {
     assert_eq!(row.get::<String, _>(0), "active");
 
     assert_eq!(hits.load(Ordering::SeqCst), baseline_hits);
+
+    // A follow-up manual refresh should reuse the persisted topology + fresh URL cache.
+    assert_eq!(post_refresh(t2.app.clone(), "u_3").await, StatusCode::OK);
+    assert_eq!(wait_refresh_done(t2.app.clone()).await, "success");
+    assert_eq!(hits.load(Ordering::SeqCst), baseline_hits);
+
+    // If the in-memory notice initialization state is missing, manual refresh must force
+    // a real fetch instead of silently reusing the cache.
+    {
+        let mut snapshot = t2.catalog.write().await;
+        snapshot.region_notice_initialized_keys.clear();
+        snapshot.region_notices.clear();
+    }
+    assert_eq!(post_refresh(t2.app.clone(), "u_4").await, StatusCode::OK);
+    assert_eq!(wait_refresh_done(t2.app.clone()).await, "success");
+    assert!(hits.load(Ordering::SeqCst) > baseline_hits);
 }
 
 #[tokio::test]
@@ -262,6 +280,7 @@ async fn lifecycle_marks_delisted_and_relisted() {
         "7:40",
         "http://example.invalid/cart?fid=7&gid=40",
         only_first,
+        None,
     )
     .await
     .unwrap();
@@ -296,6 +315,7 @@ async fn lifecycle_marks_delisted_and_relisted() {
         "7:40",
         "http://example.invalid/cart?fid=7&gid=40",
         both,
+        None,
     )
     .await
     .unwrap();

@@ -1,11 +1,35 @@
+use crate::defaults::{
+    FIXED_CATALOG_TOPOLOGY_PROBE_INTERVAL_MINUTES, FIXED_CATALOG_TOPOLOGY_REFRESH_INTERVAL_HOURS,
+};
+use crate::upstream::{catalog_region_key, CatalogSnapshot, UpstreamClient};
 use crate::{app::AppState, db};
 use crate::{models::Money, notification_content};
 use sqlx::Row;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use time::OffsetDateTime;
 use tracing::{info, warn};
 
 const INVENTORY_HISTORY_RETENTION_DAYS: i64 = 30;
+const DISCOVERY_INTERVAL_SECONDS: i64 = 5 * 60;
+const TOPOLOGY_RETRY_SECONDS: i64 = 5 * 60;
+
+fn initial_topology_due(
+    now: OffsetDateTime,
+    topology_interval: time::Duration,
+    has_topology: bool,
+    last_topology_refresh_at: Option<&str>,
+) -> OffsetDateTime {
+    if !has_topology {
+        return now;
+    }
+
+    last_topology_refresh_at
+        .and_then(|value| {
+            OffsetDateTime::parse(value, &time::format_description::well_known::Rfc3339).ok()
+        })
+        .map(|ts| ts.saturating_add(topology_interval))
+        .unwrap_or(now.saturating_add(topology_interval))
+}
 
 pub async fn spawn(state: AppState) {
     tokio::spawn(async move {
@@ -15,11 +39,250 @@ pub async fn spawn(state: AppState) {
     });
 }
 
+pub async fn refresh_catalog_topology(state: &AppState, reason: &str) -> anyhow::Result<()> {
+    let upstream = UpstreamClient::new(state.config.upstream_cart_url.clone())?;
+    let has_existing_catalog_state = db::has_catalog_topology(&state.db).await?
+        || !db::list_known_catalog_targets(&state.db).await?.is_empty();
+    match upstream.fetch_topology().await {
+        Ok(mut topology) => {
+            if topology.countries.is_empty() && has_existing_catalog_state {
+                anyhow::bail!("refusing empty topology refresh while catalog state already exists");
+            }
+            let previous_snapshot = state.catalog.read().await.clone();
+            let preserved_ambiguous_countries =
+                preserve_ambiguous_country_regions(&mut topology, &previous_snapshot);
+            let previous_targets = known_catalog_targets(state).await?;
+            db::replace_catalog_topology(
+                &state.db,
+                &state.config.upstream_cart_url,
+                &topology.countries,
+                &topology.regions,
+            )
+            .await?;
+            let current_targets = db::list_catalog_task_keys(&state.db).await?;
+            let current_target_keys = current_targets
+                .iter()
+                .map(|(fid, gid)| catalog_region_key(fid, gid.as_deref()))
+                .collect::<HashSet<_>>();
+            let removed_targets = previous_targets
+                .into_iter()
+                .filter(|(fid, gid)| {
+                    !current_target_keys.contains(&catalog_region_key(fid, gid.as_deref()))
+                })
+                .collect::<Vec<_>>();
+            let retired_ids = db::retire_catalog_targets(&state.db, &removed_targets).await?;
+            persist_topology_region_notices(state, &topology).await?;
+            let request_count = topology.request_count;
+            apply_topology_snapshot(&state.catalog, topology, &state.config.upstream_cart_url)
+                .await;
+            let _ = state
+                .ops
+                .log(
+                    "info",
+                    "catalog.topology",
+                    &format!("topology refresh ok: reason={reason}"),
+                    Some(serde_json::json!({
+                        "reason": reason,
+                        "requestCount": request_count,
+                        "removedTargetCount": removed_targets.len(),
+                        "retiredConfigCount": retired_ids.len(),
+                        "preservedAmbiguousCountryCount": preserved_ambiguous_countries.len(),
+                    })),
+                )
+                .await;
+            Ok(())
+        }
+        Err(err) => {
+            log_topology_failure(state, reason, "topology refresh failed", &err).await;
+            Err(err)
+        }
+    }
+}
+
+pub async fn probe_catalog_topology(state: &AppState, reason: &str) -> anyhow::Result<()> {
+    let upstream = UpstreamClient::new(state.config.upstream_cart_url.clone())?;
+    let has_existing_catalog_state = db::has_catalog_topology(&state.db).await?
+        || !db::list_known_catalog_targets(&state.db).await?.is_empty();
+    match upstream.fetch_topology().await {
+        Ok(mut topology) => {
+            if topology.countries.is_empty() && has_existing_catalog_state {
+                anyhow::bail!("refusing empty topology refresh while catalog state already exists");
+            }
+            let previous_snapshot = state.catalog.read().await.clone();
+            let preserved_ambiguous_countries =
+                preserve_ambiguous_country_regions(&mut topology, &previous_snapshot);
+            let previous_target_keys = known_catalog_targets(state)
+                .await?
+                .into_iter()
+                .map(|(fid, gid)| catalog_region_key(&fid, gid.as_deref()))
+                .collect::<HashSet<_>>();
+            let topology = merge_topology_probe_result(&previous_snapshot, topology);
+            db::replace_catalog_topology(
+                &state.db,
+                &state.config.upstream_cart_url,
+                &topology.countries,
+                &topology.regions,
+            )
+            .await?;
+            persist_topology_region_notices(state, &topology).await?;
+            let discovered_target_count =
+                topology
+                    .countries
+                    .iter()
+                    .filter(|country| {
+                        !topology
+                            .regions
+                            .iter()
+                            .any(|region| region.country_id == country.id)
+                    })
+                    .map(|country| catalog_region_key(&country.id, None))
+                    .chain(topology.regions.iter().map(|region| {
+                        catalog_region_key(&region.country_id, Some(region.id.as_str()))
+                    }))
+                    .filter(|key| !previous_target_keys.contains(key))
+                    .count();
+            let request_count = topology.request_count;
+            apply_topology_snapshot(&state.catalog, topology, &state.config.upstream_cart_url)
+                .await;
+            let _ = state
+                .ops
+                .log(
+                    "info",
+                    "catalog.topology",
+                    &format!("topology probe ok: reason={reason}"),
+                    Some(serde_json::json!({
+                        "reason": reason,
+                        "requestCount": request_count,
+                        "discoveredTargetCount": discovered_target_count,
+                        "preservedAmbiguousCountryCount": preserved_ambiguous_countries.len(),
+                    })),
+                )
+                .await;
+            Ok(())
+        }
+        Err(err) => {
+            log_topology_failure(state, reason, "topology probe failed", &err).await;
+            Err(err)
+        }
+    }
+}
+
+async fn log_topology_failure(state: &AppState, reason: &str, message: &str, err: &anyhow::Error) {
+    let error_message = err.to_string();
+    {
+        let mut snap = state.catalog.write().await;
+        snap.topology_status = "error".to_string();
+        snap.topology_message = Some(error_message.clone());
+    }
+    let _ = state
+        .ops
+        .log(
+            "warn",
+            "catalog.topology",
+            message,
+            Some(serde_json::json!({
+                "reason": reason,
+                "error": error_message,
+            })),
+        )
+        .await;
+}
+
+async fn persist_topology_region_notices(
+    state: &AppState,
+    topology: &crate::upstream::CatalogTopologySnapshot,
+) -> anyhow::Result<()> {
+    let notice_by_key = topology
+        .region_notices
+        .iter()
+        .map(|notice| {
+            (
+                catalog_region_key(&notice.country_id, notice.region_id.as_deref()),
+                notice,
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    for url_key in &topology.region_notice_initialized_keys {
+        let (fid, gid) = url_key
+            .split_once(':')
+            .map(|(fid, gid)| {
+                (
+                    fid.to_string(),
+                    if gid == "0" {
+                        None
+                    } else {
+                        Some(gid.to_string())
+                    },
+                )
+            })
+            .unwrap_or_else(|| (url_key.clone(), None));
+        let text = notice_by_key
+            .get(url_key)
+            .map(|notice| notice.text.as_str());
+        db::set_catalog_region_notice(&state.db, &fid, gid.as_deref(), text).await?;
+    }
+    Ok(())
+}
+
+fn merge_topology_probe_result(
+    previous: &CatalogSnapshot,
+    topology: crate::upstream::CatalogTopologySnapshot,
+) -> crate::upstream::CatalogTopologySnapshot {
+    let mut countries = previous.countries.clone();
+    for country in topology.countries.iter().cloned() {
+        if let Some(existing) = countries
+            .iter_mut()
+            .find(|current| current.id == country.id)
+        {
+            *existing = country;
+        } else {
+            countries.push(country);
+        }
+    }
+
+    let mut regions = previous.regions.clone();
+    for region in topology.regions.iter().cloned() {
+        if let Some(existing) = regions
+            .iter_mut()
+            .find(|current| current.country_id == region.country_id && current.id == region.id)
+        {
+            *existing = region;
+        } else {
+            regions.push(region);
+        }
+    }
+
+    let mut region_notices = previous.region_notices.clone();
+    for notice in topology.region_notices.iter().cloned() {
+        if let Some(existing) = region_notices.iter_mut().find(|current| {
+            current.country_id == notice.country_id && current.region_id == notice.region_id
+        }) {
+            *existing = notice;
+        } else {
+            region_notices.push(notice);
+        }
+    }
+
+    let mut region_notice_initialized_keys = previous.region_notice_initialized_keys.clone();
+    region_notice_initialized_keys.extend(topology.region_notice_initialized_keys.iter().cloned());
+
+    crate::upstream::CatalogTopologySnapshot {
+        countries,
+        regions,
+        region_notices,
+        region_notice_initialized_keys,
+        ambiguous_country_ids: topology.ambiguous_country_ids,
+        refreshed_at: topology.refreshed_at,
+        request_count: topology.request_count,
+    }
+}
+
 async fn run(state: AppState) -> anyhow::Result<()> {
     let mut next_due: HashMap<String, OffsetDateTime> = HashMap::new();
     let mut last_cleanup: Option<OffsetDateTime> = None;
-    let mut auto_last_trigger: Option<OffsetDateTime> = None;
-    let mut auto_interval_hours: Option<i64> = None;
+    let mut next_topology_due: Option<OffsetDateTime> = None;
+    let mut next_topology_probe_due: Option<OffsetDateTime> = None;
+    let mut next_discovery_due: Option<OffsetDateTime> = None;
 
     loop {
         let users = sqlx::query("SELECT id FROM users")
@@ -30,35 +293,79 @@ async fn run(state: AppState) -> anyhow::Result<()> {
             .collect::<Vec<_>>();
 
         let now = OffsetDateTime::now_utc();
+        let topology_interval =
+            time::Duration::hours(FIXED_CATALOG_TOPOLOGY_REFRESH_INTERVAL_HOURS);
+        let topology_probe_interval =
+            time::Duration::minutes(FIXED_CATALOG_TOPOLOGY_PROBE_INTERVAL_MINUTES);
 
-        // Global auto refresh scheduler: use the minimum enabled interval across all users.
-        let next_interval_hours = db::get_global_catalog_refresh_interval_hours(&state.db).await?;
-        if next_interval_hours != auto_interval_hours {
-            auto_interval_hours = next_interval_hours;
+        if next_topology_due.is_none()
+            || next_topology_probe_due.is_none()
+            || next_discovery_due.is_none()
+        {
+            let has_topology = db::has_catalog_topology(&state.db).await?;
+            let has_known_targets = !db::list_known_catalog_targets(&state.db).await?.is_empty();
+            let last_topology_refresh_at = if has_topology {
+                db::get_catalog_topology_state(&state.db)
+                    .await?
+                    .map(|row| row.last_topology_refresh_at)
+            } else {
+                None
+            };
+            if next_topology_due.is_none() {
+                next_topology_due = Some(initial_topology_due(
+                    now,
+                    topology_interval,
+                    has_topology,
+                    last_topology_refresh_at.as_deref(),
+                ));
+            }
+            if next_topology_probe_due.is_none() {
+                next_topology_probe_due = Some(now.saturating_add(topology_probe_interval));
+            }
+            if next_discovery_due.is_none() {
+                next_discovery_due = Some(if has_topology || has_known_targets {
+                    now.saturating_add(time::Duration::seconds(DISCOVERY_INTERVAL_SECONDS))
+                } else {
+                    now
+                });
+            }
         }
-        match auto_interval_hours {
-            Some(hours) if hours > 0 => {
-                // Start counting from "now" when auto refresh becomes enabled.
-                if auto_last_trigger.is_none() {
-                    auto_last_trigger = Some(now);
+
+        let mut topology_job_ran = false;
+        if next_topology_due.is_some_and(|due| now >= due) {
+            topology_job_ran = true;
+            match refresh_catalog_topology(&state, "topology_refresh").await {
+                Ok(_) => {
+                    next_topology_due = Some(now.saturating_add(topology_interval));
+                    next_topology_probe_due = Some(now.saturating_add(topology_probe_interval));
                 }
-                let last = auto_last_trigger.unwrap_or(now);
-                let due = last.saturating_add(time::Duration::hours(hours));
-                if now >= due {
-                    let _ = state
-                        .catalog_refresh
-                        .trigger(
-                            state.clone(),
-                            crate::catalog_refresh::RefreshTrigger::Auto,
-                            None,
-                        )
-                        .await;
-                    auto_last_trigger = Some(now);
+                Err(err) => {
+                    warn!(error = %err, "topology refresh failed");
+                    next_topology_due =
+                        Some(now.saturating_add(time::Duration::seconds(TOPOLOGY_RETRY_SECONDS)));
                 }
             }
-            _ => {
-                auto_last_trigger = None;
+        }
+
+        if !topology_job_ran && next_topology_probe_due.is_some_and(|due| now >= due) {
+            match probe_catalog_topology(&state, "topology_probe").await {
+                Ok(_) => {
+                    next_topology_probe_due = Some(now.saturating_add(topology_probe_interval));
+                }
+                Err(err) => {
+                    warn!(error = %err, "topology probe failed");
+                    next_topology_probe_due =
+                        Some(now.saturating_add(time::Duration::seconds(TOPOLOGY_RETRY_SECONDS)));
+                }
             }
+        }
+
+        if next_discovery_due.is_some_and(|due| now >= due) {
+            if let Err(err) = enqueue_discovery_targets(&state).await {
+                warn!(error = %err, "enqueue discovery targets failed");
+            }
+            next_discovery_due =
+                Some(now.saturating_add(time::Duration::seconds(DISCOVERY_INTERVAL_SECONDS)));
         }
 
         for user_id in users {
@@ -100,6 +407,177 @@ async fn run(state: AppState) -> anyhow::Result<()> {
     }
 }
 
+async fn enqueue_discovery_targets(state: &AppState) -> anyhow::Result<()> {
+    let targets = known_catalog_targets(state).await?;
+    if targets.is_empty() {
+        return Ok(());
+    }
+
+    for (fid, gid) in targets {
+        state
+            .ops
+            .enqueue_background(&fid, gid.as_deref(), "discovery_due")
+            .await?;
+    }
+
+    Ok(())
+}
+
+pub async fn known_catalog_targets(
+    state: &AppState,
+) -> anyhow::Result<Vec<(String, Option<String>)>> {
+    let mut known = db::list_catalog_task_keys(&state.db).await?;
+    known.extend(db::list_known_catalog_targets(&state.db).await?);
+    let snapshot = state.catalog.read().await.clone();
+    known.extend(catalog_targets_from_snapshot(&snapshot));
+
+    let mut deduped = Vec::new();
+    let mut seen = HashSet::new();
+    for (fid, gid) in known {
+        let key = catalog_region_key(&fid, gid.as_deref());
+        if seen.insert(key) {
+            deduped.push((fid, gid));
+        }
+    }
+    Ok(deduped)
+}
+
+fn catalog_targets_from_snapshot(snapshot: &CatalogSnapshot) -> Vec<(String, Option<String>)> {
+    let mut out = Vec::new();
+    let mut countries_with_regions = HashSet::new();
+
+    for region in &snapshot.regions {
+        countries_with_regions.insert(region.country_id.clone());
+        out.push((region.country_id.clone(), Some(region.id.clone())));
+    }
+
+    for country in &snapshot.countries {
+        if !countries_with_regions.contains(&country.id) {
+            out.push((country.id.clone(), None));
+        }
+    }
+
+    out
+}
+
+fn preserve_ambiguous_country_regions(
+    topology: &mut crate::upstream::CatalogTopologySnapshot,
+    previous: &CatalogSnapshot,
+) -> Vec<String> {
+    let mut preserved_countries = Vec::new();
+
+    for country_id in topology.ambiguous_country_ids.iter() {
+        let previous_regions = previous
+            .regions
+            .iter()
+            .filter(|region| region.country_id == *country_id)
+            .cloned()
+            .collect::<Vec<_>>();
+        if previous_regions.is_empty() {
+            continue;
+        }
+
+        preserved_countries.push(country_id.clone());
+        let mut existing_region_ids = topology
+            .regions
+            .iter()
+            .filter(|region| region.country_id == *country_id)
+            .map(|region| region.id.clone())
+            .collect::<HashSet<_>>();
+        let mut preserved_url_keys = HashSet::new();
+
+        for region in previous_regions {
+            let url_key = catalog_region_key(&region.country_id, Some(region.id.as_str()));
+            preserved_url_keys.insert(url_key);
+            if existing_region_ids.insert(region.id.clone()) {
+                topology.regions.push(region);
+            }
+        }
+
+        topology.region_notice_initialized_keys.extend(
+            previous
+                .region_notice_initialized_keys
+                .iter()
+                .filter(|key| preserved_url_keys.contains(*key))
+                .cloned(),
+        );
+        for notice in previous
+            .region_notices
+            .iter()
+            .filter(|notice| notice.country_id == *country_id)
+        {
+            let notice_key = catalog_region_key(&notice.country_id, notice.region_id.as_deref());
+            if preserved_url_keys.contains(&notice_key)
+                && !topology.region_notices.iter().any(|current| {
+                    current.country_id == notice.country_id && current.region_id == notice.region_id
+                })
+            {
+                topology.region_notices.push(notice.clone());
+            }
+        }
+    }
+
+    preserved_countries
+}
+
+async fn apply_topology_snapshot(
+    catalog: &tokio::sync::RwLock<CatalogSnapshot>,
+    topology: crate::upstream::CatalogTopologySnapshot,
+    source_url: &str,
+) {
+    let active_keys = topology
+        .countries
+        .iter()
+        .map(|country| {
+            let has_region = topology
+                .regions
+                .iter()
+                .any(|region| region.country_id == country.id);
+            if has_region {
+                None
+            } else {
+                Some((country.id.clone(), None))
+            }
+        })
+        .chain(
+            topology
+                .regions
+                .iter()
+                .map(|region| Some((region.country_id.clone(), Some(region.id.clone())))),
+        )
+        .flatten()
+        .collect::<HashSet<_>>();
+    let active_url_keys = active_keys
+        .iter()
+        .map(|(fid, gid)| catalog_region_key(fid, gid.as_deref()))
+        .collect::<HashSet<_>>();
+
+    let mut snap = catalog.write().await;
+    snap.countries = topology.countries;
+    snap.regions = topology.regions;
+    snap.region_notices.retain(|notice| {
+        active_keys.contains(&(notice.country_id.clone(), notice.region_id.clone()))
+    });
+    for notice in topology.region_notices {
+        if let Some(existing) = snap.region_notices.iter_mut().find(|current| {
+            current.country_id == notice.country_id && current.region_id == notice.region_id
+        }) {
+            existing.text = notice.text;
+        } else {
+            snap.region_notices.push(notice);
+        }
+    }
+    snap.region_notice_initialized_keys
+        .retain(|key| active_url_keys.contains(key));
+    snap.region_notice_initialized_keys
+        .extend(topology.region_notice_initialized_keys);
+    snap.source_url = source_url.to_string();
+    snap.topology_refreshed_at = Some(topology.refreshed_at);
+    snap.topology_request_count = topology.request_count;
+    snap.topology_status = "success".to_string();
+    snap.topology_message = None;
+}
+
 async fn poll_once(
     state: &AppState,
     user_id: &str,
@@ -125,7 +603,7 @@ async fn poll_once(
         r#"SELECT id, country_id, region_id FROM catalog_configs WHERE id IN ({placeholders})"#
     );
     let mut q = sqlx::query(&sql);
-    for id in enabled.iter() {
+    for id in &enabled {
         q = q.bind(id);
     }
     let rows = q.fetch_all(&state.db).await?;
@@ -146,7 +624,7 @@ async fn poll_once(
                WHERE id IN ({placeholders})"#
         );
         let mut q = sqlx::query(&sql);
-        for id in ids.iter() {
+        for id in &ids {
             q = q.bind(id);
         }
         let old_rows = q.fetch_all(&state.db).await?;
@@ -166,7 +644,6 @@ async fn poll_once(
             );
         }
 
-        // Fetch + apply via global ops queue (dedup across poller + refresh).
         let run = state
             .ops
             .enqueue_and_wait(&fid, gid.as_deref(), "poller_due")
@@ -322,4 +799,106 @@ async fn poll_once(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn merge_topology_probe_result_keeps_previous_targets_and_adds_new_ones() {
+        let previous = CatalogSnapshot {
+            countries: vec![crate::models::Country {
+                id: "2".to_string(),
+                name: "CN".to_string(),
+            }],
+            regions: vec![crate::models::Region {
+                id: "56".to_string(),
+                country_id: "2".to_string(),
+                name: "HKG Premium".to_string(),
+                location_name: Some("湾仔".to_string()),
+            }],
+            region_notices: vec![crate::models::RegionNotice {
+                country_id: "2".to_string(),
+                region_id: Some("56".to_string()),
+                text: "old notice".to_string(),
+            }],
+            region_notice_initialized_keys: HashSet::from([String::from("2:56")]),
+            configs: Vec::new(),
+            fetched_at: "2026-01-01T00:00:00Z".to_string(),
+            source_url: "https://example.invalid/cart".to_string(),
+            topology_refreshed_at: Some("2026-01-01T00:00:00Z".to_string()),
+            topology_request_count: 0,
+            topology_status: "success".to_string(),
+            topology_message: None,
+        };
+
+        let topology = crate::upstream::CatalogTopologySnapshot {
+            countries: vec![crate::models::Country {
+                id: "2".to_string(),
+                name: "CN".to_string(),
+            }],
+            regions: vec![crate::models::Region {
+                id: "57".to_string(),
+                country_id: "2".to_string(),
+                name: "LAX Pro".to_string(),
+                location_name: Some("洛杉矶".to_string()),
+            }],
+            region_notices: vec![crate::models::RegionNotice {
+                country_id: "2".to_string(),
+                region_id: Some("57".to_string()),
+                text: "new notice".to_string(),
+            }],
+            region_notice_initialized_keys: HashSet::from([String::from("2:57")]),
+            ambiguous_country_ids: HashSet::new(),
+            refreshed_at: "2026-01-01T00:15:00Z".to_string(),
+            request_count: 2,
+        };
+
+        let merged = merge_topology_probe_result(&previous, topology);
+        let target_keys = merged
+            .regions
+            .iter()
+            .map(|region| catalog_region_key(&region.country_id, Some(region.id.as_str())))
+            .collect::<HashSet<_>>();
+
+        assert_eq!(
+            target_keys,
+            HashSet::from([String::from("2:56"), String::from("2:57")])
+        );
+        assert!(
+            merged
+                .region_notices
+                .iter()
+                .any(|notice| notice.region_id.as_deref() == Some("56")
+                    && notice.text == "old notice")
+        );
+        assert!(
+            merged
+                .region_notices
+                .iter()
+                .any(|notice| notice.region_id.as_deref() == Some("57")
+                    && notice.text == "new notice")
+        );
+        assert!(merged.region_notice_initialized_keys.contains("2:56"));
+        assert!(merged.region_notice_initialized_keys.contains("2:57"));
+    }
+
+    #[test]
+    fn initial_topology_due_is_immediate_when_topology_is_missing() {
+        let now = OffsetDateTime::UNIX_EPOCH;
+        let due = initial_topology_due(now, time::Duration::minutes(30), false, None);
+        assert_eq!(due, now);
+    }
+
+    #[test]
+    fn initial_topology_due_uses_last_refresh_when_topology_exists() {
+        let now = OffsetDateTime::UNIX_EPOCH;
+        let last = "1970-01-01T00:05:00Z";
+        let due = initial_topology_due(now, time::Duration::minutes(30), true, Some(last));
+        assert_eq!(
+            due,
+            OffsetDateTime::UNIX_EPOCH + time::Duration::minutes(35)
+        );
+    }
 }

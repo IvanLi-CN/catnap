@@ -87,6 +87,10 @@ async fn make_app_with_config(cfg: RuntimeConfig) -> TestApp {
         configs: configs.clone(),
         fetched_at: "2026-01-19T00:00:00Z".to_string(),
         source_url: cfg.upstream_cart_url.clone(),
+        topology_refreshed_at: Some("2026-01-19T00:00:00Z".to_string()),
+        topology_request_count: 3,
+        topology_status: "success".to_string(),
+        topology_message: None,
     };
 
     catnap::db::upsert_catalog_configs(&db, &configs)
@@ -288,8 +292,70 @@ async fn bootstrap_returns_catalog_and_settings() {
                 .as_str()
                 .is_some_and(|txt| txt.contains("禁止滥用"))
     }));
+    assert_eq!(
+        json["settings"]["catalogRefresh"]["autoIntervalHours"].as_i64(),
+        Some(catnap::defaults::FIXED_CATALOG_TOPOLOGY_REFRESH_INTERVAL_HOURS)
+    );
     assert!(json.get("settings").is_some());
     assert!(json.get("monitoring").is_some());
+}
+
+#[tokio::test]
+async fn put_settings_ignores_catalog_refresh_overrides() {
+    let t = make_app().await;
+    ensure_user_exists(&t, "u_1").await;
+
+    sqlx::query("UPDATE settings SET catalog_refresh_auto_interval_hours = ? WHERE user_id = ?")
+        .bind(48_i64)
+        .bind("u_1")
+        .execute(&t.db)
+        .await
+        .unwrap();
+
+    let bytes = serde_json::to_vec(&serde_json::json!({
+        "poll": { "intervalMinutes": 1, "jitterPct": 0.1 },
+        "siteBaseUrl": null,
+        "catalogRefresh": { "autoIntervalHours": 1 },
+        "monitoringEvents": { "listedEnabled": false, "delistedEnabled": false },
+        "notifications": {
+            "telegram": { "enabled": false, "botToken": null, "target": null },
+            "webPush": { "enabled": false }
+        }
+    }))
+    .unwrap();
+
+    let res = t
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/settings")
+                .header("host", "example.com")
+                .header("x-user", "u_1")
+                .header("origin", "http://example.com")
+                .header("content-type", "application/json")
+                .body(Body::from(bytes))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let bytes = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        json["catalogRefresh"]["autoIntervalHours"].as_i64(),
+        Some(catnap::defaults::FIXED_CATALOG_TOPOLOGY_REFRESH_INTERVAL_HOURS)
+    );
+
+    let row =
+        sqlx::query("SELECT catalog_refresh_auto_interval_hours FROM settings WHERE user_id = ?")
+            .bind("u_1")
+            .fetch_one(&t.db)
+            .await
+            .unwrap();
+    assert_eq!(row.get::<Option<i64>, _>(0), Some(48));
 }
 
 #[tokio::test]

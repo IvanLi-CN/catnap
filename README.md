@@ -7,7 +7,7 @@
 - 监控 `lxc.lazycat.wiki/cart` 的库存变化
 - Telegram 通知
 - Web Push（可选）
-- 采集观测台（`#ops`：全局队列/worker/成功率/推送成功率 + SSE 日志 tail）
+- 采集观测台（`#ops`：全局队列/worker/成功率/cache hit/目录拓扑状态 + SSE 日志 tail）
 - SQLite 持久化（默认）
 
 ## 架构与访问模型
@@ -93,6 +93,7 @@ curl -sS \
 - `CATNAP_LOG_RETENTION_DAYS`：日志保留天数（>= 0），默认 `7`
 - `CATNAP_LOG_RETENTION_MAX_ROWS`：日志最大行数（>= 0），默认 `10000`
 - `CATNAP_OPS_WORKER_CONCURRENCY`：采集 worker 并发数（>= 1），默认 `2`
+- 启动后优先使用本地 DB catalog；目录拓扑（root/fid）按低频复扫，已知 `url_key` 页面由 discovery/poller 渐进轻扫
 - `CATNAP_OPS_SSE_REPLAY_WINDOW_SECONDS`：ops SSE 回放窗口（秒，>= 1），默认 `3600`
 - `CATNAP_OPS_LOG_RETENTION_DAYS`：ops 事件/运行记录保留天数（>= 0），默认 `7`
 - `CATNAP_OPS_LOG_TAIL_LIMIT_DEFAULT`：`/api/ops/state` 默认 `logLimit`，默认 `200`

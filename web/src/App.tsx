@@ -40,6 +40,7 @@ type ApiError = {
 };
 
 export const SETTINGS_TEST_SUCCESS_BUBBLE_MS = 4_000;
+const TOPOLOGY_PROBE_MINUTES = 15;
 
 class ApiHttpError extends Error {
   status: number;
@@ -218,6 +219,7 @@ export type OpsRateBucket = {
   success: number;
   failure: number;
   successRatePct: number;
+  cacheHits: number;
 };
 
 export type OpsSparksResponse = {
@@ -239,7 +241,13 @@ export type OpsStateResponse = {
   serverTime: string;
   range: OpsRange;
   replayWindowSeconds: number;
-  queue: { pending: number; running: number; deduped: number };
+  queue: {
+    pending: number;
+    running: number;
+    deduped: number;
+    oldestWaitSeconds: number | null;
+    reasonCounts: Record<string, number>;
+  };
   workers: Array<{
     workerId: string;
     state: "idle" | "running" | "error";
@@ -259,6 +267,12 @@ export type OpsStateResponse = {
     notify: { telegram?: OpsRateBucket; webPush?: OpsRateBucket };
   };
   sparks: OpsSparksResponse;
+  topology: {
+    status: string;
+    refreshedAt: string | null;
+    requestCount: number;
+    message: string | null;
+  };
   logTail: Array<{
     eventId: number;
     ts: string;
@@ -733,6 +747,13 @@ export function App() {
     if (route !== "monitoring") return;
     void refreshMonitoringSilently();
   }, [hasBootstrap, refreshMonitoringSilently, route]);
+  useEffect(() => {
+    if (!hasBootstrap) return;
+    if (route !== "monitoring") return;
+
+    const id = window.setInterval(() => void refreshMonitoringSilently(), 15_000);
+    return () => window.clearInterval(id);
+  }, [hasBootstrap, refreshMonitoringSilently, route]);
 
   useEffect(() => {
     if (!hasBootstrap) return;
@@ -772,7 +793,7 @@ export function App() {
 
   useEffect(() => {
     if (!hasBootstrap) return;
-    const missingCatalogTopology = catalogCountriesLen === 0 || catalogRegionsLen === 0;
+    const missingCatalogTopology = catalogCountriesLen === 0;
     if (missingCatalogTopology) {
       catalogBackfillPendingRef.current = true;
     }
@@ -835,7 +856,7 @@ export function App() {
           };
         });
 
-        const topologyReady = json.catalog.countries.length > 0 && json.catalog.regions.length > 0;
+        const topologyReady = json.catalog.countries.length > 0;
         const noticesReady = json.catalog.regionNotices.length > 0;
         const reachedAttemptCap = attempts >= topologyRetryLimit;
         if (!topologyReady && !reachedAttemptCap) {
@@ -871,7 +892,7 @@ export function App() {
       cancelled = true;
       if (timeoutId !== null) window.clearTimeout(timeoutId);
     };
-  }, [catalogCountriesLen, catalogRegionsLen, hasBootstrap]);
+  }, [catalogCountriesLen, hasBootstrap]);
 
   useEffect(() => {
     if (!hasBootstrap) return;
@@ -1236,14 +1257,14 @@ export function App() {
     ) : (
       <>
         {isRefreshing ? (
-          <span className="pill">{`全量刷新中（${catalogRefresh?.done ?? 0}/${catalogRefresh?.total || "?"}）`}</span>
+          <span className="pill">{`目录刷新中（${catalogRefresh?.done ?? 0}/${catalogRefresh?.total || "?"}）`}</span>
         ) : null}
         {route === "products" ? (
           <button
             type="button"
             className="pill"
             disabled={loading || isRefreshing}
-            title="强制抓取上游并全量刷新（30s 限流）"
+            title="按低压策略刷新已知目录页（优先 cache hit）"
             onClick={() => void startCatalogRefresh()}
           >
             {refreshButtonText}
@@ -1258,7 +1279,7 @@ export function App() {
                 type="button"
                 className="pill"
                 disabled={isRefreshing}
-                title="强制抓取上游并全量刷新（30s 限流）"
+                title="按低压策略刷新已知目录页（优先 cache hit）"
                 onClick={() => void startCatalogRefresh()}
               >
                 <span className={refreshIconClass} aria-hidden="true">
@@ -2340,8 +2361,6 @@ type SettingsFieldKey =
   | "jitterPct"
   | "siteBaseUrl"
   | "siteAutofill"
-  | "autoRefreshEnabled"
-  | "autoIntervalHours"
   | "listedEnabled"
   | "delistedEnabled"
   | "tgEnabled"
@@ -2361,8 +2380,6 @@ type SettingsDraft = {
   intervalMinutesInput: string;
   jitterPctInput: string;
   siteBaseUrlInput: string;
-  autoRefreshEnabled: boolean;
-  autoIntervalHoursInput: string;
   listedEnabled: boolean;
   delistedEnabled: boolean;
   tgEnabled: boolean;
@@ -2508,12 +2525,6 @@ export function SettingsViewPanel({
   const [siteBaseUrlInput, setSiteBaseUrlInput] = useState<string>(
     bootstrap.settings.siteBaseUrl ?? "",
   );
-  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState<boolean>(
-    bootstrap.settings.catalogRefresh.autoIntervalHours !== null,
-  );
-  const [autoIntervalHoursInput, setAutoIntervalHoursInput] = useState<string>(
-    String(bootstrap.settings.catalogRefresh.autoIntervalHours ?? 6),
-  );
   const [listedEnabled, setListedEnabled] = useState<boolean>(
     bootstrap.settings.monitoringEvents.listedEnabled,
   );
@@ -2615,13 +2626,13 @@ export function SettingsViewPanel({
   const updateAvailable = update?.updateAvailable ?? false;
   const updateMessage = update?.message ?? aboutError;
 
+  const topologyRefreshHours = lastPersisted.catalogRefresh.autoIntervalHours ?? 1;
+
   const buildDraft = useCallback(
     (overrides: Partial<SettingsDraft> = {}): SettingsDraft => ({
       intervalMinutesInput,
       jitterPctInput,
       siteBaseUrlInput,
-      autoRefreshEnabled,
-      autoIntervalHoursInput,
       listedEnabled,
       delistedEnabled,
       tgEnabled,
@@ -2634,8 +2645,6 @@ export function SettingsViewPanel({
       intervalMinutesInput,
       jitterPctInput,
       siteBaseUrlInput,
-      autoRefreshEnabled,
-      autoIntervalHoursInput,
       listedEnabled,
       delistedEnabled,
       tgEnabled,
@@ -2700,16 +2709,7 @@ export function SettingsViewPanel({
           }
         }
       } else {
-        if (!draft.autoRefreshEnabled) {
-          value = null;
-        } else {
-          const parsed = parseStrictInteger(draft.autoIntervalHoursInput);
-          if (parsed === null || parsed < 1 || parsed > 720) {
-            message = "间隔（小时）必须是 1..720 的整数";
-          } else {
-            value = parsed;
-          }
-        }
+        value = null;
       }
 
       setFieldError(field, message);
@@ -2727,19 +2727,15 @@ export function SettingsViewPanel({
       const intervalMinutes = validateDraftField("intervalMinutes", draft, reportInvalid);
       const jitterPct = validateDraftField("jitterPct", draft, reportInvalid);
       const siteBaseUrl = validateDraftField("siteBaseUrl", draft, reportInvalid);
-      const autoIntervalHours = validateDraftField("autoIntervalHours", draft, reportInvalid);
-
       const computedInvalid: SettingsFieldKey[] = [];
       if (!intervalMinutes.valid) computedInvalid.push("intervalMinutes");
       if (!jitterPct.valid) computedInvalid.push("jitterPct");
       if (!siteBaseUrl.valid) computedInvalid.push("siteBaseUrl");
-      if (!autoIntervalHours.valid) computedInvalid.push("autoIntervalHours");
 
       return {
         intervalMinutes,
         jitterPct,
         siteBaseUrl,
-        autoIntervalHours,
         invalidFields: computedInvalid,
       };
     },
@@ -2772,14 +2768,6 @@ export function SettingsViewPanel({
         const value = validated.siteBaseUrl.value as string | null;
         if (value !== next.siteBaseUrl) {
           next.siteBaseUrl = value;
-          changed = true;
-        }
-      }
-
-      if (validated.autoIntervalHours.valid) {
-        const value = validated.autoIntervalHours.value as number | null;
-        if (value !== next.catalogRefresh.autoIntervalHours) {
-          next.catalogRefresh.autoIntervalHours = value;
           changed = true;
         }
       }
@@ -3062,63 +3050,30 @@ export function SettingsViewPanel({
       </div>
 
       <div className="panel-section">
-        <div className="panel-title">全量刷新（Catalog refresh）</div>
-        <div className="panel-subtitle">手动“立即刷新”与系统自动刷新共用</div>
+        <div className="panel-title">目录拓扑复扫（Catalog topology refresh）</div>
+        <div className="panel-subtitle">
+          这项频率改为系统托管，不再单独设置；新区/新地域先做轻探测，再由正式复扫收敛
+        </div>
         <div className="settings-grid">
-          <div>自动全量刷新</div>
+          <div>新区轻探测</div>
           <div className="settings-action-wrap">
-            <button
-              type="button"
-              className={`pill sm center ${autoRefreshEnabled ? "on" : ""}`}
-              style={{ width: "92px" }}
-              onClick={() => {
-                const next = !autoRefreshEnabled;
-                setAutoRefreshEnabled(next);
-                setFieldError("autoRefreshEnabled", null);
-                if (!next) {
-                  setFieldError("autoIntervalHours", null);
-                }
-                void validateDraftField(
-                  "autoIntervalHours",
-                  buildDraft({ autoRefreshEnabled: next }),
-                  false,
-                );
-                void flushAutosaveImmediate({ autoRefreshEnabled: next }, "autoRefreshEnabled");
-              }}
-            >
-              {autoRefreshEnabled ? "启用" : "关闭"}
-            </button>
-            {renderFieldError("autoRefreshEnabled")}
+            <span className="pill sm center on" style={{ width: "108px" }}>
+              {`${TOPOLOGY_PROBE_MINUTES} 分钟`}
+            </span>
           </div>
-          <div className="hint">全局间隔取“所有用户启用值”的最小值</div>
+          <div className="hint">
+            只扫 root + fid，把新国家/新地域尽快纳入后续 5 分钟 discovery 范围
+          </div>
 
-          <div>间隔（小时）</div>
-          <div className="settings-input-wrap">
-            <div className="pill num" style={{ width: "92px" }}>
-              <input
-                type="number"
-                min={1}
-                max={720}
-                disabled={!autoRefreshEnabled}
-                value={autoIntervalHoursInput}
-                onChange={(e) => {
-                  const value = e.target.value;
-                  setAutoIntervalHoursInput(value);
-                  void validateDraftField(
-                    "autoIntervalHours",
-                    buildDraft({ autoIntervalHoursInput: value }),
-                    false,
-                  );
-                  scheduleAutosave({ autoIntervalHoursInput: value }, "autoIntervalHours");
-                }}
-                onBlur={() => {
-                  void validateDraftField("autoIntervalHours", buildDraft(), true);
-                }}
-              />
-            </div>
-            {renderFieldError("autoIntervalHours")}
+          <div>正式拓扑复扫</div>
+          <div className="settings-action-wrap">
+            <span className="pill sm center on" style={{ width: "108px" }}>
+              {`${topologyRefreshHours} 小时`}
+            </span>
           </div>
-          <div className="hint">默认 6；范围 1..720；关闭=设为 null</div>
+          <div className="hint">
+            用于保守收敛拓扑变化与移除目标；已知 URL 的新机发现仍走 5 分钟轻扫
+          </div>
 
           <div>上架监控</div>
           <div className="settings-action-wrap">
@@ -4192,7 +4147,7 @@ export function OpsView({
                   <span className="ops-kpi-unit">待处理</span>
                 </div>
                 <div className="ops-kpi-sub">{`运行中：${snap.queue.running} • 合并：${snap.queue.deduped}`}</div>
-                <div className="ops-kpi-meta">{`更新：${formatClock(snap.serverTime)}${loading ? "（刷新中）" : ""}`}</div>
+                <div className="ops-kpi-meta">{`最老等待：${snap.queue.oldestWaitSeconds ?? 0}s • 更新：${formatClock(snap.serverTime)}${loading ? "（刷新中）" : ""}`}</div>
                 <Sparkline values={snap.sparks.volume} stroke="var(--ops-green)" />
               </div>
 
@@ -4210,7 +4165,7 @@ export function OpsView({
                   <span className="ops-kpi-value">{`${snap.stats.collection.successRatePct.toFixed(1)}%`}</span>
                 </div>
                 <div className="ops-kpi-sub">{`成功：${snap.stats.collection.success} • 失败：${snap.stats.collection.failure}`}</div>
-                <div className="ops-kpi-meta">{`口径：${rangeText}`}</div>
+                <div className="ops-kpi-meta">{`cache hit：${snap.stats.collection.cacheHits} • 口径：${rangeText}`}</div>
                 <Sparkline values={snap.sparks.collectionSuccessRatePct} stroke="var(--ops-blue)" />
               </div>
 
@@ -4254,22 +4209,14 @@ export function OpsView({
                   <span className="ops-dot-ring" aria-hidden="true">
                     <span className="ops-dot orange" />
                   </span>
-                  <span className="ops-kpi-label">采集量</span>
+                  <span className="ops-kpi-label">目录拓扑</span>
                 </div>
                 <div className="ops-kpi-value-row">
-                  <span className="ops-kpi-value">
-                    {formatCompactCount(snap.stats.collection.total)}
-                  </span>
-                  <span className="ops-kpi-unit">任务</span>
+                  <span className="ops-kpi-value">{snap.topology.status || "idle"}</span>
+                  <span className="ops-kpi-unit">状态</span>
                 </div>
-                <div className="ops-kpi-sub">{`速率：${
-                  range === "24h"
-                    ? `${Math.round(snap.stats.collection.total / 24)}/小时`
-                    : range === "7d"
-                      ? `${Math.round(snap.stats.collection.total / 7)}/天`
-                      : `${Math.round(snap.stats.collection.total / 30)}/天`
-                } • 失败：${snap.stats.collection.failure}`}</div>
-                <div className="ops-kpi-meta">{`口径：${rangeText}`}</div>
+                <div className="ops-kpi-sub">{`请求：${snap.topology.requestCount} • 最近：${snap.topology.refreshedAt ? formatClock(snap.topology.refreshedAt) : "—"}`}</div>
+                <div className="ops-kpi-meta">{snap.topology.message ?? `口径：${rangeText}`}</div>
                 <Sparkline values={snap.sparks.volume} stroke="var(--ops-orange)" />
               </div>
             </div>
@@ -4331,6 +4278,7 @@ export function OpsView({
               <section className="ops-block">
                 <div className="ops-block-head">
                   <div className="ops-block-title">队列任务</div>
+                  <div className="ops-block-subtitle muted">{`discovery=${snap.queue.reasonCounts.discovery_due ?? 0} • poller=${snap.queue.reasonCounts.poller_due ?? 0} • manual=${snap.queue.reasonCounts.manual_refresh ?? 0}`}</div>
                 </div>
                 <div className="ops-block-divider" />
                 <div className="ops-tasks">

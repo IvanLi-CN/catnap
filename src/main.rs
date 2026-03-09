@@ -1,7 +1,7 @@
 use catnap::{build_app, RuntimeConfig};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
-use std::{net::SocketAddr, str::FromStr, time::Duration};
-use tracing::{info, warn};
+use std::{net::SocketAddr, str::FromStr};
+use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -21,8 +21,7 @@ async fn main() -> anyhow::Result<()> {
         .await?;
     catnap::db::init_db(&db).await?;
 
-    let catalog = catnap::upstream::CatalogSnapshot::empty(config.upstream_cart_url.clone());
-
+    let catalog = catnap::db::load_catalog_snapshot(&db, &config.upstream_cart_url).await?;
     let catalog = std::sync::Arc::new(tokio::sync::RwLock::new(catalog));
     let ops = catnap::ops::OpsManager::new(config.clone(), db.clone(), catalog.clone());
     ops.start();
@@ -37,52 +36,6 @@ async fn main() -> anyhow::Result<()> {
         ops,
         update_cache,
     };
-
-    tokio::spawn({
-        let state = state.clone();
-        async move {
-            let upstream =
-                match catnap::upstream::UpstreamClient::new(state.config.upstream_cart_url.clone())
-                {
-                    Ok(c) => c,
-                    Err(err) => {
-                        warn!(error = %err, "failed to create upstream client");
-                        return;
-                    }
-                };
-
-            const STARTUP_FETCH_MAX_ATTEMPTS: usize = 8;
-            for attempt in 1..=STARTUP_FETCH_MAX_ATTEMPTS {
-                match upstream.fetch_catalog().await {
-                    Ok(catalog) => {
-                        if let Err(err) =
-                            catnap::db::upsert_catalog_configs(&state.db, &catalog.configs).await
-                        {
-                            warn!(error = %err, "failed to persist upstream catalog");
-                            return;
-                        }
-                        *state.catalog.write().await = catalog;
-                        info!(attempt, "upstream catalog refreshed");
-                        return;
-                    }
-                    Err(err) => {
-                        if attempt >= STARTUP_FETCH_MAX_ATTEMPTS {
-                            warn!(error = %err, attempt, "failed to fetch upstream catalog");
-                            return;
-                        }
-                        let delay_secs = (attempt as u64).saturating_mul(3).min(18);
-                        warn!(
-                            error = %err,
-                            attempt,
-                            next_retry_in_secs = delay_secs,
-                            "failed to fetch upstream catalog; retrying"
-                        );
-                        tokio::time::sleep(Duration::from_secs(delay_secs)).await;
-                    }
-                }
-            }
-        }
-    });
 
     catnap::poller::spawn(state.clone()).await;
 
