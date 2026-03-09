@@ -234,7 +234,7 @@ docker compose up -d --build
 - `type:docs` / `type:skip`：不允许自动发版
 - `type:patch` / `type:minor` / `type:major`：允许自动发版，并按标签 bump 版本号
 
-> 无法关联到 PR 的 `push main`（direct push / 异常合并）默认跳过自动发版（仍会跑 lint/tests）。
+> `release-intent` 优先通过 GitHub `commits/{sha}/pulls` 解析 PR；若 API 返回空集合，仍可对 subject 尾缀严格匹配 ` (#<pr>)` 的 squash merge 启用保守 fallback。若两条路径都无法可靠判定 PR，则继续跳过自动发版（仍会跑 lint/tests）。
 
 ### GHCR images（镜像）
 
@@ -270,7 +270,7 @@ sha256sum -c catnap_<semver>_linux_amd64_gnu.tar.gz.sha256
 
 在 GitHub Actions 手动触发 `workflow_dispatch`：
 
-- ref=`main`：完整发布链路（tag/release/assets/GHCR）；必须提供 `bump_level=major|minor|patch`
+- ref=`main`：完整发布链路（tag/release/assets/GHCR）；必须提供 `bump_level=major|minor|patch`，也作为自动发版漏触发时的补发入口
 - ref=`refs/tags/v<semver>`：重跑/补齐该版本（assets/GHCR）
 - `latest` 更新规则：仅当“当前发布 tag == 仓库最高 stable semver tag”时更新（适用于 main 发布与 backfill）
 - backfill 多 tag 建议按时间顺序执行（例如 `v0.2.0 -> v0.2.1 -> v0.2.2`），最终 `latest` 应指向最高 stable tag

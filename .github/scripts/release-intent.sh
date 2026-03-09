@@ -36,15 +36,16 @@ write_output() {
 }
 
 classify_labels() {
-  local -n _labels_ref="$1"
-  local -n _intent_label_ref="$2"
-  local -n _should_release_ref="$3"
-  local -n _bump_level_ref="$4"
-
+  local labels=("$@")
   local intent_labels=()
   local unknown_type_labels=()
+  local intent_label="none"
+  local should_release="false"
+  local bump_level="none"
+  local label
+  local allowed
 
-  for label in "${_labels_ref[@]:-}"; do
+  for label in "${labels[@]:-}"; do
     if [[ "${label}" == type:* ]]; then
       local is_allowed="false"
       for allowed in "${allowed_intent_labels[@]}"; do
@@ -63,50 +64,64 @@ classify_labels() {
   done
 
   if (( ${#unknown_type_labels[@]} > 0 )); then
-    _intent_label_ref="invalid"
-    _should_release_ref="false"
-    _bump_level_ref="none"
     warn "unknown intent label(s): $(IFS=','; echo "${unknown_type_labels[*]}")"
+    printf 'invalid\nfalse\nnone\n'
     return 0
   fi
 
   if (( ${#intent_labels[@]} != 1 )); then
-    _intent_label_ref="invalid"
-    _should_release_ref="false"
-    _bump_level_ref="none"
     if (( ${#intent_labels[@]} == 0 )); then
       warn "missing intent label (expected exactly one of: $(IFS='|'; echo "${allowed_intent_labels[*]}"))"
     else
       warn "intent labels are mutually exclusive; found: $(IFS=','; echo "${intent_labels[*]}")"
     fi
+    printf 'invalid\nfalse\nnone\n'
     return 0
   fi
 
-  _intent_label_ref="${intent_labels[0]}"
+  intent_label="${intent_labels[0]}"
 
-  case "${_intent_label_ref}" in
+  case "${intent_label}" in
     type:major)
-      _should_release_ref="true"
-      _bump_level_ref="major"
+      should_release="true"
+      bump_level="major"
       ;;
     type:minor)
-      _should_release_ref="true"
-      _bump_level_ref="minor"
+      should_release="true"
+      bump_level="minor"
       ;;
     type:patch)
-      _should_release_ref="true"
-      _bump_level_ref="patch"
+      should_release="true"
+      bump_level="patch"
       ;;
     type:docs|type:skip)
-      _should_release_ref="false"
-      _bump_level_ref="none"
+      should_release="false"
+      bump_level="none"
       ;;
     *)
-      _should_release_ref="false"
-      _bump_level_ref="none"
-      warn "unexpected intent label: ${_intent_label_ref}"
+      should_release="false"
+      bump_level="none"
+      warn "unexpected intent label: ${intent_label}"
       ;;
   esac
+
+  printf '%s\n%s\n%s\n' "${intent_label}" "${should_release}" "${bump_level}"
+}
+
+extract_pr_number_from_commit_subject() {
+  local subject="$1"
+
+  if [[ "${subject}" =~ ^Merge\ pull\ request\ \#([0-9]+)\  ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
+    return 0
+  fi
+
+  if [[ "${subject}" =~ ^.+\ \(\#([0-9]+)\)$ ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
+    return 0
+  fi
+
+  return 1
 }
 
 token="${GITHUB_TOKEN:-}"
@@ -240,7 +255,11 @@ if ! pulls_json="$(
   fi
 fi
 
-mapfile -t pr_numbers < <(
+pr_numbers=()
+while IFS= read -r pr_number_candidate; do
+  [[ -n "${pr_number_candidate}" ]] || continue
+  pr_numbers+=("${pr_number_candidate}")
+done < <(
   PULLS_JSON="${pulls_json}" python3 - <<'PY'
 import json, os
 data = json.loads(os.environ["PULLS_JSON"])
@@ -253,11 +272,13 @@ PY
 
 if (( ${#pr_numbers[@]} == 0 )); then
   # GitHub's commits/{sha}/pulls endpoint may return an empty list for merge commits created by
-  # the "Create a merge commit" strategy, even though the commit subject contains the PR number.
+  # the "Create a merge commit" or squash merge strategy, even though the commit subject still
+  # ends with a trustworthy PR marker. Keep this fallback strict: only accept merge subjects or
+  # squash subjects that end with ` (#<n>)`.
   commit_subject="$(git log -1 --format=%s "${sha}" 2>/dev/null || true)"
-  if [[ "${commit_subject}" =~ ^Merge\ pull\ request\ \#([0-9]+)\  ]]; then
-    pr_number="${BASH_REMATCH[1]}"
-    log "no associated PR via commits API for sha=${sha}; using merge-commit subject fallback pr=${pr_number}"
+  if fallback_pr_number="$(extract_pr_number_from_commit_subject "${commit_subject}")"; then
+    pr_number="${fallback_pr_number}"
+    log "no associated PR via commits API for sha=${sha}; using commit-subject fallback pr=${pr_number}"
   else
     log "no associated PR for sha=${sha}; policy: skip auto release"
     write_output "should_release" "false"
@@ -298,7 +319,11 @@ if ! issue_json="$(
   exit 0
 fi
 
-mapfile -t labels < <(
+labels=()
+while IFS= read -r label; do
+  [[ -n "${label}" ]] || continue
+  labels+=("${label}")
+done < <(
   ISSUE_JSON="${issue_json}" python3 - <<'PY'
 import json, os
 data = json.loads(os.environ["ISSUE_JSON"])
@@ -309,7 +334,14 @@ for l in data.get("labels", []) or []:
 PY
 )
 
-classify_labels labels intent_label should_release bump_level
+classification=()
+while IFS= read -r classification_value; do
+  classification+=("${classification_value}")
+done < <(classify_labels "${labels[@]:-}")
+
+intent_label="${classification[0]:-invalid}"
+should_release="${classification[1]:-false}"
+bump_level="${classification[2]:-none}"
 
 log "sha=${sha} pr=${pr_number} intent_label=${intent_label} should_release=${should_release} bump_level=${bump_level}"
 
