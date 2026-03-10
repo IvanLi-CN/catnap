@@ -164,11 +164,36 @@
 - 需要决策的问题：None（本规格采用“分区优先、全站兜底”去重策略）。
 - 假设（需主人确认）：None。
 
+## Visual Evidence (PR)
+
+- source_type: storybook_canvas
+  target_program: mock-only
+  capture_scope: element
+  sensitive_exclusion: N/A
+  submission_gate: approved
+  story_id_or_title: Pages/ProductsView/PartitionMonitoringFocus
+  state: subscribed-and-unsubscribed-partitions
+  evidence_note: 验证 products 分组头部可以独立显示和切换分区上新状态，且不影响卡片级监控按钮语义。
+  image:
+  ![Products partition monitoring focus](./assets/products-partition-monitoring-focus.png)
+
+- source_type: storybook_canvas
+  target_program: mock-only
+  capture_scope: element
+  sensitive_exclusion: N/A
+  submission_gate: approved
+  story_id_or_title: Pages/SettingsViewPanel/MonitoringEventModes
+  state: split-listed-notification-modes
+  evidence_note: 验证 settings 中已拆分为分区上新机、全站上新机、下架监控三项，并展示区分后的提示文案。
+  image:
+  ![Settings monitoring event modes](./assets/settings-monitoring-event-modes.png)
+
 ## 变更记录（Change log）
 
 - 2026-03-10: 创建规格，冻结分区订阅、双 listed 通知与迁移口径。
 - 2026-03-10: 完成后端分区订阅持久化、通知路由改造、前端 products/settings 交互与全量本地质量门。
 - 2026-03-10: 创建 PR #63，并完成 checks 收敛与 review-loop 复核（无阻塞项）。
+- 2026-03-10: 补充 Storybook 视觉证据并经主人授权纳入 spec / PR 证据链。
 
 ## 参考（References）
 
