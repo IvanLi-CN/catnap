@@ -62,6 +62,31 @@ function ProductsViewDemo() {
           };
         });
       }}
+      onTogglePartition={(countryId, regionId, enabled) => {
+        setBootstrap((prev) => ({
+          ...prev,
+          monitoring: {
+            ...prev.monitoring,
+            enabledPartitions: enabled
+              ? [
+                  ...prev.monitoring.enabledPartitions.filter(
+                    (partition) =>
+                      !(
+                        partition.countryId === countryId &&
+                        (partition.regionId ?? null) === regionId
+                      ),
+                  ),
+                  { countryId, regionId },
+                ]
+              : prev.monitoring.enabledPartitions.filter(
+                  (partition) =>
+                    !(
+                      partition.countryId === countryId && (partition.regionId ?? null) === regionId
+                    ),
+                ),
+          },
+        }));
+      }}
       onOpenOrder={() => {}}
     />
   );

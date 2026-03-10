@@ -126,10 +126,19 @@ pub struct MonitoringPollView {
     pub jitter_pct: f64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct MonitoringPartitionView {
+    pub country_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub region_id: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MonitoringView {
     pub enabled_config_ids: Vec<String>,
+    pub enabled_partitions: Vec<MonitoringPartitionView>,
     pub poll: MonitoringPollView,
 }
 
@@ -152,7 +161,8 @@ pub struct SettingsCatalogRefreshView {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsMonitoringEventsView {
-    pub listed_enabled: bool,
+    pub partition_listed_enabled: bool,
+    pub site_listed_enabled: bool,
     pub delisted_enabled: bool,
 }
 
@@ -236,6 +246,23 @@ pub struct MonitoringToggleResponse {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct MonitoringPartitionToggleRequest {
+    pub country_id: String,
+    pub region_id: Option<String>,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MonitoringPartitionToggleResponse {
+    pub country_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub region_id: Option<String>,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SettingsUpdateRequest {
     pub poll: SettingsPollUpdate,
     pub site_base_url: Option<String>,
@@ -255,7 +282,8 @@ pub struct SettingsCatalogRefreshUpdate {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsMonitoringEventsUpdate {
-    pub listed_enabled: bool,
+    pub partition_listed_enabled: bool,
+    pub site_listed_enabled: bool,
     pub delisted_enabled: bool,
 }
 

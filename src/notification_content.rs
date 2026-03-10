@@ -35,17 +35,23 @@ impl MonitorEventKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LifecycleEventKind {
-    Listed,
+pub enum LifecycleNotificationKind {
+    PartitionListed,
+    SiteListed,
     Delisted,
 }
 
-impl LifecycleEventKind {
+impl LifecycleNotificationKind {
     fn label(self) -> &'static str {
         match self {
-            Self::Listed => "新上架",
+            Self::PartitionListed => "分区上新机",
+            Self::SiteListed => "全站上新机",
             Self::Delisted => "已下架",
         }
+    }
+
+    fn is_listed(self) -> bool {
+        matches!(self, Self::PartitionListed | Self::SiteListed)
     }
 }
 
@@ -143,28 +149,42 @@ pub fn build_monitoring_change_notification(
 }
 
 pub fn build_lifecycle_notification(
-    event: LifecycleEventKind,
+    kind: LifecycleNotificationKind,
     name: &str,
+    partition_label: Option<&str>,
     quantity: i64,
     price: &Money,
     site_base_url: Option<&str>,
 ) -> OutboundNotification {
-    let summary = match event {
-        LifecycleEventKind::Listed => format!("库存 {quantity}｜{}", format_money(price)),
-        LifecycleEventKind::Delisted => {
-            format!("最近状态：库存 {quantity}｜{}", format_money(price))
-        }
+    let summary = if kind.is_listed() {
+        format!("库存 {quantity}｜{}", format_money(price))
+    } else {
+        format!("最近状态：库存 {quantity}｜{}", format_money(price))
     };
 
-    let mut telegram_lines = vec![format!("【{}】{name}", event.label()), summary.clone()];
+    let normalized_partition_label = partition_label
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
+    let mut telegram_lines = vec![format!("【{}】{name}", kind.label())];
+    if let Some(partition_label) = normalized_partition_label {
+        telegram_lines.push(format!("分区：{partition_label}"));
+    }
+    telegram_lines.push(summary.clone());
     if let Some(url) = monitoring_url(site_base_url) {
         telegram_lines.push(format!("查看监控：{url}"));
     }
 
+    let web_push_body = if let Some(partition_label) = normalized_partition_label {
+        format!("{partition_label}｜{name}｜{summary}")
+    } else {
+        format!("{name}｜{summary}")
+    };
+
     OutboundNotification {
         telegram_text: telegram_lines.join("\n"),
-        web_push_title: format!("Catnap · {}", event.label()),
-        web_push_body: format!("{name}｜{summary}"),
+        web_push_title: format!("Catnap · {}", kind.label()),
+        web_push_body,
         web_push_url: "/monitoring".to_string(),
     }
 }
@@ -329,24 +349,52 @@ mod tests {
     }
 
     #[test]
-    fn builds_lifecycle_notification_for_web_push() {
+    fn builds_site_listed_notification_for_web_push() {
         let notification = build_lifecycle_notification(
-            LifecycleEventKind::Listed,
+            LifecycleNotificationKind::SiteListed,
             "芬兰特惠年付 Mini",
+            Some("德国 / 德国特惠"),
             5,
             &money(4.99, "CNY", "year"),
             Some("https://catnap.example/base/"),
         );
 
-        assert_eq!(notification.web_push_title, "Catnap · 新上架");
+        assert_eq!(notification.web_push_title, "Catnap · 全站上新机");
         assert_eq!(
             notification.web_push_body,
-            "芬兰特惠年付 Mini｜库存 5｜¥4.99 / 年"
+            "德国 / 德国特惠｜芬兰特惠年付 Mini｜库存 5｜¥4.99 / 年"
         );
         assert_eq!(notification.web_push_url, "/monitoring");
         assert_eq!(
             notification.telegram_text,
-            "【新上架】芬兰特惠年付 Mini\n库存 5｜¥4.99 / 年\n查看监控：https://catnap.example/base/monitoring"
+            "【全站上新机】芬兰特惠年付 Mini
+分区：德国 / 德国特惠
+库存 5｜¥4.99 / 年
+查看监控：https://catnap.example/base/monitoring"
+        );
+    }
+
+    #[test]
+    fn builds_partition_listed_notification_with_partition_label() {
+        let notification = build_lifecycle_notification(
+            LifecycleNotificationKind::PartitionListed,
+            "德国特惠年付 Mini",
+            Some("德国 / 德国特惠"),
+            2,
+            &money(9.99, "CNY", "year"),
+            None,
+        );
+
+        assert_eq!(notification.web_push_title, "Catnap · 分区上新机");
+        assert_eq!(
+            notification.web_push_body,
+            "德国 / 德国特惠｜德国特惠年付 Mini｜库存 2｜¥9.99 / 年"
+        );
+        assert_eq!(
+            notification.telegram_text,
+            "【分区上新机】德国特惠年付 Mini
+分区：德国 / 德国特惠
+库存 2｜¥9.99 / 年"
         );
     }
 

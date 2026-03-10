@@ -44,6 +44,7 @@ pub fn router(state: AppState) -> Router {
             "/monitoring/configs/:config_id",
             patch(patch_monitoring_config),
         )
+        .route("/monitoring/partitions", patch(patch_monitoring_partition))
         .route("/settings", get(get_settings).put(put_settings))
         .route("/logs", get(get_logs))
         .route("/notifications/telegram/test", post(post_telegram_test))
@@ -567,6 +568,9 @@ async fn get_bootstrap(
     let enabled_config_ids = db::list_enabled_monitoring_config_ids(&state.db, &user_id)
         .await
         .map_err(|_| json_invalid_argument())?;
+    let enabled_partitions = db::list_enabled_monitoring_partitions(&state.db, &user_id)
+        .await
+        .map_err(|_| json_invalid_argument())?;
 
     let configs = db::list_catalog_configs_view(&state.db, &user_id, None, None)
         .await
@@ -577,6 +581,7 @@ async fn get_bootstrap(
     let poll_interval_seconds = settings.poll_interval_minutes * 60;
     let monitoring = MonitoringView {
         enabled_config_ids: enabled_config_ids.clone(),
+        enabled_partitions,
         poll: MonitoringPollView {
             interval_seconds: poll_interval_seconds,
             jitter_pct: settings.poll_jitter_pct,
@@ -764,6 +769,45 @@ async fn patch_monitoring_config(
 
     Ok(Json(MonitoringToggleResponse {
         config_id,
+        enabled: req.enabled,
+    }))
+}
+
+async fn patch_monitoring_partition(
+    State(state): State<AppState>,
+    user: axum::extract::Extension<UserView>,
+    Json(req): Json<MonitoringPartitionToggleRequest>,
+) -> Result<Json<MonitoringPartitionToggleResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let Some(partition) =
+        db::normalize_monitoring_partition(&req.country_id, req.region_id.as_deref())
+    else {
+        return Err(json_invalid_argument());
+    };
+
+    let exists = db::catalog_partition_exists(
+        &state.db,
+        &partition.country_id,
+        partition.region_id.as_deref(),
+    )
+    .await
+    .map_err(|_| json_internal_error())?;
+    if !exists {
+        return Err(json_invalid_argument());
+    }
+
+    let updated = db::set_monitoring_partition_enabled(
+        &state.db,
+        &user.0.id,
+        &partition.country_id,
+        partition.region_id.as_deref(),
+        req.enabled,
+    )
+    .await
+    .map_err(|_| json_invalid_argument())?;
+
+    Ok(Json(MonitoringPartitionToggleResponse {
+        country_id: updated.country_id,
+        region_id: updated.region_id,
         enabled: req.enabled,
     }))
 }

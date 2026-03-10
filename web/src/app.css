@@ -599,6 +599,13 @@ select {
   gap: 10px;
 }
 
+.panel-title-actions {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .panel-title-link {
   width: 22px;
   height: 22px;
