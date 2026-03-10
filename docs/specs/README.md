@@ -26,7 +26,7 @@
 
 | ID   | Title | Status | Spec | Last | Notes |
 |-----:|-------|--------|------|------|-------|
-| 32dfj | 分区级监控与双上新通知 | 部分完成（2/3） | `32dfj-partition-monitoring-new-machine-alerts/SPEC.md` | 2026-03-10 | 已完成实现与本地质量门；待 PR / review 收敛 |
+| 32dfj | 分区级监控与双上新通知 | 已完成 | `32dfj-partition-monitoring-new-machine-alerts/SPEC.md` | 2026-03-10 | PR #63：checks 全绿；review-loop 无阻塞项 |
 | z7myy | CI/CD：补齐漏发版本并修复 squash merge 自动发版识别 | 部分完成（5/6） | `z7myy-release-intent-squash-fallback-backfill/SPEC.md` | 2026-03-09 | `v0.6.0` 已由 run `22850192479` 补发；PR #62 待 checks 通过并合并 |
 | cnduu | 低压优先的上架发现优化 | 已完成 | `cnduu-low-pressure-discovery-refresh/SPEC.md` | 2026-03-08 | 已交付：DB-first 启动、topology refresh、discovery_due、cache-hit 复用与 ops/UI 可观测 |
 | z9x5g | 通知文案优化：简洁告警风格 | 已完成 | `z9x5g-notification-copy-optimization/SPEC.md` | 2026-03-07 | PR #59：通知文案 builder、测试覆盖与 README 示例已完成；待 checks 最终结果 |

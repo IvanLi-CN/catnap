@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 部分完成（2/3）
+- Status: 已完成
 - Created: 2026-03-10
 - Last: 2026-03-10
 
@@ -148,7 +148,7 @@
 
 - [x] M1: 冻结 API / DB 契约并完成规格落盘
 - [x] M2: 完成后端分区订阅持久化、settings 迁移与 listed 通知路由改造
-- [ ] M3: 完成前端 products/settings 交互、测试验证与 PR 收敛（前端交互与测试已完成，PR/review 收敛待进行）
+- [x] M3: 完成前端 products/settings 交互、测试验证与 PR 收敛
 
 ## 方案概述（Approach, high-level）
 
@@ -168,6 +168,7 @@
 
 - 2026-03-10: 创建规格，冻结分区订阅、双 listed 通知与迁移口径。
 - 2026-03-10: 完成后端分区订阅持久化、通知路由改造、前端 products/settings 交互与全量本地质量门。
+- 2026-03-10: 创建 PR #63，并完成 checks 收敛与 review-loop 复核（无阻塞项）。
 
 ## 参考（References）
 
