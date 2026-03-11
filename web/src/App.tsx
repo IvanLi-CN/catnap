@@ -538,6 +538,8 @@ function notificationStatusLabel(status: string): string {
   if (status === "success") return "成功";
   if (status === "error") return "失败";
   if (status === "skipped") return "跳过";
+  if (status === "pending") return "发送中";
+  if (status === "not_sent") return "未发送";
   return status || "未知";
 }
 
