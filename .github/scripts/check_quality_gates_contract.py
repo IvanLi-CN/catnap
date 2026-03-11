@@ -77,18 +77,18 @@ def validate_ci(path: Path) -> None:
     require_text(text, "merge_group:", "ci.yml")
     require_text(text, "checks_requested", "ci.yml")
     require_text(text, "github.event_name == 'merge_group'", "ci.yml")
-    require_text(text, "bootstrap-label-gate:", "ci.yml")
-    require_text(text, "github.event.inputs.pull_number != ''", "ci.yml")
-    require_text(text, "metadata_gate.py label", "ci.yml")
+    forbid_text(text, "bootstrap-label-gate:", "ci.yml")
+    forbid_text(text, "github.event.inputs.pull_number", "ci.yml")
+    forbid_text(text, "metadata_gate.py label", "ci.yml")
     forbid_text(text, "pull_request_target:", "ci.yml")
     forbid_text(text, ".github/scripts/label-gate.sh", "ci.yml")
 
 
 def validate_label_gate(path: Path) -> None:
     text = path.read_text()
-    require(re.search(r"(?m)^\s*pull_request_target:\s*$", text) is not None, "label-gate.yml: must trigger on pull_request_target")
+    require(re.search(r"(?m)^\s*pull_request:\s*$", text) is not None, "label-gate.yml: must trigger on pull_request")
     require(re.search(r"(?m)^\s*merge_group:\s*$", text) is not None, "label-gate.yml: must trigger on merge_group")
-    require(re.search(r"(?m)^\s*pull_request:\s*$", text) is None, "label-gate.yml: must not trigger on pull_request")
+    require(re.search(r"(?m)^\s*pull_request_target:\s*$", text) is None, "label-gate.yml: must not trigger on pull_request_target")
     require_text(text, "metadata_gate.py label", "label-gate.yml")
     require_text(text, "pull_request.base.sha", "label-gate.yml")
     require_text(text, "merge_group.base_sha", "label-gate.yml")
@@ -99,9 +99,10 @@ def validate_label_gate(path: Path) -> None:
 
 def validate_review_policy(path: Path) -> None:
     text = path.read_text()
-    require(re.search(r"(?m)^\s*pull_request_target:\s*$", text) is not None, "review-policy.yml: must trigger on pull_request_target")
+    require(re.search(r"(?m)^\s*pull_request:\s*$", text) is not None, "review-policy.yml: must trigger on pull_request")
     require(re.search(r"(?m)^\s*pull_request_review:\s*$", text) is not None, "review-policy.yml: must trigger on pull_request_review")
     require(re.search(r"(?m)^\s*merge_group:\s*$", text) is not None, "review-policy.yml: must trigger on merge_group")
+    require(re.search(r"(?m)^\s*pull_request_target:\s*$", text) is None, "review-policy.yml: must not trigger on pull_request_target")
     require_text(text, "metadata_gate.py review", "review-policy.yml")
     require_text(text, "pull_request.base.sha", "review-policy.yml")
     require_text(text, "merge_group.base_sha", "review-policy.yml")
