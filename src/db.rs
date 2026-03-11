@@ -12,7 +12,8 @@ pub struct SettingsRow {
     pub site_base_url: Option<String>,
 
     pub catalog_refresh_auto_interval_hours: Option<i64>,
-    pub monitoring_events_listed_enabled: bool,
+    pub monitoring_events_partition_listed_enabled: bool,
+    pub monitoring_events_site_listed_enabled: bool,
     pub monitoring_events_delisted_enabled: bool,
 
     pub telegram_enabled: bool,
@@ -37,7 +38,8 @@ impl SettingsRow {
                 auto_interval_hours: Some(FIXED_CATALOG_TOPOLOGY_REFRESH_INTERVAL_HOURS),
             },
             monitoring_events: SettingsMonitoringEventsView {
-                listed_enabled: self.monitoring_events_listed_enabled,
+                partition_listed_enabled: self.monitoring_events_partition_listed_enabled,
+                site_listed_enabled: self.monitoring_events_site_listed_enabled,
                 delisted_enabled: self.monitoring_events_delisted_enabled,
             },
             notifications: SettingsNotificationsView {
@@ -152,6 +154,17 @@ CREATE TABLE IF NOT EXISTS monitoring_configs (
   PRIMARY KEY (user_id, config_id)
 );
 
+CREATE TABLE IF NOT EXISTS monitoring_partitions (
+  user_id TEXT NOT NULL,
+  partition_key TEXT NOT NULL,
+  country_id TEXT NOT NULL,
+  region_id TEXT NULL,
+  enabled INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (user_id, partition_key)
+);
+
 CREATE TABLE IF NOT EXISTS user_config_archives (
   user_id TEXT NOT NULL,
   config_id TEXT NOT NULL,
@@ -166,6 +179,8 @@ CREATE TABLE IF NOT EXISTS settings (
   site_base_url TEXT NULL,
   catalog_refresh_auto_interval_hours INTEGER NULL,
   monitoring_events_listed_enabled INTEGER NOT NULL DEFAULT 0,
+  monitoring_events_partition_listed_enabled INTEGER NOT NULL DEFAULT 0,
+  monitoring_events_site_listed_enabled INTEGER NOT NULL DEFAULT 0,
   monitoring_events_delisted_enabled INTEGER NOT NULL DEFAULT 0,
   telegram_enabled INTEGER NOT NULL,
   telegram_bot_token TEXT NULL,
@@ -234,6 +249,8 @@ CREATE INDEX IF NOT EXISTS idx_inventory_samples_1m_ts ON inventory_samples_1m (
 CREATE INDEX IF NOT EXISTS idx_catalog_url_cache_last_success_at ON catalog_url_cache (last_success_at DESC, url_key);
 CREATE INDEX IF NOT EXISTS idx_catalog_countries_sort ON catalog_countries (sort_index, id);
 CREATE INDEX IF NOT EXISTS idx_catalog_regions_country_sort ON catalog_regions (country_id, sort_index, id);
+CREATE INDEX IF NOT EXISTS idx_monitoring_partitions_user_enabled_updated_at ON monitoring_partitions (user_id, enabled, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_monitoring_partitions_country_region_enabled ON monitoring_partitions (country_id, region_id, enabled);
 CREATE INDEX IF NOT EXISTS idx_user_config_archives_user_cleaned_at ON user_config_archives (user_id, cleaned_at DESC);
 CREATE INDEX IF NOT EXISTS idx_user_config_archives_config_id ON user_config_archives (config_id);
 
@@ -246,6 +263,9 @@ CREATE INDEX IF NOT EXISTS idx_ops_notify_runs_channel_ts ON ops_notify_runs (ch
     )
     .execute(db)
     .await?;
+
+    let site_listed_column_exists =
+        column_exists(db, "settings", "monitoring_events_site_listed_enabled").await?;
 
     // Best-effort schema updates for older DBs.
     add_column_if_missing(
@@ -307,10 +327,35 @@ CREATE INDEX IF NOT EXISTS idx_ops_notify_runs_channel_ts ON ops_notify_runs (ch
     add_column_if_missing(
         db,
         "settings",
+        "monitoring_events_partition_listed_enabled",
+        "INTEGER NOT NULL DEFAULT 0",
+    )
+    .await?;
+    add_column_if_missing(
+        db,
+        "settings",
+        "monitoring_events_site_listed_enabled",
+        "INTEGER NOT NULL DEFAULT 0",
+    )
+    .await?;
+    add_column_if_missing(
+        db,
+        "settings",
         "monitoring_events_delisted_enabled",
         "INTEGER NOT NULL DEFAULT 0",
     )
     .await?;
+    if !site_listed_column_exists {
+        sqlx::query(
+            r#"
+UPDATE settings
+SET monitoring_events_site_listed_enabled = monitoring_events_listed_enabled
+WHERE monitoring_events_listed_enabled != 0
+"#,
+        )
+        .execute(db)
+        .await?;
+    }
     add_column_if_missing(
         db,
         "ops_task_runs",
@@ -693,6 +738,14 @@ SELECT COALESCE(
     })
 }
 
+async fn column_exists(db: &SqlitePool, table: &str, column: &str) -> anyhow::Result<bool> {
+    let pragma = format!("PRAGMA table_info({table})");
+    let rows = sqlx::query(&pragma).fetch_all(db).await?;
+    Ok(rows
+        .into_iter()
+        .any(|row| row.get::<String, _>(1).trim() == column))
+}
+
 async fn add_column_if_missing(
     db: &SqlitePool,
     table: &str,
@@ -755,6 +808,8 @@ pub async fn ensure_user(
             site_base_url,
             catalog_refresh_auto_interval_hours,
             monitoring_events_listed_enabled,
+            monitoring_events_partition_listed_enabled,
+            monitoring_events_site_listed_enabled,
             monitoring_events_delisted_enabled,
             telegram_enabled,
             telegram_bot_token,
@@ -762,7 +817,7 @@ pub async fn ensure_user(
             web_push_enabled,
             created_at,
             updated_at
-        ) VALUES (?, ?, ?, NULL, ?, 0, 0, 0, NULL, NULL, 0, ?, ?)"#,
+        ) VALUES (?, ?, ?, NULL, ?, 0, 0, 0, 0, 0, NULL, NULL, 0, ?, ?)"#,
     )
     .bind(user_id)
     .bind(cfg.default_poll_interval_minutes)
@@ -783,7 +838,8 @@ pub async fn get_settings(db: &SqlitePool, user_id: &str) -> anyhow::Result<Sett
             poll_jitter_pct,
             site_base_url,
             catalog_refresh_auto_interval_hours,
-            monitoring_events_listed_enabled,
+            monitoring_events_partition_listed_enabled,
+            monitoring_events_site_listed_enabled,
             monitoring_events_delisted_enabled,
             telegram_enabled,
             telegram_bot_token,
@@ -803,14 +859,15 @@ pub async fn get_settings(db: &SqlitePool, user_id: &str) -> anyhow::Result<Sett
         poll_jitter_pct: row.get::<f64, _>(1),
         site_base_url: row.get::<Option<String>, _>(2),
         catalog_refresh_auto_interval_hours: row.get::<Option<i64>, _>(3),
-        monitoring_events_listed_enabled: row.get::<i64, _>(4) != 0,
-        monitoring_events_delisted_enabled: row.get::<i64, _>(5) != 0,
-        telegram_enabled: row.get::<i64, _>(6) != 0,
-        telegram_bot_token: row.get::<Option<String>, _>(7),
-        telegram_target: row.get::<Option<String>, _>(8),
-        web_push_enabled: row.get::<i64, _>(9) != 0,
-        created_at: row.get::<String, _>(10),
-        updated_at: row.get::<String, _>(11),
+        monitoring_events_partition_listed_enabled: row.get::<i64, _>(4) != 0,
+        monitoring_events_site_listed_enabled: row.get::<i64, _>(5) != 0,
+        monitoring_events_delisted_enabled: row.get::<i64, _>(6) != 0,
+        telegram_enabled: row.get::<i64, _>(7) != 0,
+        telegram_bot_token: row.get::<Option<String>, _>(8),
+        telegram_target: row.get::<Option<String>, _>(9),
+        web_push_enabled: row.get::<i64, _>(10) != 0,
+        created_at: row.get::<String, _>(11),
+        updated_at: row.get::<String, _>(12),
     })
 }
 
@@ -824,7 +881,8 @@ pub async fn update_settings(
     let existing = get_settings(db, user_id).await?;
     let existing_bot_token = existing.telegram_bot_token;
     let existing_target = existing.telegram_target;
-    let existing_listed_enabled = existing.monitoring_events_listed_enabled;
+    let existing_partition_listed_enabled = existing.monitoring_events_partition_listed_enabled;
+    let existing_site_listed_enabled = existing.monitoring_events_site_listed_enabled;
     let existing_delisted_enabled = existing.monitoring_events_delisted_enabled;
 
     let telegram_bot_token = req
@@ -843,11 +901,16 @@ pub async fn update_settings(
         .or(existing_target);
 
     let auto_interval_hours = existing.catalog_refresh_auto_interval_hours;
-    let listed_enabled = req
+    let partition_listed_enabled = req
         .monitoring_events
         .as_ref()
-        .map(|v| v.listed_enabled)
-        .unwrap_or(existing_listed_enabled);
+        .map(|v| v.partition_listed_enabled)
+        .unwrap_or(existing_partition_listed_enabled);
+    let site_listed_enabled = req
+        .monitoring_events
+        .as_ref()
+        .map(|v| v.site_listed_enabled)
+        .unwrap_or(existing_site_listed_enabled);
     let delisted_enabled = req
         .monitoring_events
         .as_ref()
@@ -860,7 +923,8 @@ pub async fn update_settings(
             poll_jitter_pct = ?,
             site_base_url = ?,
             catalog_refresh_auto_interval_hours = ?,
-            monitoring_events_listed_enabled = ?,
+            monitoring_events_partition_listed_enabled = ?,
+            monitoring_events_site_listed_enabled = ?,
             monitoring_events_delisted_enabled = ?,
             telegram_enabled = ?,
             telegram_bot_token = ?,
@@ -877,7 +941,8 @@ pub async fn update_settings(
             .filter(|v| !v.is_empty()),
     )
     .bind(auto_interval_hours)
-    .bind(if listed_enabled { 1 } else { 0 })
+    .bind(if partition_listed_enabled { 1 } else { 0 })
+    .bind(if site_listed_enabled { 1 } else { 0 })
     .bind(if delisted_enabled { 1 } else { 0 })
     .bind(if req.notifications.telegram.enabled {
         1
@@ -935,6 +1000,155 @@ ON CONFLICT(user_id, config_id) DO UPDATE SET
     .execute(db)
     .await?;
     Ok(())
+}
+
+pub fn monitoring_partition_key(country_id: &str, region_id: Option<&str>) -> String {
+    format!("{}::{}", country_id.trim(), region_id.unwrap_or("").trim())
+}
+
+pub fn normalize_monitoring_partition(
+    country_id: &str,
+    region_id: Option<&str>,
+) -> Option<MonitoringPartitionView> {
+    let country_id = country_id.trim();
+    if country_id.is_empty() {
+        return None;
+    }
+
+    let region_id = region_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(std::string::ToString::to_string);
+
+    Some(MonitoringPartitionView {
+        country_id: country_id.to_string(),
+        region_id,
+    })
+}
+
+pub async fn catalog_partition_exists(
+    db: &SqlitePool,
+    country_id: &str,
+    region_id: Option<&str>,
+) -> anyhow::Result<bool> {
+    let country_id = country_id.trim();
+    if country_id.is_empty() {
+        return Ok(false);
+    }
+
+    let region_id = region_id.map(str::trim).filter(|value| !value.is_empty());
+    let row = if let Some(region_id) = region_id {
+        sqlx::query(
+            r#"
+SELECT 1
+FROM catalog_regions
+WHERE country_id = ? AND id = ?
+UNION
+SELECT 1
+FROM catalog_configs
+WHERE country_id = ? AND region_id = ?
+LIMIT 1
+"#,
+        )
+        .bind(country_id)
+        .bind(region_id)
+        .bind(country_id)
+        .bind(region_id)
+        .fetch_optional(db)
+        .await?
+    } else {
+        sqlx::query(
+            r#"
+SELECT 1
+FROM catalog_countries
+WHERE id = ?
+UNION
+SELECT 1
+FROM catalog_configs
+WHERE country_id = ? AND (region_id IS NULL OR TRIM(region_id) = '')
+LIMIT 1
+"#,
+        )
+        .bind(country_id)
+        .bind(country_id)
+        .fetch_optional(db)
+        .await?
+    };
+    Ok(row.is_some())
+}
+
+pub async fn list_enabled_monitoring_partitions(
+    db: &SqlitePool,
+    user_id: &str,
+) -> anyhow::Result<Vec<MonitoringPartitionView>> {
+    let rows = sqlx::query(
+        r#"
+SELECT country_id, region_id
+FROM monitoring_partitions
+WHERE user_id = ? AND enabled = 1
+ORDER BY country_id ASC, region_id ASC, partition_key ASC
+"#,
+    )
+    .bind(user_id)
+    .fetch_all(db)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .filter_map(|row| {
+            normalize_monitoring_partition(
+                &row.get::<String, _>(0),
+                row.get::<Option<String>, _>(1).as_deref(),
+            )
+        })
+        .collect())
+}
+
+pub async fn set_monitoring_partition_enabled(
+    db: &SqlitePool,
+    user_id: &str,
+    country_id: &str,
+    region_id: Option<&str>,
+    enabled: bool,
+) -> anyhow::Result<MonitoringPartitionView> {
+    let partition = normalize_monitoring_partition(country_id, region_id)
+        .ok_or_else(|| anyhow::anyhow!("invalid monitoring partition"))?;
+    let now = now_rfc3339();
+    let partition_key =
+        monitoring_partition_key(&partition.country_id, partition.region_id.as_deref());
+    sqlx::query(
+        r#"
+INSERT INTO monitoring_partitions (
+  user_id,
+  partition_key,
+  country_id,
+  region_id,
+  enabled,
+  created_at,
+  updated_at
+)
+VALUES (?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(user_id, partition_key) DO UPDATE SET
+  enabled = excluded.enabled,
+  country_id = excluded.country_id,
+  region_id = excluded.region_id,
+  updated_at = excluded.updated_at
+"#,
+    )
+    .bind(user_id)
+    .bind(partition_key)
+    .bind(&partition.country_id)
+    .bind(partition.region_id.as_deref())
+    .bind(if enabled { 1 } else { 0 })
+    .bind(&now)
+    .bind(&now)
+    .execute(db)
+    .await?;
+
+    Ok(MonitoringPartitionView {
+        country_id: partition.country_id,
+        region_id: partition.region_id,
+    })
 }
 
 fn monitor_supported_for_country(country_id: &str) -> bool {
