@@ -1991,45 +1991,151 @@ export function ProductsView({
       groups: RegionGroup[];
     };
 
-    const byCountry = new Map<string, CountryGroup & { groupsByKey: Map<string, RegionGroup> }>();
+    type MutableCountryGroup = CountryGroup & {
+      groupsByKey: Map<string, RegionGroup>;
+    };
+
+    const byCountry = new Map<string, MutableCountryGroup>();
+    const q = search.trim().toLowerCase();
+    const matchesSearch = (...values: Array<string | null | undefined>) =>
+      !q || values.some((value) => value?.toLowerCase().includes(q));
+    const matchesCountryFilter = (countryId: string) =>
+      countryFilter === "all" || countryId === countryFilter;
+    const matchesRegionFilter = (regionId: string | null) =>
+      regionFilter === "all" || (regionId ?? "") === regionFilter;
+
+    const ensureCountry = (countryId: string) => {
+      let country = byCountry.get(countryId);
+      if (country) {
+        return country;
+      }
+
+      const countryName = countriesById.get(countryId)?.name ?? countryId;
+      const countryKey = buildPartitionKey(countryId, null);
+      country = {
+        countryId,
+        countryName,
+        isCloud: countryName.includes("云服务器"),
+        countryMonitorEnabled: enabledPartitionKeys.has(countryKey),
+        countryNotice: groupNoticeByKey.get(countryKey) ?? null,
+        groups: [],
+        groupsByKey: new Map(),
+      };
+      byCountry.set(countryId, country);
+      return country;
+    };
+
+    const ensureRegionGroup = (
+      country: MutableCountryGroup,
+      regionId: string | null,
+      title: string,
+      sortLabel: string,
+      showPartitionToggle: boolean,
+    ) => {
+      const groupKey = buildPartitionKey(country.countryId, regionId);
+      let regionGroup = country.groupsByKey.get(groupKey);
+      if (regionGroup) {
+        return regionGroup;
+      }
+
+      regionGroup = {
+        key: groupKey,
+        regionId,
+        title,
+        partitionEnabled: regionId ? enabledPartitionKeys.has(groupKey) : false,
+        showPartitionToggle,
+        notice: groupNoticeByKey.get(groupKey) ?? null,
+        configs: [],
+        sortLabel,
+      };
+      country.groupsByKey.set(groupKey, regionGroup);
+      country.groups.push(regionGroup);
+      return regionGroup;
+    };
 
     for (const cfg of filtered) {
-      const countryName = countriesById.get(cfg.countryId)?.name ?? cfg.countryId;
-      const isCloud = countryName.includes("云服务器");
-      const countryKey = buildPartitionKey(cfg.countryId, null);
-      let country = byCountry.get(cfg.countryId);
-      if (!country) {
-        country = {
-          countryId: cfg.countryId,
-          countryName,
-          isCloud,
-          countryMonitorEnabled: enabledPartitionKeys.has(countryKey),
-          countryNotice: groupNoticeByKey.get(countryKey) ?? null,
-          groups: [],
-          groupsByKey: new Map(),
-        };
-        byCountry.set(cfg.countryId, country);
+      const country = ensureCountry(cfg.countryId);
+      const region = cfg.regionId ? regionsById.get(cfg.regionId) : null;
+      const regionLabel = cfg.regionId ? (region?.name ?? cfg.regionId) : "默认可用区";
+      const regionGroup = ensureRegionGroup(
+        country,
+        cfg.regionId,
+        regionLabel,
+        cfg.regionId ? `${regionLabel}::${region?.locationName ?? ""}` : "",
+        cfg.regionId !== null,
+      );
+      regionGroup.configs.push(cfg);
+    }
+
+    for (const country of bootstrap.catalog.countries) {
+      if (!matchesCountryFilter(country.id)) {
+        continue;
       }
 
-      const groupKey = buildPartitionKey(cfg.countryId, cfg.regionId);
-      let regionGroup = country.groupsByKey.get(groupKey);
-      if (!regionGroup) {
-        const region = cfg.regionId ? regionsById.get(cfg.regionId) : null;
-        const regionLabel = cfg.regionId ? (region?.name ?? cfg.regionId) : "默认可用区";
-        regionGroup = {
-          key: groupKey,
-          regionId: cfg.regionId,
-          title: regionLabel,
-          partitionEnabled: enabledPartitionKeys.has(groupKey),
-          showPartitionToggle: cfg.regionId !== null,
-          notice: groupNoticeByKey.get(groupKey) ?? null,
-          configs: [],
-          sortLabel: cfg.regionId ? `${regionLabel}::${region?.locationName ?? ""}` : "",
-        };
-        country.groupsByKey.set(groupKey, regionGroup);
-        country.groups.push(regionGroup);
+      const topologyRegions = bootstrap.catalog.regions.filter(
+        (region) => region.countryId === country.id,
+      );
+      const countryMonitorEnabled = enabledPartitionKeys.has(buildPartitionKey(country.id, null));
+      const monitoredTopologyRegionIds = topologyRegions.filter((region) =>
+        enabledPartitionKeys.has(buildPartitionKey(country.id, region.id)),
+      );
+      const countryMatchesSearch = matchesSearch(country.name);
+      const visibleTopologyRegions = topologyRegions.filter((region) => {
+        if (!matchesRegionFilter(region.id)) {
+          return false;
+        }
+        if (onlyMonitored && !enabledPartitionKeys.has(buildPartitionKey(country.id, region.id))) {
+          return false;
+        }
+        if (!q) {
+          return true;
+        }
+        return countryMatchesSearch || matchesSearch(region.name, region.locationName ?? "");
+      });
+
+      const hasVisibleTopologyScopes = visibleTopologyRegions.length > 0;
+      const shouldIncludeCountry =
+        byCountry.has(country.id) ||
+        countryMonitorEnabled ||
+        monitoredTopologyRegionIds.length > 0 ||
+        ((regionFilter === "all" || matchesRegionFilter(null)) &&
+          !q &&
+          topologyRegions.length === 0) ||
+        hasVisibleTopologyScopes ||
+        countryMatchesSearch;
+
+      if (!shouldIncludeCountry) {
+        continue;
       }
-      regionGroup.configs.push(cfg);
+      if (
+        onlyMonitored &&
+        !byCountry.has(country.id) &&
+        !countryMonitorEnabled &&
+        monitoredTopologyRegionIds.length === 0
+      ) {
+        continue;
+      }
+      if (q && !byCountry.has(country.id) && !countryMatchesSearch && !hasVisibleTopologyScopes) {
+        continue;
+      }
+      if (
+        !matchesRegionFilter(null) &&
+        topologyRegions.length === 0 &&
+        !byCountry.has(country.id)
+      ) {
+        continue;
+      }
+
+      const countryEntry = ensureCountry(country.id);
+      for (const region of visibleTopologyRegions) {
+        ensureRegionGroup(
+          countryEntry,
+          region.id,
+          region.name,
+          `${region.name}::${region.locationName ?? ""}`,
+          true,
+        );
+      }
     }
 
     const out = Array.from(byCountry.values()).map((country) => {
@@ -2055,7 +2161,19 @@ export function ProductsView({
     });
 
     return out;
-  }, [filtered, countriesById, enabledPartitionKeys, groupNoticeByKey, regionsById]);
+  }, [
+    bootstrap.catalog.countries,
+    bootstrap.catalog.regions,
+    countriesById,
+    countryFilter,
+    enabledPartitionKeys,
+    filtered,
+    groupNoticeByKey,
+    onlyMonitored,
+    regionFilter,
+    regionsById,
+    search,
+  ]);
 
   const visibleIds = useMemo(() => filtered.map((c) => c.id), [filtered]);
   const { window: historyWindow, byId: historyById } = useInventoryHistory(
@@ -2211,6 +2329,9 @@ ${countryCatalogLink}`}
             {country.countryNotice ? (
               <div className="panel-subtitle group-notice">{country.countryNotice}</div>
             ) : null}
+            {country.groups.length === 0 ? (
+              <div className="product-country-empty">当前暂无可用区与套餐。</div>
+            ) : null}
 
             {country.groups.map((group, index) => (
               <div
@@ -2243,20 +2364,24 @@ ${countryCatalogLink}`}
                   <div className="panel-subtitle group-notice">{group.notice}</div>
                 ) : null}
                 <div className="divider-bleed" />
-                <div className="grid">
-                  {group.configs.map((cfg) => (
-                    <ProductCard
-                      cfg={cfg}
-                      countriesById={countriesById}
-                      key={cfg.id}
-                      orderLink={buildOrderLink(orderBaseUrl, cfg)}
-                      onOpenOrder={onOpenOrder}
-                      onToggle={onToggle}
-                      historyWindow={historyWindow}
-                      historyPoints={historyById.get(cfg.id)}
-                    />
-                  ))}
-                </div>
+                {group.configs.length === 0 ? (
+                  <div className="product-region-empty">当前暂无套餐。</div>
+                ) : (
+                  <div className="grid">
+                    {group.configs.map((cfg) => (
+                      <ProductCard
+                        cfg={cfg}
+                        countriesById={countriesById}
+                        key={cfg.id}
+                        orderLink={buildOrderLink(orderBaseUrl, cfg)}
+                        onOpenOrder={onOpenOrder}
+                        onToggle={onToggle}
+                        historyWindow={historyWindow}
+                        historyPoints={historyById.get(cfg.id)}
+                      />
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
           </div>

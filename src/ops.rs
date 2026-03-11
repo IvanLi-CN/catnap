@@ -1689,6 +1689,9 @@ VALUES (?, ?, ?, NULL, 0, 'fetch', NULL, ?, 0)
         if applied.listed_ids.is_empty() && applied.delisted_ids.is_empty() {
             return Ok(());
         }
+        if key.gid.is_none() {
+            return Ok(());
+        }
 
         let partition_key = crate::db::monitoring_partition_key(&key.fid, key.gid.as_deref());
         let partition_label =
@@ -2666,6 +2669,95 @@ WHERE user_id = ?
         assert_eq!(rows[0].get::<String, _>(1), "catalog.config.added");
         assert_eq!(rows[1].get::<String, _>(0), "u_partition_only");
         assert_eq!(rows[1].get::<String, _>(1), "catalog.config.removed");
+    }
+
+    #[tokio::test]
+    async fn config_lifecycle_notifications_skip_country_scope_when_region_is_absent() {
+        let (ops, db) = build_ops_manager("https://example.com/cart".to_string()).await;
+
+        crate::db::replace_catalog_topology(
+            &db,
+            "https://example.com/cart",
+            &[crate::models::Country {
+                id: "us".to_string(),
+                name: "美国".to_string(),
+            }],
+            &[],
+        )
+        .await
+        .unwrap();
+        crate::db::upsert_catalog_configs(
+            &db,
+            &[crate::upstream::ConfigBase {
+                id: "lc:us:default:test".to_string(),
+                country_id: "us".to_string(),
+                region_id: None,
+                name: "VPS • 4C/8G（国家默认）".to_string(),
+                specs: vec![],
+                price: crate::models::Money {
+                    amount: 29.99,
+                    currency: "CNY".to_string(),
+                    period: "month".to_string(),
+                },
+                inventory: crate::models::Inventory {
+                    status: "in_stock".to_string(),
+                    quantity: 7,
+                    checked_at: "2026-03-10T00:00:00Z".to_string(),
+                },
+                digest: "digest-us-default".to_string(),
+                monitor_supported: true,
+                source_pid: Some("us-default".to_string()),
+                source_fid: Some("us".to_string()),
+                source_gid: None,
+            }],
+        )
+        .await
+        .unwrap();
+
+        crate::db::ensure_user(&db, &ops.inner.cfg, "u_country_scope")
+            .await
+            .unwrap();
+        sqlx::query(
+            r#"
+UPDATE settings
+SET monitoring_events_partition_catalog_change_enabled = 1,
+    monitoring_events_region_partition_change_enabled = 0,
+    monitoring_events_site_region_change_enabled = 0,
+    telegram_enabled = 0,
+    web_push_enabled = 0
+WHERE user_id = ?
+"#,
+        )
+        .bind("u_country_scope")
+        .execute(&db)
+        .await
+        .unwrap();
+        crate::db::set_monitoring_partition_enabled(&db, "u_country_scope", "us", None, true)
+            .await
+            .unwrap();
+
+        ops.notify_lifecycle_events(
+            77,
+            &crate::db::ApplyCatalogUrlResult {
+                listed_ids: vec!["lc:us:default:test".to_string()],
+                delisted_ids: vec!["lc:us:default:test".to_string()],
+                fetched_at: "2026-03-10T00:00:00Z".to_string(),
+            },
+            &TaskKey {
+                fid: "us".to_string(),
+                gid: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let count = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM event_logs WHERE user_id = 'u_country_scope' AND scope LIKE 'catalog.config.%'",
+        )
+        .fetch_one(&db)
+        .await
+        .unwrap();
+        assert_eq!(count, 0);
     }
 
     #[tokio::test]

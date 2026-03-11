@@ -417,11 +417,8 @@ SET monitoring_events_region_partition_change_enabled = 0
         sqlx::query(
             r#"
 UPDATE settings
-SET monitoring_events_site_region_change_enabled = CASE
-    WHEN monitoring_events_site_listed_enabled != 0 THEN monitoring_events_site_listed_enabled
-    ELSE monitoring_events_listed_enabled
-END
-WHERE monitoring_events_site_listed_enabled != 0 OR monitoring_events_listed_enabled != 0
+SET monitoring_events_site_region_change_enabled = monitoring_events_site_listed_enabled
+WHERE monitoring_events_site_listed_enabled != 0
 "#,
         )
         .execute(db)

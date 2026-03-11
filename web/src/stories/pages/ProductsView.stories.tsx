@@ -61,6 +61,27 @@ function buildPartitionMonitoringBootstrap(): BootstrapResponse {
   return bootstrap;
 }
 
+function buildTopologyOnlyBootstrap(): BootstrapResponse {
+  const bootstrap = cloneBootstrap();
+
+  bootstrap.catalog.countries = [
+    ...bootstrap.catalog.countries,
+    { id: "nl", name: "荷兰" },
+    { id: "sg", name: "新加坡" },
+  ];
+  bootstrap.catalog.regions = [
+    ...bootstrap.catalog.regions,
+    {
+      id: "nl-ams",
+      countryId: "nl",
+      name: "阿姆斯特丹",
+      locationName: "NL-West",
+    },
+  ];
+
+  return bootstrap;
+}
+
 async function findPanelSection(canvasElement: HTMLElement, title: string) {
   await within(canvasElement).findByTestId("page-products");
   const heading = Array.from(canvasElement.querySelectorAll(".panel-section .panel-title")).find(
@@ -90,8 +111,20 @@ function ProductsViewDemo({ bootstrap: initialBootstrap = demoBootstrap }: DemoP
     cloneBootstrap(initialBootstrap),
   );
   const [archiveFilterMode, setArchiveFilterMode] = useState<ArchiveFilterMode>("active");
-  const countries = useMemo(() => countriesById(), []);
-  const regions = useMemo(() => regionsById(), []);
+  const countries = useMemo(() => {
+    const next = countriesById();
+    for (const country of bootstrap.catalog.countries) {
+      next.set(country.id, country);
+    }
+    return next;
+  }, [bootstrap.catalog.countries]);
+  const regions = useMemo(() => {
+    const next = regionsById();
+    for (const region of bootstrap.catalog.regions) {
+      next.set(region.id, region);
+    }
+    return next;
+  }, [bootstrap.catalog.regions]);
 
   return (
     <ProductsView
@@ -205,6 +238,27 @@ export const PartitionMonitoringFocus: Story = {
     await userEvent.click(enabledToggle);
     expect(await within(osakaBlock).findByRole("button", { name: "可用区监控：关" })).toBeVisible();
     expect(within(osakaBlock).getAllByText("监控：关")).toHaveLength(2);
+  },
+};
+
+export const TopologyOnlyScopes: Story = {
+  args: {
+    bootstrap: buildTopologyOnlyBootstrap(),
+  },
+  play: async ({ canvasElement }) => {
+    const [countrySelect] = within(canvasElement as HTMLElement).getAllByRole("combobox");
+
+    await userEvent.selectOptions(countrySelect, "nl");
+    const netherlandsSection = await findPanelSection(canvasElement as HTMLElement, "荷兰");
+    const amsterdamBlock = await findProductRegionBlock(canvasElement as HTMLElement, "阿姆斯特丹");
+    expect(within(netherlandsSection).getByRole("button", { name: "地区监控：关" })).toBeVisible();
+    expect(within(amsterdamBlock).getByRole("button", { name: "可用区监控：关" })).toBeVisible();
+    expect(within(amsterdamBlock).getByText("当前暂无套餐。")).toBeVisible();
+
+    await userEvent.selectOptions(countrySelect, "sg");
+    const singaporeSection = await findPanelSection(canvasElement as HTMLElement, "新加坡");
+    expect(within(singaporeSection).getByRole("button", { name: "地区监控：关" })).toBeVisible();
+    expect(within(singaporeSection).getByText("当前暂无可用区与套餐。")).toBeVisible();
   },
 };
 

@@ -663,6 +663,12 @@ select {
   letter-spacing: 0.01em;
 }
 
+.product-country-empty,
+.product-region-empty {
+  padding: 8px 0 2px;
+  color: var(--muted);
+}
+
 .muted {
   color: var(--muted);
 }
