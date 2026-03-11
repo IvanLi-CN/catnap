@@ -1314,7 +1314,10 @@ VALUES (?, ?, ?, NULL, 0, 'fetch', NULL, ?, 0)
                 || !applied.listed_pending_zero_stock_ids.is_empty()
                 || !applied.delisted_ids.is_empty())
         {
-            if let Err(err) = self.notify_lifecycle_events(run_id, &applied, key).await {
+            if let Err(err) = self
+                .notify_lifecycle_events(run_id, &reason_counts, &applied, key)
+                .await
+            {
                 warn!(error = %err, "lifecycle notify failed");
             }
         }
@@ -1335,6 +1338,7 @@ VALUES (?, ?, ?, NULL, 0, 'fetch', NULL, ?, 0)
     async fn notify_lifecycle_events(
         &self,
         run_id: i64,
+        reason_counts: &HashMap<String, i64>,
         applied: &crate::db::ApplyCatalogUrlResult,
         key: &TaskKey,
     ) -> anyhow::Result<()> {
@@ -1376,10 +1380,6 @@ WHERE monitoring_events_delisted_enabled = 1
             )
             .fetch_all(&self.inner.db)
             .await?;
-        }
-
-        if targets_listed.is_empty() && targets_delisted.is_empty() {
-            return Ok(());
         }
 
         async fn load_configs(
@@ -1456,6 +1456,31 @@ WHERE user_id = ?
         let listed_pending =
             load_configs(&self.inner.db, &applied.listed_pending_zero_stock_ids).await?;
         let delisted = load_configs(&self.inner.db, &applied.delisted_ids).await?;
+        let allow_monitored_restock_fallback = !reason_counts.contains_key("poller_due");
+
+        for (id, name, price, qty) in listed_pending.iter() {
+            let msg = format!(
+                "[listed-pending-stock] {name} ({id}) qty={qty} price={} waiting_for_stock",
+                price.amount
+            );
+            let _ = self
+                .log(
+                    "info",
+                    "catalog.listed.pending_stock",
+                    &msg,
+                    Some(serde_json::json!({
+                        "runId": run_id,
+                        "fid": key.fid.clone(),
+                        "gid": key.gid.clone(),
+                        "configId": id,
+                    })),
+                )
+                .await;
+        }
+
+        if targets_listed.is_empty() && targets_delisted.is_empty() {
+            return Ok(());
+        }
 
         for row in targets_listed {
             let user_id = row.get::<String, _>(0);
@@ -1483,18 +1508,113 @@ WHERE user_id = ?
                     Some(serde_json::json!({ "fid": key.fid.clone(), "gid": key.gid.clone() })),
                 )
                 .await;
-                let _ = self
-                    .log(
-                        "info",
-                        "catalog.listed.pending_stock",
-                        &msg,
-                        Some(serde_json::json!({ "runId": run_id, "userId": user_id })),
-                    )
-                    .await;
             }
 
             for (id, name, price, qty) in listed.iter() {
                 if monitored_ids.contains(id) {
+                    if allow_monitored_restock_fallback {
+                        let notification =
+                            notification_content::build_monitoring_change_notification(
+                                name,
+                                &notification_content::MonitoringSnapshot {
+                                    inventory_quantity: 0,
+                                    price,
+                                    digest: "lifecycle-listed-pending",
+                                },
+                                &notification_content::MonitoringSnapshot {
+                                    inventory_quantity: *qty,
+                                    price,
+                                    digest: "lifecycle-listed-pending",
+                                },
+                                site_base_url.as_deref(),
+                            )
+                            .expect("synthetic restock notification should exist");
+                        let msg = format!(
+                            "[restock] {name} ({id}) qty={qty} price={} {}",
+                            price.amount,
+                            site_base_url.clone().unwrap_or_default()
+                        );
+                        let log_meta = serde_json::json!({
+                            "runId": run_id,
+                            "fid": key.fid.clone(),
+                            "gid": key.gid.clone(),
+                            "configId": id,
+                            "events": ["restock"],
+                            "lifecycleFallback": true,
+                        });
+                        let _ = crate::db::insert_log(
+                            &self.inner.db,
+                            Some(&user_id),
+                            "info",
+                            "poll",
+                            &msg,
+                            Some(log_meta.clone()),
+                        )
+                        .await;
+                        let _ = self
+                            .log(
+                                "info",
+                                "poll.result",
+                                &msg,
+                                Some(serde_json::json!({
+                                    "runId": run_id,
+                                    "userId": user_id,
+                                    "configId": id,
+                                    "events": ["restock"],
+                                    "lifecycleFallback": true,
+                                })),
+                            )
+                            .await;
+
+                        if tg_enabled {
+                            match (tg_bot_token.as_deref(), tg_target.as_deref()) {
+                                (Some(token), Some(target)) => match notifications::send_telegram(
+                                    &self.inner.cfg.telegram_api_base_url,
+                                    token,
+                                    target,
+                                    &notification.telegram_text,
+                                )
+                                .await
+                                {
+                                    Ok(_) => {
+                                        let _ = self
+                                            .record_notify(run_id, "telegram", "success", None)
+                                            .await;
+                                    }
+                                    Err(err) => {
+                                        let err_msg = err.to_string();
+                                        let _ = self
+                                            .record_notify(
+                                                run_id,
+                                                "telegram",
+                                                "error",
+                                                Some(&err_msg),
+                                            )
+                                            .await;
+                                        let _ = crate::db::insert_log(
+                                            &self.inner.db,
+                                            Some(&user_id),
+                                            "warn",
+                                            "notify.telegram",
+                                            "telegram send failed",
+                                            Some(serde_json::json!({ "error": err.to_string() })),
+                                        )
+                                        .await;
+                                    }
+                                },
+                                _ => {
+                                    let _ = self
+                                        .record_notify(
+                                            run_id,
+                                            "telegram",
+                                            "skipped",
+                                            Some("missing telegram config"),
+                                        )
+                                        .await;
+                                }
+                            }
+                        }
+                    }
                     continue;
                 }
 
@@ -2366,6 +2486,7 @@ WHERE user_id = ?
 
         ops.notify_lifecycle_events(
             1,
+            &HashMap::from([("manual_refresh".to_string(), 1_i64)]),
             &crate::db::ApplyCatalogUrlResult {
                 listed_ids: vec!["cfg_pending".to_string()],
                 listed_event_ids: Vec::new(),
@@ -2399,6 +2520,57 @@ WHERE user_id = ?
             .await
             .unwrap();
         assert_eq!(listed.get::<i64, _>(0), 0);
+
+        let pending_ops = sqlx::query(
+            "SELECT COUNT(*) FROM ops_events WHERE event = 'ops.log' AND json_extract(data_json, '$.scope') = ?",
+        )
+        .bind("catalog.listed.pending_stock")
+        .fetch_one(&db)
+        .await
+        .unwrap();
+        assert_eq!(pending_ops.get::<i64, _>(0), 1);
+    }
+
+    #[tokio::test]
+    async fn notify_lifecycle_events_logs_pending_stock_without_listed_subscribers() {
+        let upstream_cart_url = "https://example.invalid/cart".to_string();
+        let (ops, db) = build_ops_manager(upstream_cart_url).await;
+
+        seed_catalog_config(&db, "cfg_pending_only_ops", "Pending Only Ops", 0, 8.88).await;
+
+        ops.notify_lifecycle_events(
+            11,
+            &HashMap::from([("manual_refresh".to_string(), 1_i64)]),
+            &crate::db::ApplyCatalogUrlResult {
+                listed_ids: vec!["cfg_pending_only_ops".to_string()],
+                listed_event_ids: Vec::new(),
+                listed_pending_zero_stock_ids: vec!["cfg_pending_only_ops".to_string()],
+                delisted_ids: Vec::new(),
+                fetched_at: "2026-03-11T00:00:00Z".to_string(),
+            },
+            &TaskKey {
+                fid: "7".to_string(),
+                gid: Some("40".to_string()),
+            },
+        )
+        .await
+        .unwrap();
+
+        let pending_ops = sqlx::query(
+            "SELECT COUNT(*) FROM ops_events WHERE event = 'ops.log' AND json_extract(data_json, '$.scope') = ?",
+        )
+        .bind("catalog.listed.pending_stock")
+        .fetch_one(&db)
+        .await
+        .unwrap();
+        assert_eq!(pending_ops.get::<i64, _>(0), 1);
+
+        let user_logs = sqlx::query("SELECT COUNT(*) FROM event_logs WHERE scope = ?")
+            .bind("catalog.listed.pending_stock")
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        assert_eq!(user_logs.get::<i64, _>(0), 0);
     }
 
     #[tokio::test]
@@ -2436,6 +2608,7 @@ WHERE user_id = ?
 
         ops.notify_lifecycle_events(
             2,
+            &HashMap::from([("poller_due".to_string(), 1_i64)]),
             &crate::db::ApplyCatalogUrlResult {
                 listed_ids: vec!["cfg_monitored".to_string()],
                 listed_event_ids: vec!["cfg_monitored".to_string()],
@@ -2469,6 +2642,85 @@ WHERE user_id = ?
     }
 
     #[tokio::test]
+    async fn notify_lifecycle_events_sends_restock_to_monitored_users_on_non_poller_runs() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let hits_for_handler = hits.clone();
+        let telegram = Router::new().route(
+            "/bottoken/sendMessage",
+            post(move || {
+                let hits_for_handler = hits_for_handler.clone();
+                async move {
+                    hits_for_handler.fetch_add(1, Ordering::SeqCst);
+                    (StatusCode::OK, r#"{"ok":true}"#)
+                }
+            }),
+        );
+        let base = spawn_stub_server(telegram).await;
+        let upstream_cart_url = "https://example.invalid/cart".to_string();
+        let mut cfg = test_config(upstream_cart_url.clone());
+        cfg.telegram_api_base_url = base;
+        let (ops, db) = build_ops_manager_with_config(cfg.clone(), upstream_cart_url).await;
+
+        seed_listed_user(&db, &cfg, "u_1", true).await;
+        seed_catalog_config(
+            &db,
+            "cfg_monitored_fallback",
+            "Monitored Fallback",
+            2,
+            18.88,
+        )
+        .await;
+        sqlx::query(
+            "INSERT INTO monitoring_configs (user_id, config_id, enabled, created_at, updated_at) VALUES (?, ?, 1, ?, ?)",
+        )
+        .bind("u_1")
+        .bind("cfg_monitored_fallback")
+        .bind("2026-03-11T00:00:00Z")
+        .bind("2026-03-11T00:00:00Z")
+        .execute(&db)
+        .await
+        .unwrap();
+
+        ops.notify_lifecycle_events(
+            12,
+            &HashMap::from([("manual_refresh".to_string(), 1_i64)]),
+            &crate::db::ApplyCatalogUrlResult {
+                listed_ids: vec!["cfg_monitored_fallback".to_string()],
+                listed_event_ids: vec!["cfg_monitored_fallback".to_string()],
+                listed_pending_zero_stock_ids: Vec::new(),
+                delisted_ids: Vec::new(),
+                fetched_at: "2026-03-11T00:00:00Z".to_string(),
+            },
+            &TaskKey {
+                fid: "7".to_string(),
+                gid: Some("40".to_string()),
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+
+        let poll_logs =
+            sqlx::query("SELECT COUNT(*) FROM event_logs WHERE user_id = ? AND scope = ?")
+                .bind("u_1")
+                .bind("poll")
+                .fetch_one(&db)
+                .await
+                .unwrap();
+        assert_eq!(poll_logs.get::<i64, _>(0), 1);
+
+        let listed_logs =
+            sqlx::query("SELECT COUNT(*) FROM event_logs WHERE user_id = ? AND scope = ?")
+                .bind("u_1")
+                .bind("catalog.listed")
+                .fetch_one(&db)
+                .await
+                .unwrap();
+        assert_eq!(listed_logs.get::<i64, _>(0), 0);
+    }
+
+    #[tokio::test]
     async fn notify_lifecycle_events_sends_listed_to_non_monitoring_users() {
         let hits = Arc::new(AtomicUsize::new(0));
         let hits_for_handler = hits.clone();
@@ -2493,6 +2745,7 @@ WHERE user_id = ?
 
         ops.notify_lifecycle_events(
             3,
+            &HashMap::from([("manual_refresh".to_string(), 1_i64)]),
             &crate::db::ApplyCatalogUrlResult {
                 listed_ids: vec!["cfg_listed".to_string()],
                 listed_event_ids: vec!["cfg_listed".to_string()],

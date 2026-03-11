@@ -270,7 +270,7 @@ CREATE INDEX IF NOT EXISTS idx_ops_notify_runs_channel_ts ON ops_notify_runs (ch
         "TEXT NOT NULL DEFAULT '1970-01-01T00:00:00Z'",
     )
     .await?;
-    add_column_if_missing(
+    let lifecycle_listed_event_at_added = add_column_if_missing(
         db,
         "catalog_configs",
         "lifecycle_listed_event_at",
@@ -339,20 +339,27 @@ SET
   lifecycle_last_seen_at = CASE
     WHEN lifecycle_last_seen_at IS NULL OR lifecycle_last_seen_at = '1970-01-01T00:00:00Z' THEN checked_at
     ELSE lifecycle_last_seen_at
-  END,
-  lifecycle_listed_event_at = CASE
-    WHEN COALESCE(NULLIF(lifecycle_state, ''), 'active') = 'active'
-      AND (lifecycle_listed_event_at IS NULL OR TRIM(lifecycle_listed_event_at) = '')
-      THEN CASE
-        WHEN lifecycle_listed_at IS NULL OR lifecycle_listed_at = '1970-01-01T00:00:00Z' THEN checked_at
-        ELSE lifecycle_listed_at
-      END
-    ELSE lifecycle_listed_event_at
   END
 "#,
     )
     .execute(db)
     .await?;
+
+    if lifecycle_listed_event_at_added {
+        sqlx::query(
+            r#"
+UPDATE catalog_configs
+SET lifecycle_listed_event_at = CASE
+  WHEN lifecycle_listed_at IS NULL OR lifecycle_listed_at = '1970-01-01T00:00:00Z' THEN checked_at
+  ELSE lifecycle_listed_at
+END
+WHERE COALESCE(NULLIF(lifecycle_state, ''), 'active') = 'active'
+  AND (lifecycle_listed_event_at IS NULL OR TRIM(lifecycle_listed_event_at) = '')
+"#,
+        )
+        .execute(db)
+        .await?;
+    }
     Ok(())
 }
 
@@ -691,15 +698,15 @@ async fn add_column_if_missing(
     table: &str,
     column: &str,
     column_def: &str,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<bool> {
     let sql = format!("ALTER TABLE {table} ADD COLUMN {column} {column_def}");
     match sqlx::query(&sql).execute(db).await {
-        Ok(_) => Ok(()),
+        Ok(_) => Ok(true),
         Err(err) => {
             // SQLite emits: "duplicate column name: <col>"
             let msg = err.to_string();
             if msg.to_lowercase().contains("duplicate column name") {
-                Ok(())
+                Ok(false)
             } else {
                 Err(err.into())
             }

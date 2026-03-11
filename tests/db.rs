@@ -214,6 +214,17 @@ async fn apply_catalog_url_fetch_success_delays_listed_until_first_positive_inve
         .unwrap();
     assert!(row.get::<Option<String>, _>(0).is_none());
 
+    // Simulate a restart while the config is still waiting for first stock.
+    catnap::db::init_db(&db).await.unwrap();
+
+    let restarted_row =
+        sqlx::query("SELECT lifecycle_listed_event_at FROM catalog_configs WHERE id = ?")
+            .bind(&config.id)
+            .fetch_one(&db)
+            .await
+            .unwrap();
+    assert!(restarted_row.get::<Option<String>, _>(0).is_none());
+
     config.inventory.quantity = 2;
     config.inventory.status = "in_stock".to_string();
     let res2 = catnap::db::apply_catalog_url_fetch_success(
