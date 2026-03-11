@@ -1,4 +1,12 @@
-import type { BootstrapResponse, Config, Country, LogsResponse, Region } from "../App";
+import type {
+  BootstrapResponse,
+  Config,
+  Country,
+  LogsResponse,
+  NotificationRecord,
+  NotificationRecordsResponse,
+  Region,
+} from "../App";
 
 export const demoNowMs = Date.now();
 
@@ -291,4 +299,120 @@ export function demoLogsResponse(params: {
     .filter((it) => params.level === "debug" || it.level === params.level)
     .slice(0, params.limit);
   return { items, nextCursor: params.cursor ? null : "cursor:next" };
+}
+
+export const demoNotificationRecords: NotificationRecord[] = [
+  {
+    id: "nr-3",
+    createdAt: new Date(demoNowMs - 1000 * 60 * 2).toISOString(),
+    kind: "monitor.config",
+    title: "【配置更新】HKG-Pro.TRFC Pro",
+    summary: "库存 1｜¥90.00 / 月",
+    partitionLabel: "中国香港 / HKG",
+    telegramStatus: "success",
+    webPushStatus: "skipped",
+    items: [
+      {
+        configId: "lc:hkg:pro",
+        countryName: "中国香港",
+        regionName: "HKG",
+        partitionLabel: "中国香港 / HKG",
+        name: "HKG-Pro.TRFC Pro",
+        specs: [
+          { key: "CPU", value: "4 vCPU" },
+          { key: "RAM", value: "8 GB" },
+          { key: "Disk", value: "80 GB NVMe" },
+          { key: "Bandwidth", value: "1 Gbps" },
+        ],
+        price: money(90, "CNY"),
+        inventory: inv(1, new Date(demoNowMs - 1000 * 60 * 2).toISOString()),
+        lifecycle: life("active"),
+      },
+    ],
+  },
+  {
+    id: "nr-2",
+    createdAt: new Date(demoNowMs - 1000 * 60 * 9).toISOString(),
+    kind: "catalog.delisted",
+    title: "【已下架】HKG-Pro.TRFC Plus",
+    summary: "最近状态：库存 1｜¥54.00 / 月",
+    partitionLabel: "中国香港 / HKG",
+    telegramStatus: "error",
+    webPushStatus: "skipped",
+    items: [
+      {
+        configId: "lc:hkg:plus",
+        countryName: "中国香港",
+        regionName: "HKG",
+        partitionLabel: "中国香港 / HKG",
+        name: "HKG-Pro.TRFC Plus",
+        specs: [
+          { key: "CPU", value: "2 vCPU" },
+          { key: "RAM", value: "4 GB" },
+          { key: "Disk", value: "50 GB NVMe" },
+          { key: "Traffic", value: "2 TB" },
+        ],
+        price: money(54, "CNY"),
+        inventory: inv(1, new Date(demoNowMs - 1000 * 60 * 9).toISOString()),
+        lifecycle: life("delisted", fetchedAt, new Date(demoNowMs - 1000 * 60 * 9).toISOString()),
+      },
+    ],
+  },
+  {
+    id: "nr-1",
+    createdAt: new Date(demoNowMs - 1000 * 60 * 18).toISOString(),
+    kind: "catalog.partition_listed",
+    title: "【分区上新机】格陵兰特惠探针",
+    summary: "库存 1｜¥0.88 / 月",
+    partitionLabel: "格陵兰 / 格陵兰",
+    telegramStatus: "success",
+    webPushStatus: "success",
+    items: [
+      {
+        configId: "lc:gl:probe",
+        countryName: "格陵兰",
+        regionName: "格陵兰",
+        partitionLabel: "格陵兰 / 格陵兰",
+        name: "格陵兰特惠探针",
+        specs: [
+          { key: "CPU", value: "1 vCPU" },
+          { key: "RAM", value: "512 MB" },
+          { key: "Disk", value: "10 GB SSD" },
+          { key: "Traffic", value: "500 GB" },
+        ],
+        price: money(0.88, "CNY"),
+        inventory: inv(1, new Date(demoNowMs - 1000 * 60 * 18).toISOString()),
+        lifecycle: life("active"),
+      },
+      {
+        configId: "lc:gl:probe-max",
+        countryName: "格陵兰",
+        regionName: "格陵兰",
+        partitionLabel: "格陵兰 / 格陵兰",
+        name: "格陵兰特惠探针 Max",
+        specs: [
+          { key: "CPU", value: "2 vCPU" },
+          { key: "RAM", value: "1 GB" },
+          { key: "Disk", value: "20 GB SSD" },
+          { key: "Traffic", value: "1 TB" },
+        ],
+        price: money(1.48, "CNY"),
+        inventory: inv(3, new Date(demoNowMs - 1000 * 60 * 18).toISOString()),
+        lifecycle: life("active"),
+      },
+    ],
+  },
+];
+
+export function demoNotificationRecordsResponse(params: {
+  cursor: string | null;
+  limit: number;
+}): NotificationRecordsResponse {
+  const sorted = [...demoNotificationRecords].sort(
+    (a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt) || b.id.localeCompare(a.id),
+  );
+  const startIndex = params.cursor ? sorted.findIndex((item) => item.id === params.cursor) + 1 : 0;
+  const items = sorted.slice(startIndex, startIndex + params.limit);
+  const next = sorted[startIndex + params.limit];
+  return { items, nextCursor: next ? next.id : null };
 }

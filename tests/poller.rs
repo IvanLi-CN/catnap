@@ -23,6 +23,8 @@ fn test_config() -> RuntimeConfig {
         default_poll_jitter_pct: 0.1,
         log_retention_days: 7,
         log_retention_max_rows: 10_000,
+        notification_retention_days: 30,
+        notification_retention_max_rows: 50_000,
         ops_worker_concurrency: 1,
         ops_sse_replay_window_seconds: 3600,
         ops_log_retention_days: 7,

@@ -3,6 +3,9 @@ use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OutboundNotification {
+    pub title: String,
+    pub summary: String,
+    pub partition_label: Option<String>,
     pub telegram_text: String,
     pub web_push_title: String,
     pub web_push_body: String,
@@ -63,6 +66,8 @@ pub struct MonitoringSnapshot<'a> {
 
 pub struct MonitoringChangeNotification {
     pub events: Vec<MonitorEventKind>,
+    pub title: String,
+    pub summary: String,
     pub telegram_text: String,
 }
 
@@ -144,6 +149,8 @@ pub fn build_monitoring_change_notification(
 
     Some(MonitoringChangeNotification {
         events,
+        title: title.clone(),
+        summary: format!("{name} · {}", lines[1]),
         telegram_text: lines.join("\n"),
     })
 }
@@ -182,6 +189,9 @@ pub fn build_lifecycle_notification(
     };
 
     OutboundNotification {
+        title: kind.label().to_string(),
+        summary: format!("{name} · {summary}"),
+        partition_label: normalized_partition_label.map(ToOwned::to_owned),
         telegram_text: telegram_lines.join("\n"),
         web_push_title: format!("Catnap · {}", kind.label()),
         web_push_body,
@@ -212,6 +222,9 @@ pub fn build_web_push_test_notification(
     url_override: Option<&str>,
 ) -> OutboundNotification {
     OutboundNotification {
+        title: "测试通知".to_string(),
+        summary: "Web Push 已连通，点击返回设置页。".to_string(),
+        partition_label: None,
         telegram_text: String::new(),
         web_push_title: title_override
             .filter(|value| !value.trim().is_empty())
@@ -226,6 +239,23 @@ pub fn build_web_push_test_notification(
             .unwrap_or("/settings")
             .to_string(),
     }
+}
+
+pub fn append_notification_record_link(
+    telegram_text: &str,
+    site_base_url: Option<&str>,
+    record_id: &str,
+) -> String {
+    let Some(url) = notification_record_url(site_base_url, record_id) else {
+        return telegram_text.to_string();
+    };
+    if telegram_text.trim().is_empty() {
+        return format!("查看通知记录：{url}");
+    }
+    format!(
+        "{telegram_text}
+查看通知记录：{url}"
+    )
 }
 
 pub fn format_money(money: &Money) -> String {
@@ -268,6 +298,19 @@ fn monitoring_url(site_base_url: Option<&str>) -> Option<String> {
         return None;
     }
     Some(format!("{}/monitoring", base.trim_end_matches('/')))
+}
+
+pub fn notification_record_url(site_base_url: Option<&str>, record_id: &str) -> Option<String> {
+    let base = site_base_url?.trim();
+    let record_id = record_id.trim();
+    if base.is_empty() || record_id.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "{}/?notification={}#notifications",
+        base.trim_end_matches('/'),
+        record_id
+    ))
 }
 
 #[cfg(test)]
@@ -416,5 +459,25 @@ mod tests {
             "Web Push 已连通，点击返回设置页。"
         );
         assert_eq!(notification.web_push_url, "/settings");
+    }
+
+    #[test]
+    fn appends_notification_record_link_when_site_base_url_exists() {
+        let text = append_notification_record_link(
+            "【配置更新】HKG-Pro.TRFC Pro",
+            Some("https://catnap.example/base/"),
+            "nr_123",
+        );
+        assert_eq!(
+            text,
+            "【配置更新】HKG-Pro.TRFC Pro
+查看通知记录：https://catnap.example/base/?notification=nr_123#notifications"
+        );
+    }
+
+    #[test]
+    fn omits_notification_record_link_when_site_base_url_is_missing() {
+        let text = append_notification_record_link("【配置更新】HKG-Pro.TRFC Pro", None, "nr_123");
+        assert_eq!(text, "【配置更新】HKG-Pro.TRFC Pro");
     }
 }

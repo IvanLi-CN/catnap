@@ -20,6 +20,8 @@ fn test_config() -> RuntimeConfig {
         default_poll_jitter_pct: 0.1,
         log_retention_days: 7,
         log_retention_max_rows: 10_000,
+        notification_retention_days: 30,
+        notification_retention_max_rows: 50_000,
         ops_worker_concurrency: 1,
         ops_sse_replay_window_seconds: 3600,
         ops_log_retention_days: 7,
@@ -301,4 +303,187 @@ async fn load_catalog_snapshot_round_trips_topology_state() {
     assert_eq!(snapshot.countries.len(), 1);
     assert_eq!(snapshot.regions.len(), 1);
     assert_eq!(snapshot.region_notices.len(), 1);
+}
+
+#[tokio::test]
+async fn cleanup_notification_records_applies_day_and_row_limits() {
+    let cfg = test_config();
+    let db = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&cfg.db_url)
+        .await
+        .unwrap();
+    catnap::db::init_db(&db).await.unwrap();
+
+    let mut configs =
+        catnap::upstream::parse_configs("7", Some("40"), include_str!("fixtures/cart-fid-7.html"));
+    configs.truncate(1);
+    catnap::db::upsert_catalog_configs(&db, &configs)
+        .await
+        .unwrap();
+    let item = catnap::db::load_notification_record_item_snapshot(&db, &configs[0].id)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let old_id = catnap::db::insert_notification_record(
+        &db,
+        "u_1",
+        &catnap::models::NotificationRecordDraft {
+            kind: "monitoring.config".to_string(),
+            title: "old".to_string(),
+            summary: "old".to_string(),
+            partition_label: item.partition_label.clone(),
+            telegram_status: "success".to_string(),
+            web_push_status: "skipped".to_string(),
+            items: vec![item.clone()],
+        },
+    )
+    .await
+    .unwrap();
+    let mid_id = catnap::db::insert_notification_record(
+        &db,
+        "u_1",
+        &catnap::models::NotificationRecordDraft {
+            kind: "monitoring.config".to_string(),
+            title: "mid".to_string(),
+            summary: "mid".to_string(),
+            partition_label: item.partition_label.clone(),
+            telegram_status: "success".to_string(),
+            web_push_status: "skipped".to_string(),
+            items: vec![item.clone()],
+        },
+    )
+    .await
+    .unwrap();
+    let new_id = catnap::db::insert_notification_record(
+        &db,
+        "u_1",
+        &catnap::models::NotificationRecordDraft {
+            kind: "monitoring.config".to_string(),
+            title: "new".to_string(),
+            summary: "new".to_string(),
+            partition_label: item.partition_label.clone(),
+            telegram_status: "success".to_string(),
+            web_push_status: "skipped".to_string(),
+            items: vec![item],
+        },
+    )
+    .await
+    .unwrap();
+
+    sqlx::query("UPDATE notification_records SET created_at = ? WHERE id = ?")
+        .bind("2020-01-01T00:00:00Z")
+        .bind(&old_id)
+        .execute(&db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE notification_records SET created_at = ? WHERE id = ?")
+        .bind("2026-03-10T00:00:00Z")
+        .bind(&mid_id)
+        .execute(&db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE notification_records SET created_at = ? WHERE id = ?")
+        .bind("2026-03-11T00:00:00Z")
+        .bind(&new_id)
+        .execute(&db)
+        .await
+        .unwrap();
+
+    catnap::db::cleanup_notification_records(&db, 30, 1)
+        .await
+        .unwrap();
+
+    let rows = sqlx::query("SELECT id FROM notification_records ORDER BY created_at DESC, id DESC")
+        .fetch_all(&db)
+        .await
+        .unwrap();
+    let ids = rows
+        .into_iter()
+        .map(|row| row.get::<String, _>(0))
+        .collect::<Vec<_>>();
+    assert_eq!(ids, vec![new_id]);
+
+    let orphan_count = sqlx::query("SELECT COUNT(*) FROM notification_record_items")
+        .fetch_one(&db)
+        .await
+        .unwrap()
+        .get::<i64, _>(0);
+    assert_eq!(orphan_count, 1);
+}
+
+#[tokio::test]
+async fn notification_records_preserve_item_order() {
+    let cfg = test_config();
+    let db = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&cfg.db_url)
+        .await
+        .unwrap();
+    catnap::db::init_db(&db).await.unwrap();
+
+    let mut configs =
+        catnap::upstream::parse_configs("7", Some("40"), include_str!("fixtures/cart-fid-7.html"));
+    configs.truncate(2);
+    catnap::db::upsert_catalog_configs(&db, &configs)
+        .await
+        .unwrap();
+
+    let items = catnap::db::load_notification_record_item_snapshots(
+        &db,
+        &configs
+            .iter()
+            .map(|config| config.id.clone())
+            .collect::<Vec<_>>(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(items.len(), 2);
+
+    let record_id = catnap::db::insert_notification_record(
+        &db,
+        "u_1",
+        &catnap::models::NotificationRecordDraft {
+            kind: "catalog.partition_listed".to_string(),
+            title: "grouped".to_string(),
+            summary: "two items".to_string(),
+            partition_label: items[0].partition_label.clone(),
+            telegram_status: "success".to_string(),
+            web_push_status: "skipped".to_string(),
+            items: vec![items[1].clone(), items[0].clone()],
+        },
+    )
+    .await
+    .unwrap();
+
+    let listed = catnap::db::list_notification_records(&db, "u_1", None, 20)
+        .await
+        .unwrap()
+        .0;
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].id, record_id);
+    assert_eq!(listed[0].items.len(), 2);
+    assert_eq!(
+        listed[0].items[0].config_id.as_deref(),
+        items[1].config_id.as_deref()
+    );
+    assert_eq!(
+        listed[0].items[1].config_id.as_deref(),
+        items[0].config_id.as_deref()
+    );
+
+    let detail = catnap::db::get_notification_record(&db, "u_1", &record_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(detail.items.len(), 2);
+    assert_eq!(
+        detail.items[0].config_id.as_deref(),
+        items[1].config_id.as_deref()
+    );
+    assert_eq!(
+        detail.items[1].config_id.as_deref(),
+        items[0].config_id.as_deref()
+    );
 }

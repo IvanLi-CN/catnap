@@ -47,6 +47,11 @@ pub fn router(state: AppState) -> Router {
         .route("/monitoring/partitions", patch(patch_monitoring_partition))
         .route("/settings", get(get_settings).put(put_settings))
         .route("/logs", get(get_logs))
+        .route("/notifications/records", get(get_notification_records))
+        .route(
+            "/notifications/records/:record_id",
+            get(get_notification_record),
+        )
         .route("/notifications/telegram/test", post(post_telegram_test))
         .route(
             "/notifications/web-push/subscriptions",
@@ -240,6 +245,18 @@ fn json_internal_error_with_message(
         Json(ErrorResponse {
             error: ErrorInfo {
                 code: "INTERNAL",
+                message: message.into(),
+            },
+        }),
+    )
+}
+
+fn json_not_found_with_message(message: impl Into<String>) -> (StatusCode, Json<ErrorResponse>) {
+    (
+        StatusCode::NOT_FOUND,
+        Json(ErrorResponse {
+            error: ErrorInfo {
+                code: "NOT_FOUND",
                 message: message.into(),
             },
         }),
@@ -838,6 +855,71 @@ async fn put_settings(
     Ok(Json(
         settings.to_view(state.config.web_push_vapid_public_key.clone()),
     ))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NotificationRecordsQuery {
+    cursor: Option<String>,
+    limit: Option<i64>,
+}
+
+fn validate_notification_records_cursor(
+    cursor: Option<&str>,
+) -> Result<(), (StatusCode, Json<ErrorResponse>)> {
+    let Some(cursor) = cursor else {
+        return Ok(());
+    };
+    let cursor = cursor.trim();
+    if cursor.is_empty() {
+        return Err(json_invalid_argument_with_message(
+            "cursor 必须是 <RFC3339>:<id>",
+        ));
+    }
+    let Some((ts, id)) = cursor.rsplit_once(':') else {
+        return Err(json_invalid_argument_with_message(
+            "cursor 必须是 <RFC3339>:<id>",
+        ));
+    };
+    if ts.trim().is_empty() || id.trim().is_empty() {
+        return Err(json_invalid_argument_with_message(
+            "cursor 必须是 <RFC3339>:<id>",
+        ));
+    }
+    OffsetDateTime::parse(ts.trim(), &Rfc3339)
+        .map_err(|_| json_invalid_argument_with_message("cursor 必须是 <RFC3339>:<id>"))?;
+    Ok(())
+}
+
+async fn get_notification_records(
+    State(state): State<AppState>,
+    user: axum::extract::Extension<UserView>,
+    Query(q): Query<NotificationRecordsQuery>,
+) -> Result<Json<NotificationRecordsResponse>, (StatusCode, Json<ErrorResponse>)> {
+    validate_notification_records_cursor(q.cursor.as_deref())?;
+    let limit = q.limit.unwrap_or(20).clamp(1, 50);
+    let (items, next_cursor) =
+        db::list_notification_records(&state.db, &user.0.id, q.cursor.as_deref(), limit)
+            .await
+            .map_err(|_| json_invalid_argument())?;
+    Ok(Json(NotificationRecordsResponse { items, next_cursor }))
+}
+
+async fn get_notification_record(
+    State(state): State<AppState>,
+    user: axum::extract::Extension<UserView>,
+    Path(record_id): Path<String>,
+) -> Result<Json<NotificationRecordView>, (StatusCode, Json<ErrorResponse>)> {
+    if record_id.trim().is_empty() {
+        return Err(json_invalid_argument());
+    }
+    let record = db::get_notification_record(&state.db, &user.0.id, &record_id)
+        .await
+        .map_err(|_| json_invalid_argument())?;
+    match record {
+        Some(record) => Ok(Json(record)),
+        None => Err(json_not_found_with_message("记录不存在或已过期")),
+    }
 }
 
 #[derive(Debug, Deserialize)]

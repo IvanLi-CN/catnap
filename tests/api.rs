@@ -31,6 +31,8 @@ fn test_config() -> RuntimeConfig {
         default_poll_jitter_pct: 0.1,
         log_retention_days: 7,
         log_retention_max_rows: 10_000,
+        notification_retention_days: 30,
+        notification_retention_max_rows: 50_000,
         ops_worker_concurrency: 1,
         ops_sse_replay_window_seconds: 3600,
         ops_log_retention_days: 7,
@@ -96,6 +98,24 @@ async fn make_app_with_config(cfg: RuntimeConfig) -> TestApp {
     catnap::db::upsert_catalog_configs(&db, &configs)
         .await
         .unwrap();
+    catnap::db::replace_catalog_topology(
+        &db,
+        &cfg.upstream_cart_url,
+        &snapshot.countries,
+        &snapshot.regions,
+    )
+    .await
+    .unwrap();
+    for notice in &snapshot.region_notices {
+        catnap::db::set_catalog_region_notice(
+            &db,
+            &notice.country_id,
+            notice.region_id.as_deref(),
+            Some(&notice.text),
+        )
+        .await
+        .unwrap();
+    }
 
     let catalog = std::sync::Arc::new(tokio::sync::RwLock::new(snapshot));
     let ops = catnap::ops::OpsManager::new(cfg.clone(), db.clone(), catalog.clone());
@@ -1735,4 +1755,188 @@ async fn inventory_history_rejects_empty_config_ids() {
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn notification_records_api_lists_and_fetches_detail() {
+    let t = make_app().await;
+    ensure_user_exists(&t, "u_1").await;
+
+    let config_id = sqlx::query("SELECT id FROM catalog_configs ORDER BY id LIMIT 1")
+        .fetch_one(&t.db)
+        .await
+        .unwrap()
+        .get::<String, _>(0);
+    let item = catnap::db::load_notification_record_item_snapshot(&t.db, &config_id)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let older_id = catnap::db::insert_notification_record(
+        &t.db,
+        "u_1",
+        &catnap::models::NotificationRecordDraft {
+            kind: "monitoring.config".to_string(),
+            title: "【配置更新】Older".to_string(),
+            summary: "库存 1｜¥1.00 / 月".to_string(),
+            partition_label: item.partition_label.clone(),
+            telegram_status: "success".to_string(),
+            web_push_status: "skipped".to_string(),
+            items: vec![item.clone()],
+        },
+    )
+    .await
+    .unwrap();
+    let newer_id = catnap::db::insert_notification_record(
+        &t.db,
+        "u_1",
+        &catnap::models::NotificationRecordDraft {
+            kind: "catalog.delisted".to_string(),
+            title: "【已下架】Newer".to_string(),
+            summary: "最近状态：库存 1｜¥1.00 / 月".to_string(),
+            partition_label: item.partition_label.clone(),
+            telegram_status: "error".to_string(),
+            web_push_status: "skipped".to_string(),
+            items: vec![item.clone()],
+        },
+    )
+    .await
+    .unwrap();
+
+    sqlx::query("UPDATE notification_records SET created_at = ? WHERE id = ?")
+        .bind("2026-03-11T10:00:00Z")
+        .bind(&older_id)
+        .execute(&t.db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE notification_records SET created_at = ? WHERE id = ?")
+        .bind("2026-03-11T10:05:00Z")
+        .bind(&newer_id)
+        .execute(&t.db)
+        .await
+        .unwrap();
+
+    let res = t
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/notifications/records?limit=1")
+                .header("host", "example.com")
+                .header("x-user", "u_1")
+                .header("origin", "http://example.com")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let bytes = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let items = json["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["id"].as_str(), Some(newer_id.as_str()));
+    assert_eq!(items[0]["telegramStatus"].as_str(), Some("error"));
+    assert_eq!(
+        items[0]["items"][0]["configId"].as_str(),
+        Some(config_id.as_str())
+    );
+    assert!(items[0]["items"][0]["partitionLabel"].as_str().is_some());
+    let cursor = json["nextCursor"].as_str().unwrap().to_string();
+
+    let res = t
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/notifications/records?limit=1&cursor={cursor}"
+                ))
+                .header("host", "example.com")
+                .header("x-user", "u_1")
+                .header("origin", "http://example.com")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(json["items"][0]["id"].as_str(), Some(older_id.as_str()));
+    assert!(json["nextCursor"].is_null());
+
+    let res = t
+        .app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/notifications/records/{newer_id}"))
+                .header("host", "example.com")
+                .header("x-user", "u_1")
+                .header("origin", "http://example.com")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(json["id"].as_str(), Some(newer_id.as_str()));
+    assert_eq!(json["items"][0]["name"].as_str(), Some(item.name.as_str()));
+}
+
+#[tokio::test]
+async fn notification_records_api_rejects_invalid_cursor() {
+    let t = make_app().await;
+    let res = t
+        .app
+        .oneshot(
+            Request::builder()
+                .uri("/api/notifications/records?cursor=bad-cursor")
+                .header("host", "example.com")
+                .header("x-user", "u_1")
+                .header("origin", "http://example.com")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+
+    let bytes = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(json["error"]["code"].as_str(), Some("INVALID_ARGUMENT"));
+    assert_eq!(
+        json["error"]["message"].as_str(),
+        Some("cursor 必须是 <RFC3339>:<id>")
+    );
+}
+
+#[tokio::test]
+async fn notification_record_detail_returns_404_when_missing() {
+    let t = make_app().await;
+    let res = t
+        .app
+        .oneshot(
+            Request::builder()
+                .uri("/api/notifications/records/nr_missing")
+                .header("host", "example.com")
+                .header("x-user", "u_1")
+                .header("origin", "http://example.com")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+
+    let bytes = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(json["error"]["code"].as_str(), Some("NOT_FOUND"));
+    assert_eq!(
+        json["error"]["message"].as_str(),
+        Some("记录不存在或已过期")
+    );
 }

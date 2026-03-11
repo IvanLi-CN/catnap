@@ -208,6 +208,38 @@ CREATE TABLE IF NOT EXISTS event_logs (
   meta_json TEXT NULL
 );
 
+CREATE TABLE IF NOT EXISTS notification_records (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  title TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  partition_label TEXT NULL,
+  telegram_status TEXT NOT NULL DEFAULT 'not_sent',
+  web_push_status TEXT NOT NULL DEFAULT 'not_sent'
+);
+
+CREATE TABLE IF NOT EXISTS notification_record_items (
+  id TEXT PRIMARY KEY,
+  record_id TEXT NOT NULL,
+  position INTEGER NOT NULL,
+  config_id TEXT NULL,
+  name TEXT NOT NULL,
+  country_name TEXT NOT NULL,
+  region_name TEXT NULL,
+  specs_json TEXT NOT NULL,
+  price_amount REAL NOT NULL,
+  price_currency TEXT NOT NULL,
+  price_period TEXT NOT NULL,
+  inventory_status TEXT NOT NULL,
+  inventory_quantity INTEGER NOT NULL,
+  checked_at TEXT NOT NULL,
+  lifecycle_state TEXT NOT NULL,
+  lifecycle_listed_at TEXT NOT NULL,
+  lifecycle_delisted_at TEXT NULL
+);
+
 CREATE TABLE IF NOT EXISTS ops_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   ts TEXT NOT NULL,
@@ -244,6 +276,8 @@ CREATE TABLE IF NOT EXISTS ops_notify_runs (
 
 CREATE INDEX IF NOT EXISTS idx_event_logs_user_ts ON event_logs (user_id, ts DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_event_logs_ts ON event_logs (ts DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_notification_records_user_created ON notification_records (user_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_notification_record_items_record_position ON notification_record_items (record_id, position ASC);
 CREATE INDEX IF NOT EXISTS idx_inventory_samples_1m_ts ON inventory_samples_1m (ts_minute);
 CREATE INDEX IF NOT EXISTS idx_catalog_url_cache_last_success_at ON catalog_url_cache (last_success_at DESC, url_key);
 CREATE INDEX IF NOT EXISTS idx_catalog_countries_sort ON catalog_countries (sort_index, id);
@@ -1131,9 +1165,13 @@ fn monitor_supported_for_country(country_id: &str) -> bool {
     country_id.trim() != "2"
 }
 
+fn parse_specs_json(specs_json: &str) -> Vec<Spec> {
+    serde_json::from_str(specs_json).unwrap_or_default()
+}
+
 fn config_view_from_row(row: &sqlx::sqlite::SqliteRow) -> anyhow::Result<ConfigView> {
     let specs_json = row.get::<String, _>("specs_json");
-    let specs: Vec<Spec> = serde_json::from_str(&specs_json).unwrap_or_default();
+    let specs = parse_specs_json(&specs_json);
 
     let country_id = row.get::<String, _>("country_id");
     let region_id = row.get::<Option<String>, _>("region_id");
@@ -1171,6 +1209,116 @@ fn config_view_from_row(row: &sqlx::sqlite::SqliteRow) -> anyhow::Result<ConfigV
         source_fid: row.get::<Option<String>, _>("source_fid"),
         source_gid: row.get::<Option<String>, _>("source_gid"),
     })
+}
+
+fn build_partition_label(country_name: &str, region_name: Option<&str>) -> Option<String> {
+    let country_name = country_name.trim();
+    if country_name.is_empty() {
+        return None;
+    }
+    let region_name = region_name.map(str::trim).filter(|value| !value.is_empty());
+    Some(match region_name {
+        Some(region_name) => format!("{country_name} / {region_name}"),
+        None => country_name.to_string(),
+    })
+}
+
+fn notification_record_item_view_from_row(
+    row: &sqlx::sqlite::SqliteRow,
+) -> NotificationRecordItemView {
+    let specs_json = row.get::<String, _>("specs_json");
+    let country_name = row.get::<String, _>("country_name");
+    let region_name = row.get::<Option<String>, _>("region_name");
+    NotificationRecordItemView {
+        config_id: row.get::<Option<String>, _>("config_id"),
+        country_name: country_name.clone(),
+        region_name: region_name.clone(),
+        partition_label: build_partition_label(&country_name, region_name.as_deref()),
+        name: row.get::<String, _>("name"),
+        specs: parse_specs_json(&specs_json),
+        price: Money {
+            amount: row.get::<f64, _>("price_amount"),
+            currency: row.get::<String, _>("price_currency"),
+            period: row.get::<String, _>("price_period"),
+        },
+        inventory: Inventory {
+            status: row.get::<String, _>("inventory_status"),
+            quantity: row.get::<i64, _>("inventory_quantity"),
+            checked_at: row.get::<String, _>("checked_at"),
+        },
+        lifecycle: ConfigLifecycleView {
+            state: row.get::<String, _>("lifecycle_state"),
+            listed_at: row.get::<String, _>("lifecycle_listed_at"),
+            delisted_at: row.get::<Option<String>, _>("lifecycle_delisted_at"),
+            cleanup_at: None,
+        },
+    }
+}
+
+pub async fn load_notification_record_item_snapshot(
+    db: &SqlitePool,
+    config_id: &str,
+) -> anyhow::Result<Option<NotificationRecordItemView>> {
+    let mut items = load_notification_record_item_snapshots(db, &[config_id.to_string()]).await?;
+    Ok(items.pop())
+}
+
+pub async fn load_notification_record_item_snapshots(
+    db: &SqlitePool,
+    config_ids: &[String],
+) -> anyhow::Result<Vec<NotificationRecordItemView>> {
+    if config_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let placeholders = std::iter::repeat_n("?", config_ids.len())
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql = format!(
+        r#"
+SELECT
+  c.id AS config_id,
+  c.name,
+  COALESCE(cc.name, c.country_id) AS country_name,
+  COALESCE(cr.name, c.region_id) AS region_name,
+  c.specs_json,
+  c.price_amount,
+  c.price_currency,
+  c.price_period,
+  c.inventory_status,
+  c.inventory_quantity,
+  c.checked_at,
+  c.lifecycle_state,
+  c.lifecycle_listed_at,
+  c.lifecycle_delisted_at
+FROM catalog_configs c
+LEFT JOIN catalog_countries cc
+  ON cc.id = c.country_id
+LEFT JOIN catalog_regions cr
+  ON cr.country_id = c.country_id AND cr.id = c.region_id
+WHERE c.id IN ({placeholders})
+"#
+    );
+    let mut query = sqlx::query(&sql);
+    for config_id in config_ids {
+        query = query.bind(config_id);
+    }
+    let rows = query.fetch_all(db).await?;
+    let mut by_id = std::collections::HashMap::new();
+    for row in rows {
+        let config_id = row.get::<Option<String>, _>("config_id");
+        if let Some(config_id) = config_id {
+            by_id.insert(config_id, notification_record_item_view_from_row(&row));
+        }
+    }
+
+    let mut items = Vec::with_capacity(config_ids.len());
+    for config_id in config_ids {
+        if let Some(item) = by_id.remove(config_id) {
+            items.push(item);
+        }
+    }
+    Ok(items)
 }
 
 pub async fn list_catalog_configs_view(
@@ -1995,6 +2143,318 @@ pub async fn list_logs(
     };
 
     Ok((items, next_cursor))
+}
+
+fn notification_record_view_from_row(
+    row: &sqlx::sqlite::SqliteRow,
+    items: Vec<NotificationRecordItemView>,
+) -> NotificationRecordView {
+    NotificationRecordView {
+        id: row.get::<String, _>("id"),
+        created_at: row.get::<String, _>("created_at"),
+        kind: row.get::<String, _>("kind"),
+        title: row.get::<String, _>("title"),
+        summary: row.get::<String, _>("summary"),
+        partition_label: row.get::<Option<String>, _>("partition_label"),
+        telegram_status: row.get::<String, _>("telegram_status"),
+        web_push_status: row.get::<String, _>("web_push_status"),
+        items,
+    }
+}
+
+async fn load_notification_record_items_by_record_ids(
+    db: &SqlitePool,
+    record_ids: &[String],
+) -> anyhow::Result<std::collections::HashMap<String, Vec<NotificationRecordItemView>>> {
+    if record_ids.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+
+    let placeholders = std::iter::repeat_n("?", record_ids.len())
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql = format!(
+        r#"
+SELECT
+  record_id,
+  config_id,
+  name,
+  country_name,
+  region_name,
+  specs_json,
+  price_amount,
+  price_currency,
+  price_period,
+  inventory_status,
+  inventory_quantity,
+  checked_at,
+  lifecycle_state,
+  lifecycle_listed_at,
+  lifecycle_delisted_at
+FROM notification_record_items
+WHERE record_id IN ({placeholders})
+ORDER BY record_id ASC, position ASC, id ASC
+"#
+    );
+    let mut query = sqlx::query(&sql);
+    for record_id in record_ids {
+        query = query.bind(record_id);
+    }
+
+    let rows = query.fetch_all(db).await?;
+    let mut out = std::collections::HashMap::new();
+    for row in rows {
+        let record_id = row.get::<String, _>("record_id");
+        out.entry(record_id)
+            .or_insert_with(Vec::new)
+            .push(notification_record_item_view_from_row(&row));
+    }
+    Ok(out)
+}
+
+pub async fn insert_notification_record(
+    db: &SqlitePool,
+    user_id: &str,
+    draft: &NotificationRecordDraft,
+) -> anyhow::Result<String> {
+    let id = Uuid::new_v4().to_string();
+    let created_at = now_rfc3339();
+    let mut tx = db.begin().await?;
+
+    sqlx::query(
+        r#"
+INSERT INTO notification_records (
+  id,
+  user_id,
+  created_at,
+  kind,
+  title,
+  summary,
+  partition_label,
+  telegram_status,
+  web_push_status
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+"#,
+    )
+    .bind(&id)
+    .bind(user_id)
+    .bind(&created_at)
+    .bind(&draft.kind)
+    .bind(&draft.title)
+    .bind(&draft.summary)
+    .bind(draft.partition_label.as_deref())
+    .bind(&draft.telegram_status)
+    .bind(&draft.web_push_status)
+    .execute(&mut *tx)
+    .await?;
+
+    for (position, item) in draft.items.iter().enumerate() {
+        let item_id = Uuid::new_v4().to_string();
+        let specs_json = serde_json::to_string(&item.specs)?;
+        sqlx::query(
+            r#"
+INSERT INTO notification_record_items (
+  id,
+  record_id,
+  position,
+  config_id,
+  name,
+  country_name,
+  region_name,
+  specs_json,
+  price_amount,
+  price_currency,
+  price_period,
+  inventory_status,
+  inventory_quantity,
+  checked_at,
+  lifecycle_state,
+  lifecycle_listed_at,
+  lifecycle_delisted_at
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+"#,
+        )
+        .bind(&item_id)
+        .bind(&id)
+        .bind(position as i64)
+        .bind(item.config_id.as_deref())
+        .bind(&item.name)
+        .bind(&item.country_name)
+        .bind(item.region_name.as_deref())
+        .bind(&specs_json)
+        .bind(item.price.amount)
+        .bind(&item.price.currency)
+        .bind(&item.price.period)
+        .bind(&item.inventory.status)
+        .bind(item.inventory.quantity)
+        .bind(&item.inventory.checked_at)
+        .bind(&item.lifecycle.state)
+        .bind(&item.lifecycle.listed_at)
+        .bind(item.lifecycle.delisted_at.as_deref())
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    tx.commit().await?;
+    Ok(id)
+}
+
+pub async fn update_notification_record_channel_status(
+    db: &SqlitePool,
+    record_id: &str,
+    channel: &str,
+    status: &str,
+) -> anyhow::Result<()> {
+    let sql = match channel {
+        "telegram" => "UPDATE notification_records SET telegram_status = ? WHERE id = ?",
+        "webPush" => "UPDATE notification_records SET web_push_status = ? WHERE id = ?",
+        other => anyhow::bail!("unknown notification channel: {other}"),
+    };
+    sqlx::query(sql)
+        .bind(status)
+        .bind(record_id)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+pub async fn list_notification_records(
+    db: &SqlitePool,
+    user_id: &str,
+    cursor: Option<&str>,
+    limit: i64,
+) -> anyhow::Result<(Vec<NotificationRecordView>, Option<String>)> {
+    let (cursor_ts, cursor_id) = cursor
+        .and_then(|c| {
+            let mut parts = c.rsplitn(2, ':');
+            let id = parts.next()?.to_string();
+            let ts = parts.next()?.to_string();
+            Some((ts, id))
+        })
+        .unwrap_or(("9999-12-31T23:59:59Z".to_string(), "zzzz".to_string()));
+
+    let rows = sqlx::query(
+        r#"
+SELECT id, created_at, kind, title, summary, partition_label, telegram_status, web_push_status
+FROM notification_records
+WHERE user_id = ?
+  AND (created_at < ? OR (created_at = ? AND id < ?))
+ORDER BY created_at DESC, id DESC
+LIMIT ?
+"#,
+    )
+    .bind(user_id)
+    .bind(&cursor_ts)
+    .bind(&cursor_ts)
+    .bind(&cursor_id)
+    .bind(limit + 1)
+    .fetch_all(db)
+    .await?;
+
+    let visible_rows = rows.iter().take(limit as usize).collect::<Vec<_>>();
+    let record_ids = visible_rows
+        .iter()
+        .map(|row| row.get::<String, _>("id"))
+        .collect::<Vec<_>>();
+    let mut items_by_record = load_notification_record_items_by_record_ids(db, &record_ids).await?;
+
+    let mut items = Vec::with_capacity(visible_rows.len());
+    for row in visible_rows {
+        let record_id = row.get::<String, _>("id");
+        items.push(notification_record_view_from_row(
+            row,
+            items_by_record.remove(&record_id).unwrap_or_default(),
+        ));
+    }
+
+    let next_cursor = if rows.len() as i64 > limit {
+        let last = items
+            .last()
+            .expect("visible items exist when next cursor exists");
+        Some(format!("{}:{}", last.created_at, last.id))
+    } else {
+        None
+    };
+
+    Ok((items, next_cursor))
+}
+
+pub async fn get_notification_record(
+    db: &SqlitePool,
+    user_id: &str,
+    record_id: &str,
+) -> anyhow::Result<Option<NotificationRecordView>> {
+    let row = sqlx::query(
+        r#"
+SELECT id, created_at, kind, title, summary, partition_label, telegram_status, web_push_status
+FROM notification_records
+WHERE user_id = ? AND id = ?
+"#,
+    )
+    .bind(user_id)
+    .bind(record_id)
+    .fetch_optional(db)
+    .await?;
+
+    let Some(row) = row else {
+        return Ok(None);
+    };
+
+    let mut items_by_record =
+        load_notification_record_items_by_record_ids(db, &[record_id.to_string()]).await?;
+    Ok(Some(notification_record_view_from_row(
+        &row,
+        items_by_record.remove(record_id).unwrap_or_default(),
+    )))
+}
+
+pub async fn cleanup_notification_records(
+    db: &SqlitePool,
+    retention_days: i64,
+    max_rows: i64,
+) -> anyhow::Result<()> {
+    let mut tx = db.begin().await?;
+
+    if retention_days > 0 {
+        let cutoff = OffsetDateTime::now_utc()
+            .saturating_sub(time::Duration::days(retention_days))
+            .format(&Rfc3339)
+            .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string());
+        sqlx::query("DELETE FROM notification_records WHERE created_at < ?")
+            .bind(cutoff)
+            .execute(&mut *tx)
+            .await?;
+    }
+    if max_rows > 0 {
+        sqlx::query(
+            r#"
+DELETE FROM notification_records
+WHERE id IN (
+  SELECT id FROM notification_records
+  ORDER BY created_at DESC, id DESC
+  LIMIT -1 OFFSET ?
+)"#,
+        )
+        .bind(max_rows)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    sqlx::query(
+        r#"
+DELETE FROM notification_record_items
+WHERE NOT EXISTS (
+  SELECT 1 FROM notification_records
+  WHERE notification_records.id = notification_record_items.record_id
+)"#,
+    )
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+    Ok(())
 }
 
 pub async fn insert_web_push_subscription(
