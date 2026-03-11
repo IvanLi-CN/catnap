@@ -64,6 +64,9 @@ pub struct MonitoringSnapshot<'a> {
 pub struct MonitoringChangeNotification {
     pub events: Vec<MonitorEventKind>,
     pub telegram_text: String,
+    pub web_push_title: String,
+    pub web_push_body: String,
+    pub web_push_url: String,
 }
 
 pub fn build_monitoring_change_notification(
@@ -142,9 +145,26 @@ pub fn build_monitoring_change_notification(
         lines.push(format!("查看监控：{url}"));
     }
 
+    let web_push_body = {
+        let detail_lines = lines
+            .iter()
+            .skip(1)
+            .filter(|line| !line.starts_with("查看监控："))
+            .cloned()
+            .collect::<Vec<_>>();
+        if detail_lines.is_empty() {
+            name.to_string()
+        } else {
+            format!("{name}｜{}", detail_lines.join("｜"))
+        }
+    };
+
     Some(MonitoringChangeNotification {
         events,
         telegram_text: lines.join("\n"),
+        web_push_title: format!("Catnap · {title}"),
+        web_push_body,
+        web_push_url: "/monitoring".to_string(),
     })
 }
 

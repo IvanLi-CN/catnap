@@ -1505,6 +1505,43 @@ WHERE user_id = ?
                 .collect())
         }
 
+        async fn load_monitored_targets(
+            db: &SqlitePool,
+            ids: &[String],
+        ) -> anyhow::Result<Vec<LifecycleDeliveryTarget>> {
+            if ids.is_empty() {
+                return Ok(Vec::new());
+            }
+            let placeholders = std::iter::repeat_n("?", ids.len())
+                .collect::<Vec<_>>()
+                .join(",");
+            let sql = format!(
+                r#"
+SELECT DISTINCT
+  s.user_id,
+  s.site_base_url,
+  s.telegram_enabled,
+  s.telegram_bot_token,
+  s.telegram_target,
+  s.web_push_enabled
+FROM settings s
+JOIN monitoring_configs m
+  ON m.user_id = s.user_id
+ AND m.enabled = 1
+WHERE m.config_id IN ({placeholders})
+"#
+            );
+            let mut q = sqlx::query(&sql);
+            for id in ids {
+                q = q.bind(id);
+            }
+            Ok(q.fetch_all(db)
+                .await?
+                .into_iter()
+                .map(LifecycleDeliveryTarget::from_row)
+                .collect())
+        }
+
         #[derive(Debug, Clone)]
         struct LifecycleDeliveryTarget {
             user_id: String,
@@ -1653,6 +1690,58 @@ WHERE user_id = ?
             Ok(())
         }
 
+        async fn deliver_monitored_restock_fallbacks(
+            manager: &OpsManager,
+            run_id: i64,
+            target: &LifecycleDeliveryTarget,
+            monitored_ids: &HashSet<String>,
+            listed: &[(String, String, Money, i64)],
+            key: &TaskKey,
+        ) -> anyhow::Result<()> {
+            for (id, name, price, qty) in listed.iter() {
+                if !monitored_ids.contains(id) {
+                    continue;
+                }
+                let notification = notification_content::build_monitoring_change_notification(
+                    name,
+                    &notification_content::MonitoringSnapshot {
+                        inventory_quantity: 0,
+                        price,
+                        digest: "lifecycle-listed-pending",
+                    },
+                    &notification_content::MonitoringSnapshot {
+                        inventory_quantity: *qty,
+                        price,
+                        digest: "lifecycle-listed-pending",
+                    },
+                    target.site_base_url.as_deref(),
+                )
+                .expect("synthetic restock notification should exist");
+                let msg = format!(
+                    "[restock] {name} ({id}) qty={qty} price={} {}",
+                    price.amount,
+                    target.site_base_url.clone().unwrap_or_default()
+                );
+                deliver_monitoring_change_notification(
+                    manager,
+                    run_id,
+                    target,
+                    &msg,
+                    serde_json::json!({
+                        "fid": key.fid.clone(),
+                        "gid": key.gid.clone(),
+                        "configId": id,
+                        "events": ["restock"],
+                        "lifecycleFallback": true,
+                    }),
+                    &notification,
+                )
+                .await?;
+            }
+
+            Ok(())
+        }
+
         async fn deliver_monitoring_change_notification(
             manager: &OpsManager,
             run_id: i64,
@@ -1727,6 +1816,53 @@ WHERE user_id = ?
                 }
             }
 
+            if target.wp_enabled {
+                match crate::db::get_latest_web_push_subscription(
+                    &manager.inner.db,
+                    &target.user_id,
+                )
+                .await
+                {
+                    Ok(Some(sub)) => match notifications::send_web_push(
+                        &manager.inner.cfg,
+                        &sub,
+                        &notification.web_push_title,
+                        &notification.web_push_body,
+                        &notification.web_push_url,
+                    )
+                    .await
+                    {
+                        Ok(_) => {
+                            let _ = manager
+                                .record_notify(run_id, "webPush", "success", None)
+                                .await;
+                        }
+                        Err(err) => {
+                            let err_msg = err.to_string();
+                            let _ = manager
+                                .record_notify(run_id, "webPush", "error", Some(&err_msg))
+                                .await;
+                        }
+                    },
+                    Ok(None) => {
+                        let _ = manager
+                            .record_notify(
+                                run_id,
+                                "webPush",
+                                "skipped",
+                                Some("missing web push subscription"),
+                            )
+                            .await;
+                    }
+                    Err(err) => {
+                        let err_msg = err.to_string();
+                        let _ = manager
+                            .record_notify(run_id, "webPush", "error", Some(&err_msg))
+                            .await;
+                    }
+                }
+            }
+
             Ok(())
         }
 
@@ -1734,7 +1870,10 @@ WHERE user_id = ?
         let listed_pending =
             load_configs(&self.inner.db, &applied.listed_pending_zero_stock_ids).await?;
         let delisted = load_configs(&self.inner.db, &applied.delisted_ids).await?;
-        let allow_monitored_restock_fallback = !reason_counts.contains_key("poller_due");
+        let targets_monitored =
+            load_monitored_targets(&self.inner.db, &applied.listed_event_ids).await?;
+        let allow_monitored_restock_fallback =
+            !(reason_counts.len() == 1 && reason_counts.contains_key("poller_due"));
 
         for (id, name, price, qty) in listed_pending.iter() {
             let msg = format!(
@@ -1759,15 +1898,18 @@ WHERE user_id = ?
         if targets_partition_listed.is_empty()
             && targets_site_listed.is_empty()
             && targets_delisted.is_empty()
+            && targets_monitored.is_empty()
         {
             return Ok(());
         }
 
         let mut partition_target_user_ids = HashSet::new();
+        let mut listed_target_user_ids = HashSet::new();
 
         for row in targets_partition_listed {
             let target = LifecycleDeliveryTarget::from_row(row);
             partition_target_user_ids.insert(target.user_id.clone());
+            listed_target_user_ids.insert(target.user_id.clone());
 
             for (id, name, price, qty) in listed_pending.iter() {
                 let url = target
@@ -1801,46 +1943,20 @@ WHERE user_id = ?
             )
             .await?;
 
+            if allow_monitored_restock_fallback {
+                deliver_monitored_restock_fallbacks(
+                    self,
+                    run_id,
+                    &target,
+                    &monitored_ids,
+                    &listed,
+                    key,
+                )
+                .await?;
+            }
+
             for (id, name, price, qty) in listed.iter() {
                 if monitored_ids.contains(id) {
-                    if allow_monitored_restock_fallback {
-                        let notification =
-                            notification_content::build_monitoring_change_notification(
-                                name,
-                                &notification_content::MonitoringSnapshot {
-                                    inventory_quantity: 0,
-                                    price,
-                                    digest: "lifecycle-listed-pending",
-                                },
-                                &notification_content::MonitoringSnapshot {
-                                    inventory_quantity: *qty,
-                                    price,
-                                    digest: "lifecycle-listed-pending",
-                                },
-                                target.site_base_url.as_deref(),
-                            )
-                            .expect("synthetic restock notification should exist");
-                        let msg = format!(
-                            "[restock] {name} ({id}) qty={qty} price={} {}",
-                            price.amount,
-                            target.site_base_url.clone().unwrap_or_default()
-                        );
-                        deliver_monitoring_change_notification(
-                            self,
-                            run_id,
-                            &target,
-                            &msg,
-                            serde_json::json!({
-                                "fid": key.fid.clone(),
-                                "gid": key.gid.clone(),
-                                "configId": id,
-                                "events": ["restock"],
-                                "lifecycleFallback": true,
-                            }),
-                            &notification,
-                        )
-                        .await?;
-                    }
                     continue;
                 }
 
@@ -1883,6 +1999,7 @@ WHERE user_id = ?
             if partition_target_user_ids.contains(&target.user_id) {
                 continue;
             }
+            listed_target_user_ids.insert(target.user_id.clone());
 
             for (id, name, price, qty) in listed_pending.iter() {
                 let url = target
@@ -1916,46 +2033,20 @@ WHERE user_id = ?
             )
             .await?;
 
+            if allow_monitored_restock_fallback {
+                deliver_monitored_restock_fallbacks(
+                    self,
+                    run_id,
+                    &target,
+                    &monitored_ids,
+                    &listed,
+                    key,
+                )
+                .await?;
+            }
+
             for (id, name, price, qty) in listed.iter() {
                 if monitored_ids.contains(id) {
-                    if allow_monitored_restock_fallback {
-                        let notification =
-                            notification_content::build_monitoring_change_notification(
-                                name,
-                                &notification_content::MonitoringSnapshot {
-                                    inventory_quantity: 0,
-                                    price,
-                                    digest: "lifecycle-listed-pending",
-                                },
-                                &notification_content::MonitoringSnapshot {
-                                    inventory_quantity: *qty,
-                                    price,
-                                    digest: "lifecycle-listed-pending",
-                                },
-                                target.site_base_url.as_deref(),
-                            )
-                            .expect("synthetic restock notification should exist");
-                        let msg = format!(
-                            "[restock] {name} ({id}) qty={qty} price={} {}",
-                            price.amount,
-                            target.site_base_url.clone().unwrap_or_default()
-                        );
-                        deliver_monitoring_change_notification(
-                            self,
-                            run_id,
-                            &target,
-                            &msg,
-                            serde_json::json!({
-                                "fid": key.fid.clone(),
-                                "gid": key.gid.clone(),
-                                "configId": id,
-                                "events": ["restock"],
-                                "lifecycleFallback": true,
-                            }),
-                            &notification,
-                        )
-                        .await?;
-                    }
                     continue;
                 }
 
@@ -1988,6 +2079,32 @@ WHERE user_id = ?
                         "listedKind": "site",
                     }),
                     &notification,
+                )
+                .await?;
+            }
+        }
+
+        if allow_monitored_restock_fallback {
+            for target in targets_monitored {
+                if listed_target_user_ids.contains(&target.user_id) {
+                    continue;
+                }
+                let monitored_ids = load_enabled_monitoring_ids(
+                    &self.inner.db,
+                    &target.user_id,
+                    &applied.listed_event_ids,
+                )
+                .await?;
+                if monitored_ids.is_empty() {
+                    continue;
+                }
+                deliver_monitored_restock_fallbacks(
+                    self,
+                    run_id,
+                    &target,
+                    &monitored_ids,
+                    &listed,
+                    key,
                 )
                 .await?;
             }
@@ -2590,27 +2707,30 @@ INSERT INTO catalog_configs (
         .unwrap();
     }
 
-    async fn seed_listed_user(
+    async fn seed_notification_user(
         db: &SqlitePool,
         cfg: &RuntimeConfig,
         user_id: &str,
         telegram_enabled: bool,
+        site_listed_enabled: bool,
+        web_push_enabled: bool,
     ) {
         crate::db::ensure_user(db, cfg, user_id).await.unwrap();
         sqlx::query(
             r#"
 UPDATE settings
 SET monitoring_events_partition_listed_enabled = 0,
-    monitoring_events_site_listed_enabled = 1,
+    monitoring_events_site_listed_enabled = ?,
     monitoring_events_delisted_enabled = 0,
     telegram_enabled = ?,
     telegram_bot_token = ?,
     telegram_target = ?,
-    web_push_enabled = 0,
+    web_push_enabled = ?,
     site_base_url = ?
 WHERE user_id = ?
 "#,
         )
+        .bind(if site_listed_enabled { 1 } else { 0 })
         .bind(if telegram_enabled { 1 } else { 0 })
         .bind(if telegram_enabled {
             Some("token")
@@ -2618,8 +2738,34 @@ WHERE user_id = ?
             None
         })
         .bind(if telegram_enabled { Some("chat") } else { None })
+        .bind(if web_push_enabled { 1 } else { 0 })
         .bind(Some("https://catnap.example"))
         .bind(user_id)
+        .execute(db)
+        .await
+        .unwrap();
+    }
+
+    async fn seed_listed_user(
+        db: &SqlitePool,
+        cfg: &RuntimeConfig,
+        user_id: &str,
+        telegram_enabled: bool,
+    ) {
+        seed_notification_user(db, cfg, user_id, telegram_enabled, true, false).await;
+    }
+
+    async fn seed_web_push_subscription(db: &SqlitePool, user_id: &str, endpoint: &str) {
+        sqlx::query(
+            r#"INSERT INTO web_push_subscriptions (id, user_id, endpoint, p256dh, auth, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)"#,
+        )
+        .bind(format!("sub_{user_id}"))
+        .bind(user_id)
+        .bind(endpoint)
+        .bind("BLMbF9ffKBiWQLCKvTHb6LO8Nb6dcUh6TItC455vu2kElga6PQvUmaFyCdykxY2nOSSL3yKgfbmFLRTUaGv4yV8")
+        .bind("xS03Fi5ErfTNH_l9WHE9Ig")
+        .bind("2026-01-24T00:00:00Z")
         .execute(db)
         .await
         .unwrap();
@@ -3011,6 +3157,210 @@ WHERE user_id = ?
                 .await
                 .unwrap();
         assert_eq!(listed_logs.get::<i64, _>(0), 0);
+    }
+
+    #[tokio::test]
+    async fn notify_lifecycle_events_sends_restock_to_monitored_users_without_listed_targets() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let hits_for_handler = hits.clone();
+        let telegram = Router::new().route(
+            "/bottoken/sendMessage",
+            post(move || {
+                let hits_for_handler = hits_for_handler.clone();
+                async move {
+                    hits_for_handler.fetch_add(1, Ordering::SeqCst);
+                    (StatusCode::OK, r#"{"ok":true}"#)
+                }
+            }),
+        );
+        let base = spawn_stub_server(telegram).await;
+        let upstream_cart_url = "https://example.invalid/cart".to_string();
+        let mut cfg = test_config(upstream_cart_url.clone());
+        cfg.telegram_api_base_url = base;
+        let (ops, db) = build_ops_manager_with_config(cfg.clone(), upstream_cart_url).await;
+
+        seed_notification_user(&db, &cfg, "u_monitored_only", true, false, false).await;
+        seed_catalog_config(&db, "cfg_monitored_only", "Monitored Only", 2, 17.77).await;
+        sqlx::query(
+            "INSERT INTO monitoring_configs (user_id, config_id, enabled, created_at, updated_at) VALUES (?, ?, 1, ?, ?)",
+        )
+        .bind("u_monitored_only")
+        .bind("cfg_monitored_only")
+        .bind("2026-03-11T00:00:00Z")
+        .bind("2026-03-11T00:00:00Z")
+        .execute(&db)
+        .await
+        .unwrap();
+
+        ops.notify_lifecycle_events(
+            21,
+            &HashMap::from([("manual_refresh".to_string(), 1_i64)]),
+            &crate::db::ApplyCatalogUrlResult {
+                listed_ids: vec!["cfg_monitored_only".to_string()],
+                listed_event_ids: vec!["cfg_monitored_only".to_string()],
+                listed_pending_zero_stock_ids: Vec::new(),
+                delisted_ids: Vec::new(),
+                fetched_at: "2026-03-11T00:00:00Z".to_string(),
+            },
+            &TaskKey {
+                fid: "7".to_string(),
+                gid: Some("40".to_string()),
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+
+        let poll_logs =
+            sqlx::query("SELECT COUNT(*) FROM event_logs WHERE user_id = ? AND scope = ?")
+                .bind("u_monitored_only")
+                .bind("poll")
+                .fetch_one(&db)
+                .await
+                .unwrap();
+        assert_eq!(poll_logs.get::<i64, _>(0), 1);
+
+        let listed_logs =
+            sqlx::query("SELECT COUNT(*) FROM event_logs WHERE user_id = ? AND scope = ?")
+                .bind("u_monitored_only")
+                .bind("catalog.listed")
+                .fetch_one(&db)
+                .await
+                .unwrap();
+        assert_eq!(listed_logs.get::<i64, _>(0), 0);
+    }
+
+    #[tokio::test]
+    async fn notify_lifecycle_events_keeps_restock_fallback_for_mixed_poller_tasks() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let hits_for_handler = hits.clone();
+        let telegram = Router::new().route(
+            "/bottoken/sendMessage",
+            post(move || {
+                let hits_for_handler = hits_for_handler.clone();
+                async move {
+                    hits_for_handler.fetch_add(1, Ordering::SeqCst);
+                    (StatusCode::OK, r#"{"ok":true}"#)
+                }
+            }),
+        );
+        let base = spawn_stub_server(telegram).await;
+        let upstream_cart_url = "https://example.invalid/cart".to_string();
+        let mut cfg = test_config(upstream_cart_url.clone());
+        cfg.telegram_api_base_url = base;
+        let (ops, db) = build_ops_manager_with_config(cfg.clone(), upstream_cart_url).await;
+
+        seed_notification_user(&db, &cfg, "u_mixed", true, false, false).await;
+        seed_catalog_config(&db, "cfg_mixed", "Mixed Reasons", 3, 18.01).await;
+        sqlx::query(
+            "INSERT INTO monitoring_configs (user_id, config_id, enabled, created_at, updated_at) VALUES (?, ?, 1, ?, ?)",
+        )
+        .bind("u_mixed")
+        .bind("cfg_mixed")
+        .bind("2026-03-11T00:00:00Z")
+        .bind("2026-03-11T00:00:00Z")
+        .execute(&db)
+        .await
+        .unwrap();
+
+        ops.notify_lifecycle_events(
+            22,
+            &HashMap::from([
+                ("poller_due".to_string(), 1_i64),
+                ("manual_refresh".to_string(), 1_i64),
+            ]),
+            &crate::db::ApplyCatalogUrlResult {
+                listed_ids: vec!["cfg_mixed".to_string()],
+                listed_event_ids: vec!["cfg_mixed".to_string()],
+                listed_pending_zero_stock_ids: Vec::new(),
+                delisted_ids: Vec::new(),
+                fetched_at: "2026-03-11T00:00:00Z".to_string(),
+            },
+            &TaskKey {
+                fid: "7".to_string(),
+                gid: Some("40".to_string()),
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+
+        let poll_logs =
+            sqlx::query("SELECT COUNT(*) FROM event_logs WHERE user_id = ? AND scope = ?")
+                .bind("u_mixed")
+                .bind("poll")
+                .fetch_one(&db)
+                .await
+                .unwrap();
+        assert_eq!(poll_logs.get::<i64, _>(0), 1);
+    }
+
+    #[tokio::test]
+    async fn notify_lifecycle_events_sends_web_push_for_monitored_fallbacks() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let hits_for_handler = hits.clone();
+        let push = Router::new().route(
+            "/*path",
+            post(move || {
+                let hits_for_handler = hits_for_handler.clone();
+                async move {
+                    hits_for_handler.fetch_add(1, Ordering::SeqCst);
+                    StatusCode::CREATED
+                }
+            }),
+        );
+        let push_base = spawn_stub_server(push).await;
+        let upstream_cart_url = "https://example.invalid/cart".to_string();
+        let mut cfg = test_config(upstream_cart_url.clone());
+        cfg.web_push_vapid_private_key =
+            Some("IQ9Ur0ykXoHS9gzfYX0aBjy9lvdrjx_PFUXmie9YRcY".to_string());
+        cfg.web_push_vapid_subject = Some("mailto:test@example.com".to_string());
+        let (ops, db) = build_ops_manager_with_config(cfg.clone(), upstream_cart_url).await;
+
+        seed_notification_user(&db, &cfg, "u_web_push", false, false, true).await;
+        seed_web_push_subscription(&db, "u_web_push", &format!("{push_base}/push")).await;
+        seed_catalog_config(&db, "cfg_web_push", "Web Push Fallback", 4, 16.66).await;
+        sqlx::query(
+            "INSERT INTO monitoring_configs (user_id, config_id, enabled, created_at, updated_at) VALUES (?, ?, 1, ?, ?)",
+        )
+        .bind("u_web_push")
+        .bind("cfg_web_push")
+        .bind("2026-03-11T00:00:00Z")
+        .bind("2026-03-11T00:00:00Z")
+        .execute(&db)
+        .await
+        .unwrap();
+
+        ops.notify_lifecycle_events(
+            23,
+            &HashMap::from([("manual_refresh".to_string(), 1_i64)]),
+            &crate::db::ApplyCatalogUrlResult {
+                listed_ids: vec!["cfg_web_push".to_string()],
+                listed_event_ids: vec!["cfg_web_push".to_string()],
+                listed_pending_zero_stock_ids: Vec::new(),
+                delisted_ids: Vec::new(),
+                fetched_at: "2026-03-11T00:00:00Z".to_string(),
+            },
+            &TaskKey {
+                fid: "7".to_string(),
+                gid: Some("40".to_string()),
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+
+        let push_notify_rows =
+            sqlx::query("SELECT COUNT(*) FROM ops_notify_runs WHERE channel = ? AND result = ?")
+                .bind("webPush")
+                .bind("success")
+                .fetch_one(&db)
+                .await
+                .unwrap();
+        assert_eq!(push_notify_rows.get::<i64, _>(0), 1);
     }
 
     #[tokio::test]
