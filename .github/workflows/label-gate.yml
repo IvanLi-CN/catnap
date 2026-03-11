@@ -1,18 +1,9 @@
-name: Review Policy
+name: PR Label Gate
 
 on:
   pull_request_target:
     branches: [main]
-    types:
-      - opened
-      - reopened
-      - synchronize
-      - ready_for_review
-  pull_request_review:
-    types:
-      - submitted
-      - dismissed
-      - edited
+    types: [opened, synchronize, reopened, labeled, unlabeled, ready_for_review]
   merge_group:
     types:
       - checks_requested
@@ -20,20 +11,21 @@ on:
     inputs:
       pull_number:
         description: Pull request number to evaluate
-        required: true
+        required: false
         type: number
 
 concurrency:
-  group: review-policy-${{ github.event.pull_request.number || github.event.inputs.pull_number || github.run_id }}
+  group: label-gate-${{ github.event.pull_request.number || github.event.inputs.pull_number || github.run_id }}
   cancel-in-progress: true
 
 permissions:
   contents: read
   pull-requests: read
+  issues: read
 
 jobs:
-  review-policy:
-    name: Review Policy Gate
+  label-gate:
+    name: PR Label Gate
     runs-on: ubuntu-latest
     steps:
       - name: Checkout trusted metadata helpers
@@ -45,11 +37,11 @@ jobs:
           sparse-checkout: |
             .github/scripts
 
-      - name: Evaluate review policy
+      - name: Validate PR intent labels
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MANUAL_PULL_NUMBER: ${{ github.event.inputs.pull_number || '' }}
         run: |
           set -euo pipefail
-          python3 ./.github/scripts/metadata_gate.py review
+          python3 ./.github/scripts/metadata_gate.py label
