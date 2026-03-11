@@ -26,7 +26,7 @@
 
 | ID   | Title | Status | Spec | Last | Notes |
 |-----:|-------|--------|------|------|-------|
-| xm4p2 | 通知记录页与 Telegram 深链 | 部分完成（3/4） | `xm4p2-notification-records-telegram-deeplink/SPEC.md` | 2026-03-11 | 通知记录页、TG 深链、无限滚动与本地质量门已完成；待 PR/checks/review 收口 |
+| xm4p2 | 通知记录页与 Telegram 深链 | 已完成 | `xm4p2-notification-records-telegram-deeplink/SPEC.md` | 2026-03-11 | PR #66：通知记录持久化、独立页面、TG 深链、无限滚动与 review-loop 收口完成 |
 | 32dfj | 分区级监控与双上新通知 | 已完成 | `32dfj-partition-monitoring-new-machine-alerts/SPEC.md` | 2026-03-10 | PR #63：checks 全绿；review-loop 无阻塞项 |
 | z7myy | CI/CD：补齐漏发版本并修复 squash merge 自动发版识别 | 部分完成（5/6） | `z7myy-release-intent-squash-fallback-backfill/SPEC.md` | 2026-03-09 | `v0.6.0` 已由 run `22850192479` 补发；PR #62 待 checks 通过并合并 |
 | cnduu | 低压优先的上架发现优化 | 已完成 | `cnduu-low-pressure-discovery-refresh/SPEC.md` | 2026-03-08 | 已交付：DB-first 启动、topology refresh、discovery_due、cache-hit 复用与 ops/UI 可观测 |

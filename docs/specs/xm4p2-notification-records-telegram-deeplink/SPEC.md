@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 部分完成（3/4）
+- Status: 已完成
 - Created: 2026-03-11
 - Last: 2026-03-11
 
@@ -150,7 +150,7 @@
 - [x] M1: 冻结通知记录 API / DB / 深链契约并创建规格
 - [x] M2: 完成后端通知记录持久化、API 与发送链路接入
 - [x] M3: 完成前端通知记录页、深链定位、高亮与无限滚动
-- [ ] M4: 完成本地质量门、PR、checks 与 review-loop 收敛
+- [x] M4: 完成本地质量门、PR、checks 与 review-loop 收敛
 
 ## 方案概述（Approach, high-level）
 
@@ -169,12 +169,13 @@
 ## Visual Evidence (PR)
 
 - Storybook：`web/src/stories/pages/NotificationsView.stories.tsx` 覆盖默认态、深链态、缺失态与全断点响应式验收。
-- 自动化：`cd web && bun run test:storybook` 共 15 个文件 / 51 个测试通过，其中包含 `Pages/NotificationsView`。
+- 自动化：`cd web && bun run test:storybook` 共 15 个文件 / 52 个测试通过，其中包含 `Pages/NotificationsView` 的恢复用例。
 
 ## 变更记录（Change log）
 
 - 2026-03-11: 创建规格，冻结通知记录页、结构化通知存储、Telegram 深链与无限滚动契约。
 - 2026-03-11: 完成通知记录落库、通知页、深链定位与本地质量门；待 PR、checks 与 review-loop 最终收口。
+- 2026-03-11: PR #66 创建并通过 checks；review-loop 无剩余 findings，规格同步收口完成。
 
 ## 参考（References）
 
