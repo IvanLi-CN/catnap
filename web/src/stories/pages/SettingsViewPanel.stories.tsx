@@ -12,6 +12,7 @@ import { ResponsivePageStory, expectResponsiveBreakpoints } from "./responsivePa
 
 type DemoProps = {
   about: AboutResponse | null;
+  bootstrap?: BootstrapResponse;
 };
 
 const aboutOk: AboutResponse = {
@@ -40,8 +41,42 @@ const aboutUpdateAvailable: AboutResponse = {
   },
 };
 
-function SettingsViewPanelDemo({ about }: DemoProps) {
-  const [bootstrap, setBootstrap] = useState<BootstrapResponse>(demoBootstrap);
+function cloneBootstrap(bootstrap: BootstrapResponse = demoBootstrap): BootstrapResponse {
+  return structuredClone(bootstrap);
+}
+
+function buildMonitoringEventsBootstrap(): BootstrapResponse {
+  const bootstrap = cloneBootstrap();
+  bootstrap.settings.monitoringEvents = {
+    partitionListedEnabled: true,
+    siteListedEnabled: false,
+    delistedEnabled: true,
+  };
+  return bootstrap;
+}
+
+async function findPanelSection(canvasElement: HTMLElement, title: string) {
+  const heading = await within(canvasElement).findByText(title);
+  const section = heading.closest(".panel-section");
+  if (!(section instanceof HTMLElement)) {
+    throw new Error(`Unable to find panel section for ${title}`);
+  }
+  return section;
+}
+
+function getSettingsActionWrap(section: HTMLElement, label: string) {
+  const labelNode = within(section).getByText(label);
+  const actionWrap = labelNode.nextElementSibling;
+  if (!(actionWrap instanceof HTMLElement)) {
+    throw new Error(`Unable to find settings action for ${label}`);
+  }
+  return actionWrap;
+}
+
+function SettingsViewPanelDemo({ about, bootstrap: initialBootstrap = demoBootstrap }: DemoProps) {
+  const [bootstrap, setBootstrap] = useState<BootstrapResponse>(() =>
+    cloneBootstrap(initialBootstrap),
+  );
 
   return (
     <SettingsViewPanel
@@ -93,9 +128,9 @@ function ensureWebPushEnvironment() {
   });
 }
 
-function SettingsViewPanelWebPushDemo({ about }: DemoProps) {
+function SettingsViewPanelWebPushDemo({ about, bootstrap }: DemoProps) {
   ensureWebPushEnvironment();
-  return <SettingsViewPanelDemo about={about} />;
+  return <SettingsViewPanelDemo about={about} bootstrap={bootstrap} />;
 }
 
 function jsonOk(body: unknown = { ok: true }) {
@@ -190,6 +225,44 @@ export const AboutOk: Story = {
   args: { about: aboutOk },
 };
 
+export const MonitoringEventModes: Story = {
+  args: {
+    about: aboutOk,
+    bootstrap: buildMonitoringEventsBootstrap(),
+  },
+  play: async ({ canvasElement }) => {
+    const monitoringSection = await findPanelSection(
+      canvasElement as HTMLElement,
+      "目录拓扑复扫（Catalog topology refresh）",
+    );
+    const partitionAction = getSettingsActionWrap(monitoringSection, "分区上新机");
+    const siteAction = getSettingsActionWrap(monitoringSection, "全站上新机");
+    const delistedAction = getSettingsActionWrap(monitoringSection, "下架监控");
+
+    expect(within(partitionAction).getByRole("button", { name: "启用" })).toBeVisible();
+    expect(within(siteAction).getByRole("button", { name: "关闭" })).toBeVisible();
+    expect(within(delistedAction).getByRole("button", { name: "启用" })).toBeVisible();
+    expect(
+      within(monitoringSection).getByText(
+        "启用后：仅通知已在 products 分组头部开启分区上新的分区。",
+      ),
+    ).toBeVisible();
+    expect(
+      within(monitoringSection).getByText(
+        "启用后：任意分区上架 / 重新上架都会通知，不受分区开关限制。",
+      ),
+    ).toBeVisible();
+
+    await userEvent.click(within(siteAction).getByRole("button", { name: "关闭" }));
+
+    const enabledSiteButton = await within(siteAction).findByRole("button", { name: "启用" });
+    expect(enabledSiteButton).toBeVisible();
+    await userEvent.click(enabledSiteButton);
+    expect(await within(siteAction).findByRole("button", { name: "关闭" })).toBeVisible();
+    expect(within(partitionAction).getByRole("button", { name: "启用" })).toBeVisible();
+  },
+};
+
 export const UpdateAvailable: Story = {
   args: { about: aboutUpdateAvailable },
 };
@@ -257,7 +330,9 @@ export const TelegramSuccessBubbleDismissible: Story = {
 
 export const WebPushSuccessBubble: Story = {
   args: { about: aboutOk },
-  render: (args) => <SettingsViewPanelWebPushDemo about={args.about ?? null} />,
+  render: (args) => (
+    <SettingsViewPanelWebPushDemo about={args.about ?? null} bootstrap={args.bootstrap} />
+  ),
   play: async ({ canvasElement }) => {
     ensureWebPushEnvironment();
     const restoreFetch = installFetchMock((url) => {
@@ -299,7 +374,9 @@ export const WebPushSuccessBubble: Story = {
 
 export const WebPushSuccessBubbleAutoDismiss: Story = {
   args: { about: aboutOk },
-  render: (args) => <SettingsViewPanelWebPushDemo about={args.about ?? null} />,
+  render: (args) => (
+    <SettingsViewPanelWebPushDemo about={args.about ?? null} bootstrap={args.bootstrap} />
+  ),
   play: async ({ canvasElement }) => {
     ensureWebPushEnvironment();
     const restoreFetch = installFetchMock((url) => {
@@ -340,7 +417,9 @@ export const ResponsiveAllBreakpoints: Story = {
       title="Catnap • 系统设置"
       subtitle="使用顶部 Viewport 选择断点进行验收"
       actions={<span className="pill sm">主题切换</span>}
-      renderPage={() => <SettingsViewPanelDemo about={args.about ?? null} />}
+      renderPage={() => (
+        <SettingsViewPanelDemo about={args.about ?? null} bootstrap={args.bootstrap} />
+      )}
     />
   ),
   play: async ({ canvasElement }) => {

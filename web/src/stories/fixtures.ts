@@ -228,13 +228,21 @@ export const demoBootstrap: BootstrapResponse = {
   },
   monitoring: {
     enabledConfigIds: demoConfigs.filter((c) => c.monitorEnabled).map((c) => c.id),
+    enabledPartitions: [
+      { countryId: "jp", regionId: "jp-tokyo" },
+      { countryId: "us", regionId: "us-ca" },
+    ],
     poll: { intervalSeconds: 60, jitterPct: 0.2 },
   },
   settings: {
     poll: { intervalMinutes: 1, jitterPct: 0.2 },
     siteBaseUrl: "https://lxc.lazycat.wiki",
     catalogRefresh: { autoIntervalHours: 1 },
-    monitoringEvents: { listedEnabled: true, delistedEnabled: true },
+    monitoringEvents: {
+      partitionListedEnabled: true,
+      siteListedEnabled: true,
+      delistedEnabled: true,
+    },
     notifications: {
       telegram: { enabled: true, configured: true, target: "@catnap" },
       webPush: { enabled: false, vapidPublicKey: "demo-vapid-public-key" },
