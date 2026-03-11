@@ -507,10 +507,20 @@ function formatAbsoluteTime(iso: string): string {
 }
 
 function notificationKindLabel(kind: string): string {
-  if (kind.includes("restock") && kind.includes("price")) return "补货 + 价格变动";
-  if (kind.includes("restock")) return "补货";
-  if (kind.includes("price")) return "价格变动";
-  if (kind.includes("config")) return "配置更新";
+  if (kind.startsWith("monitoring.")) {
+    const labels = kind
+      .slice("monitoring.".length)
+      .split("+")
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .map((part) => {
+        if (part === "restock") return "补货";
+        if (part === "price") return "价格变动";
+        if (part === "config") return "配置更新";
+        return part;
+      });
+    if (labels.length > 0) return labels.join(" + ");
+  }
   if (kind.includes("partition")) return "分区上新机";
   if (kind.includes("site")) return "全站上新机";
   if (kind.includes("delisted")) return "已下架";
@@ -3916,6 +3926,7 @@ export function NotificationsView({
         if (cancelled) return;
         setItems((prev) => mergeNotificationRecordLists(prev, [record]));
         setHighlightedId(record.id);
+        onTargetHandled?.();
       })
       .catch((e) => {
         if (cancelled) return;
@@ -3928,7 +3939,6 @@ export function NotificationsView({
       .finally(() => {
         if (cancelled) return;
         setLoadingTarget(false);
-        onTargetHandled?.();
       });
 
     return () => {

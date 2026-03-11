@@ -901,7 +901,7 @@ async fn get_notification_records(
     let (items, next_cursor) =
         db::list_notification_records(&state.db, &user.0.id, q.cursor.as_deref(), limit)
             .await
-            .map_err(|_| json_invalid_argument())?;
+            .map_err(|_| json_internal_error())?;
     Ok(Json(NotificationRecordsResponse { items, next_cursor }))
 }
 
@@ -915,7 +915,7 @@ async fn get_notification_record(
     }
     let record = db::get_notification_record(&state.db, &user.0.id, &record_id)
         .await
-        .map_err(|_| json_invalid_argument())?;
+        .map_err(|_| json_internal_error())?;
     match record {
         Some(record) => Ok(Json(record)),
         None => Err(json_not_found_with_message("记录不存在或已过期")),
