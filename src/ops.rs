@@ -1427,7 +1427,7 @@ VALUES (?, ?, ?, NULL, 0, 'fetch', NULL, ?, 0)
     async fn notify_lifecycle_events(
         &self,
         run_id: i64,
-        reason_counts: &HashMap<String, i64>,
+        _reason_counts: &HashMap<String, i64>,
         poller_waiter_user_ids: &HashSet<String>,
         applied: &crate::db::ApplyCatalogUrlResult,
         key: &TaskKey,
@@ -1783,7 +1783,6 @@ WHERE m.config_id IN ({placeholders})
         struct MonitoredFallbackContext<'a> {
             listed: &'a [(String, String, Money, i64)],
             key: &'a TaskKey,
-            allow_non_poller_fallback: bool,
             poller_waiter_user_ids: &'a HashSet<String>,
             listed_id_set: &'a HashSet<String>,
         }
@@ -1802,7 +1801,7 @@ WHERE m.config_id IN ({placeholders})
                 let allow_for_target = if ctx.poller_waiter_user_ids.contains(&target.user_id) {
                     ctx.listed_id_set.contains(id)
                 } else {
-                    ctx.allow_non_poller_fallback
+                    true
                 };
                 if !allow_for_target {
                     continue;
@@ -1978,12 +1977,9 @@ WHERE m.config_id IN ({placeholders})
         let listed_id_set = applied.listed_ids.iter().cloned().collect::<HashSet<_>>();
         let targets_monitored =
             load_monitored_targets(&self.inner.db, &applied.listed_event_ids).await?;
-        let allow_monitored_restock_fallback =
-            !(reason_counts.len() == 1 && reason_counts.contains_key("poller_due"));
         let monitored_fallback_ctx = MonitoredFallbackContext {
             listed: &listed,
             key,
-            allow_non_poller_fallback: allow_monitored_restock_fallback,
             poller_waiter_user_ids,
             listed_id_set: &listed_id_set,
         };
@@ -3167,7 +3163,7 @@ WHERE user_id = ?
     }
 
     #[tokio::test]
-    async fn notify_lifecycle_events_skips_listed_for_monitored_users() {
+    async fn notify_lifecycle_events_replaces_listed_with_restock_for_monitored_users() {
         let hits = Arc::new(AtomicUsize::new(0));
         let hits_for_handler = hits.clone();
         let telegram = Router::new().route(
@@ -3218,7 +3214,7 @@ WHERE user_id = ?
         .await
         .unwrap();
 
-        assert_eq!(hits.load(Ordering::SeqCst), 0);
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
 
         let listed = sqlx::query("SELECT COUNT(*) FROM event_logs WHERE user_id = ? AND scope = ?")
             .bind("u_1")
@@ -3228,11 +3224,85 @@ WHERE user_id = ?
             .unwrap();
         assert_eq!(listed.get::<i64, _>(0), 0);
 
+        let poll_logs =
+            sqlx::query("SELECT COUNT(*) FROM event_logs WHERE user_id = ? AND scope = ?")
+                .bind("u_1")
+                .bind("poll")
+                .fetch_one(&db)
+                .await
+                .unwrap();
+        assert_eq!(poll_logs.get::<i64, _>(0), 1);
+
         let notify_rows = sqlx::query("SELECT COUNT(*) FROM ops_notify_runs")
             .fetch_one(&db)
             .await
             .unwrap();
-        assert_eq!(notify_rows.get::<i64, _>(0), 0);
+        assert_eq!(notify_rows.get::<i64, _>(0), 1);
+    }
+
+    #[tokio::test]
+    async fn notify_lifecycle_events_sends_restock_to_non_waiting_monitored_users_on_pure_poller_runs(
+    ) {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let hits_for_handler = hits.clone();
+        let telegram = Router::new().route(
+            "/bottoken/sendMessage",
+            post(move || {
+                let hits_for_handler = hits_for_handler.clone();
+                async move {
+                    hits_for_handler.fetch_add(1, Ordering::SeqCst);
+                    (StatusCode::OK, r#"{"ok":true}"#)
+                }
+            }),
+        );
+        let base = spawn_stub_server(telegram).await;
+        let upstream_cart_url = "https://example.invalid/cart".to_string();
+        let mut cfg = test_config(upstream_cart_url.clone());
+        cfg.telegram_api_base_url = base;
+        let (ops, db) = build_ops_manager_with_config(cfg.clone(), upstream_cart_url).await;
+
+        seed_notification_user(&db, &cfg, "u_cold", true, false, false).await;
+        seed_catalog_config(&db, "cfg_pure_poller_cold", "Pure Poller Cold", 3, 18.18).await;
+        sqlx::query(
+            "INSERT INTO monitoring_configs (user_id, config_id, enabled, created_at, updated_at) VALUES (?, ?, 1, ?, ?)",
+        )
+        .bind("u_cold")
+        .bind("cfg_pure_poller_cold")
+        .bind("2026-03-11T00:00:00Z")
+        .bind("2026-03-11T00:00:00Z")
+        .execute(&db)
+        .await
+        .unwrap();
+
+        ops.notify_lifecycle_events(
+            13,
+            &HashMap::from([("poller_due".to_string(), 1_i64)]),
+            &HashSet::from(["u_waiting_now".to_string()]),
+            &crate::db::ApplyCatalogUrlResult {
+                listed_ids: Vec::new(),
+                listed_event_ids: vec!["cfg_pure_poller_cold".to_string()],
+                listed_pending_zero_stock_ids: Vec::new(),
+                delisted_ids: Vec::new(),
+                fetched_at: "2026-03-11T00:00:00Z".to_string(),
+            },
+            &TaskKey {
+                fid: "7".to_string(),
+                gid: Some("40".to_string()),
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+
+        let poll_logs =
+            sqlx::query("SELECT COUNT(*) FROM event_logs WHERE user_id = ? AND scope = ?")
+                .bind("u_cold")
+                .bind("poll")
+                .fetch_one(&db)
+                .await
+                .unwrap();
+        assert_eq!(poll_logs.get::<i64, _>(0), 1);
     }
 
     #[tokio::test]
