@@ -54,6 +54,7 @@
 - 当配置首次进入 `active` 但库存 `= 0` 时，不发送 `listed` 通知，不写 `catalog.listed`；必须写入 `catalog.listed.pending_stock` 说明该配置处于“已上架待库存”状态。
 - 上述配置在同一 active 生命周期中第一次从 `0 -> >0` 时，最多补发一次 `listed`；之后库存再次归零再恢复，不再重复触发 `listed`。
 - 若用户已在 `monitoring_configs` 中启用该配置，则该用户在第一次 `0 -> >0` 时只保留现有补货通知；该用户不再额外收到 `listed`。
+- 上述补货提醒不得依赖用户是否启用了分区/全站上新开关；即使 lifecycle task 由 `manual_refresh` / `auto_refresh` / `discovery_due` 触发，或与 `poller_due` 合并执行，也必须在首次有库存时补齐给已监控用户。
 - `recentListed24h` 继续按 `lifecycle_listed_at` 计算，不受新门槛影响。
 - 历史上已经处于 `active` 的记录在迁移后必须被视为“listed 已经发过”，避免上线后对旧数据补发一轮 `listed`。
 
@@ -82,6 +83,9 @@
 - `restock`
   - 现有 `poller` 逻辑保持不变。
   - 当某用户已监控该配置且该配置完成第一次 `0 -> >0` 时，该用户继续只收到补货提醒。
+- 该补货提醒不应复用 listed 订阅集合；即使用户未开启分区/全站上新，只要监控配置已启用，就要在首次有库存时拿到等价补货结果。
+- 若本轮 lifecycle 任务同时包含 `poller_due` 与其他 reason，fanout 仍需为无法依赖 poller 结果的已监控用户补齐 fallback，避免把提醒拖到下一次纯 poller。
+- 在这种 lifecycle fallback 场景下，若用户启用了 Web Push 且存在订阅，也应保留 Web Push 提醒，避免因为抑制 listed 而完全失联。
 
 ### 代表性场景
 
@@ -154,6 +158,9 @@
   - 新 listed 零库存 -> pending_stock。
   - 同 lifecycle 下首次 `0 -> >0` -> listed 仅一次。
   - 已监控用户在首次 `0 -> >0` 只收补货。
+  - 已监控但未开启 listed 的用户，首次 `0 -> >0` 仍能收到 fallback 补货。
+  - `poller_due` 与 `manual_refresh` 混合时，已监控用户不会因粗粒度 reason gate 丢失首次补货。
+  - lifecycle fallback 可为仅启用 Web Push 的已监控用户补齐提醒。
   - relisted 后重新进入 pending -> listed。
 - 日志查询测试确认 `catalog.listed.pending_stock` 可通过现有 `/api/logs` 返回。
 
@@ -204,6 +211,7 @@ None
 
 - 2026-03-11: 初始化规格，冻结“listed 需首次有库存再发”的通知/日志分流范围与验收标准。
 - 2026-03-11: 完成 DB 迁移、listed/pending_stock 分流、设置页文案与 Rust/Web 校验；待 fast-track PR/checks/review-loop 收口。
+- 2026-03-11: review-fix 同步：已监控用户不再依赖 listed 订阅集合；mixed `poller_due` 任务保留首次补货 fallback；synthetic fallback 补齐 Web Push。
 
 ## 参考（References）
 
