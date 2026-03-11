@@ -3190,7 +3190,10 @@ export function SettingsViewPanel({
             </button>
             {renderFieldError("partitionListedEnabled")}
           </div>
-          <div className="hint">启用后：仅通知已在 products 分组头部开启分区上新的分区。</div>
+          <div className="hint">
+            启用后：仅通知已在 products
+            分组头部开启分区上新的分区；上架/重新上架会在首次有库存后触发。
+          </div>
 
           <div>全站上新机</div>
           <div className="settings-action-wrap">
@@ -3209,7 +3212,9 @@ export function SettingsViewPanel({
             </button>
             {renderFieldError("siteListedEnabled")}
           </div>
-          <div className="hint">启用后：任意分区上架 / 重新上架都会通知，不受分区开关限制。</div>
+          <div className="hint">
+            启用后：任意分区上架 / 重新上架都会在首次有库存后通知，不受分区开关限制。
+          </div>
 
           <div>下架监控</div>
           <div className="settings-action-wrap">
