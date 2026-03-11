@@ -86,8 +86,9 @@ INSERT INTO catalog_configs (
   inventory_status, inventory_quantity, checked_at,
   config_digest,
   lifecycle_state, lifecycle_listed_at, lifecycle_delisted_at, lifecycle_last_seen_at,
+  lifecycle_listed_event_at,
   source_pid, source_fid, source_gid
-) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, NULL, ?, NULL, ?, ?)
+) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, NULL, ?, ?, NULL, ?, ?)
 "#,
     )
     .bind("cfg_1")
@@ -101,6 +102,7 @@ INSERT INTO catalog_configs (
     .bind(1_i64)
     .bind("2026-01-01T00:00:00Z")
     .bind("digest")
+    .bind("2026-01-01T00:00:00Z")
     .bind("2026-01-01T00:00:00Z")
     .bind("2026-01-01T00:00:00Z")
     .bind("2")
@@ -169,6 +171,90 @@ async fn apply_catalog_url_fetch_success_persists_region_notice() {
         .await
         .unwrap();
     assert_eq!(row.get::<String, _>(0), "第一条说明");
+}
+
+#[tokio::test]
+async fn apply_catalog_url_fetch_success_delays_listed_until_first_positive_inventory() {
+    let cfg = test_config();
+    let db = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&cfg.db_url)
+        .await
+        .unwrap();
+
+    catnap::db::init_db(&db).await.unwrap();
+
+    let mut configs =
+        catnap::upstream::parse_configs("7", Some("40"), include_str!("fixtures/cart-fid-7.html"));
+    configs.truncate(1);
+    let mut config = configs.remove(0);
+    config.inventory.quantity = 0;
+    config.inventory.status = "out_of_stock".to_string();
+
+    let res = catnap::db::apply_catalog_url_fetch_success(
+        &db,
+        "7",
+        Some("40"),
+        "7:40",
+        "https://example.invalid/cart?fid=7&gid=40",
+        vec![config.clone()],
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert!(res.listed_ids.contains(&config.id));
+    assert!(res.listed_pending_zero_stock_ids.contains(&config.id));
+    assert!(res.listed_event_ids.is_empty());
+
+    let row = sqlx::query("SELECT lifecycle_listed_event_at FROM catalog_configs WHERE id = ?")
+        .bind(&config.id)
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    assert!(row.get::<Option<String>, _>(0).is_none());
+
+    config.inventory.quantity = 2;
+    config.inventory.status = "in_stock".to_string();
+    let res2 = catnap::db::apply_catalog_url_fetch_success(
+        &db,
+        "7",
+        Some("40"),
+        "7:40",
+        "https://example.invalid/cart?fid=7&gid=40",
+        vec![config.clone()],
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert!(res2.listed_ids.is_empty());
+    assert!(res2.listed_pending_zero_stock_ids.is_empty());
+    assert_eq!(res2.listed_event_ids, vec![config.id.clone()]);
+
+    let row2 = sqlx::query("SELECT lifecycle_listed_event_at FROM catalog_configs WHERE id = ?")
+        .bind(&config.id)
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    assert!(row2.get::<Option<String>, _>(0).is_some());
+
+    config.inventory.quantity = 5;
+    let res3 = catnap::db::apply_catalog_url_fetch_success(
+        &db,
+        "7",
+        Some("40"),
+        "7:40",
+        "https://example.invalid/cart?fid=7&gid=40",
+        vec![config],
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert!(res3.listed_ids.is_empty());
+    assert!(res3.listed_pending_zero_stock_ids.is_empty());
+    assert!(res3.listed_event_ids.is_empty());
 }
 
 #[tokio::test]

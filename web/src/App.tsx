@@ -3092,7 +3092,7 @@ export function SettingsViewPanel({
             </button>
             {renderFieldError("listedEnabled")}
           </div>
-          <div className="hint">启用后：上架/重新上架会通知所有启用者</div>
+          <div className="hint">启用后：上架/重新上架会在首次有库存后通知所有启用者</div>
 
           <div>下架监控</div>
           <div className="settings-action-wrap">

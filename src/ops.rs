@@ -5,7 +5,7 @@ use crate::notifications;
 use crate::upstream::{CatalogSnapshot, UpstreamClient};
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use tokio::sync::{broadcast, oneshot, Mutex, Notify, RwLock};
@@ -1310,7 +1310,9 @@ VALUES (?, ?, ?, NULL, 0, 'fetch', NULL, ?, 0)
         }
 
         if should_emit_lifecycle_notify(&reason_counts)
-            && (!applied.listed_ids.is_empty() || !applied.delisted_ids.is_empty())
+            && (!applied.listed_event_ids.is_empty()
+                || !applied.listed_pending_zero_stock_ids.is_empty()
+                || !applied.delisted_ids.is_empty())
         {
             if let Err(err) = self.notify_lifecycle_events(run_id, &applied, key).await {
                 warn!(error = %err, "lifecycle notify failed");
@@ -1338,8 +1340,10 @@ VALUES (?, ?, ?, NULL, 0, 'fetch', NULL, ?, 0)
     ) -> anyhow::Result<()> {
         let mut targets_listed = Vec::new();
         let mut targets_delisted = Vec::new();
+        let has_listed_work = !applied.listed_event_ids.is_empty()
+            || !applied.listed_pending_zero_stock_ids.is_empty();
 
-        if !applied.listed_ids.is_empty() {
+        if has_listed_work {
             targets_listed = sqlx::query(
                 r#"
 SELECT
@@ -1417,7 +1421,40 @@ WHERE id IN ({placeholders})
                 .collect())
         }
 
-        let listed = load_configs(&self.inner.db, &applied.listed_ids).await?;
+        async fn load_enabled_monitoring_ids(
+            db: &SqlitePool,
+            user_id: &str,
+            ids: &[String],
+        ) -> anyhow::Result<HashSet<String>> {
+            if ids.is_empty() {
+                return Ok(HashSet::new());
+            }
+            let placeholders = std::iter::repeat_n("?", ids.len())
+                .collect::<Vec<_>>()
+                .join(",");
+            let sql = format!(
+                r#"
+SELECT config_id
+FROM monitoring_configs
+WHERE user_id = ?
+  AND enabled = 1
+  AND config_id IN ({placeholders})
+"#
+            );
+            let mut q = sqlx::query(&sql).bind(user_id);
+            for id in ids {
+                q = q.bind(id);
+            }
+            Ok(q.fetch_all(db)
+                .await?
+                .into_iter()
+                .map(|row| row.get::<String, _>(0))
+                .collect())
+        }
+
+        let listed = load_configs(&self.inner.db, &applied.listed_event_ids).await?;
+        let listed_pending =
+            load_configs(&self.inner.db, &applied.listed_pending_zero_stock_ids).await?;
         let delisted = load_configs(&self.inner.db, &applied.delisted_ids).await?;
 
         for row in targets_listed {
@@ -1427,8 +1464,40 @@ WHERE id IN ({placeholders})
             let tg_bot_token = row.get::<Option<String>, _>(3);
             let tg_target = row.get::<Option<String>, _>(4);
             let wp_enabled = row.get::<i64, _>(5) != 0;
+            let monitored_ids =
+                load_enabled_monitoring_ids(&self.inner.db, &user_id, &applied.listed_event_ids)
+                    .await?;
+
+            for (id, name, price, qty) in listed_pending.iter() {
+                let url = site_base_url.as_deref().unwrap_or("").trim_end_matches('/');
+                let msg = format!(
+                    "[listed-pending-stock] {name} ({id}) qty={qty} price={} waiting_for_stock {url}/monitoring",
+                    price.amount
+                );
+                let _ = crate::db::insert_log(
+                    &self.inner.db,
+                    Some(&user_id),
+                    "info",
+                    "catalog.listed.pending_stock",
+                    &msg,
+                    Some(serde_json::json!({ "fid": key.fid.clone(), "gid": key.gid.clone() })),
+                )
+                .await;
+                let _ = self
+                    .log(
+                        "info",
+                        "catalog.listed.pending_stock",
+                        &msg,
+                        Some(serde_json::json!({ "runId": run_id, "userId": user_id })),
+                    )
+                    .await;
+            }
 
             for (id, name, price, qty) in listed.iter() {
+                if monitored_ids.contains(id) {
+                    continue;
+                }
+
                 let url = site_base_url.as_deref().unwrap_or("").trim_end_matches('/');
                 let msg = format!(
                     "[listed] {name} ({id}) qty={qty} price={} {url}/monitoring",
@@ -2029,7 +2098,12 @@ pub struct OpsSparksView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::{extract::Query, http::StatusCode, routing::get, Router};
+    use axum::{
+        extract::Query,
+        http::StatusCode,
+        routing::{get, post},
+        Router,
+    };
     use sqlx::sqlite::SqlitePoolOptions;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use time::format_description::well_known::Rfc3339;
@@ -2074,8 +2148,10 @@ mod tests {
         format!("http://{}", addr)
     }
 
-    async fn build_ops_manager(upstream_cart_url: String) -> (OpsManager, SqlitePool) {
-        let cfg = test_config(upstream_cart_url.clone());
+    async fn build_ops_manager_with_config(
+        cfg: RuntimeConfig,
+        upstream_cart_url: String,
+    ) -> (OpsManager, SqlitePool) {
         let db = SqlitePoolOptions::new()
             .max_connections(1)
             .connect(&cfg.db_url)
@@ -2086,6 +2162,11 @@ mod tests {
         let ops = OpsManager::new(cfg, db.clone(), catalog);
         ops.start();
         (ops, db)
+    }
+
+    async fn build_ops_manager(upstream_cart_url: String) -> (OpsManager, SqlitePool) {
+        let cfg = test_config(upstream_cart_url.clone());
+        build_ops_manager_with_config(cfg, upstream_cart_url).await
     }
 
     #[test]
@@ -2184,5 +2265,266 @@ mod tests {
         .unwrap();
         assert_eq!(row.get::<String, _>(0), "fetch");
         assert_eq!(row.get::<i64, _>(1), 0);
+    }
+
+    async fn seed_catalog_config(db: &SqlitePool, id: &str, name: &str, qty: i64, price: f64) {
+        sqlx::query(
+            r#"
+INSERT INTO catalog_configs (
+  id, country_id, region_id, name, specs_json,
+  price_amount, price_currency, price_period,
+  inventory_status, inventory_quantity, checked_at,
+  config_digest,
+  lifecycle_state, lifecycle_listed_at, lifecycle_delisted_at, lifecycle_last_seen_at,
+  lifecycle_listed_event_at,
+  source_pid, source_fid, source_gid
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, NULL, ?, ?, ?, ?, ?)
+"#,
+        )
+        .bind(id)
+        .bind("7")
+        .bind(Some("40"))
+        .bind(name)
+        .bind("[]")
+        .bind(price)
+        .bind("CNY")
+        .bind("month")
+        .bind(if qty > 0 { "in_stock" } else { "out_of_stock" })
+        .bind(qty)
+        .bind("2026-03-11T00:00:00Z")
+        .bind("digest")
+        .bind("2026-03-11T00:00:00Z")
+        .bind("2026-03-11T00:00:00Z")
+        .bind(if qty > 0 {
+            Some("2026-03-11T00:00:00Z")
+        } else {
+            None
+        })
+        .bind(Option::<&str>::None)
+        .bind(Some("7"))
+        .bind(Some("40"))
+        .execute(db)
+        .await
+        .unwrap();
+    }
+
+    async fn seed_listed_user(
+        db: &SqlitePool,
+        cfg: &RuntimeConfig,
+        user_id: &str,
+        telegram_enabled: bool,
+    ) {
+        crate::db::ensure_user(db, cfg, user_id).await.unwrap();
+        sqlx::query(
+            r#"
+UPDATE settings
+SET monitoring_events_listed_enabled = 1,
+    telegram_enabled = ?,
+    telegram_bot_token = ?,
+    telegram_target = ?,
+    web_push_enabled = 0,
+    site_base_url = ?
+WHERE user_id = ?
+"#,
+        )
+        .bind(if telegram_enabled { 1 } else { 0 })
+        .bind(if telegram_enabled {
+            Some("token")
+        } else {
+            None
+        })
+        .bind(if telegram_enabled { Some("chat") } else { None })
+        .bind(Some("https://catnap.example"))
+        .bind(user_id)
+        .execute(db)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn notify_lifecycle_events_logs_pending_stock_without_sending_listed() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let hits_for_handler = hits.clone();
+        let telegram = Router::new().route(
+            "/bottoken/sendMessage",
+            post(move || {
+                let hits_for_handler = hits_for_handler.clone();
+                async move {
+                    hits_for_handler.fetch_add(1, Ordering::SeqCst);
+                    (StatusCode::OK, r#"{"ok":true}"#)
+                }
+            }),
+        );
+        let base = spawn_stub_server(telegram).await;
+        let upstream_cart_url = "https://example.invalid/cart".to_string();
+        let mut cfg = test_config(upstream_cart_url.clone());
+        cfg.telegram_api_base_url = base;
+        let (ops, db) = build_ops_manager_with_config(cfg.clone(), upstream_cart_url).await;
+
+        seed_listed_user(&db, &cfg, "u_1", true).await;
+        seed_catalog_config(&db, "cfg_pending", "Pending Config", 0, 9.99).await;
+
+        ops.notify_lifecycle_events(
+            1,
+            &crate::db::ApplyCatalogUrlResult {
+                listed_ids: vec!["cfg_pending".to_string()],
+                listed_event_ids: Vec::new(),
+                listed_pending_zero_stock_ids: vec!["cfg_pending".to_string()],
+                delisted_ids: Vec::new(),
+                fetched_at: "2026-03-11T00:00:00Z".to_string(),
+            },
+            &TaskKey {
+                fid: "7".to_string(),
+                gid: Some("40".to_string()),
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(hits.load(Ordering::SeqCst), 0);
+
+        let pending =
+            sqlx::query("SELECT COUNT(*) FROM event_logs WHERE user_id = ? AND scope = ?")
+                .bind("u_1")
+                .bind("catalog.listed.pending_stock")
+                .fetch_one(&db)
+                .await
+                .unwrap();
+        assert_eq!(pending.get::<i64, _>(0), 1);
+
+        let listed = sqlx::query("SELECT COUNT(*) FROM event_logs WHERE user_id = ? AND scope = ?")
+            .bind("u_1")
+            .bind("catalog.listed")
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        assert_eq!(listed.get::<i64, _>(0), 0);
+    }
+
+    #[tokio::test]
+    async fn notify_lifecycle_events_skips_listed_for_monitored_users() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let hits_for_handler = hits.clone();
+        let telegram = Router::new().route(
+            "/bottoken/sendMessage",
+            post(move || {
+                let hits_for_handler = hits_for_handler.clone();
+                async move {
+                    hits_for_handler.fetch_add(1, Ordering::SeqCst);
+                    (StatusCode::OK, r#"{"ok":true}"#)
+                }
+            }),
+        );
+        let base = spawn_stub_server(telegram).await;
+        let upstream_cart_url = "https://example.invalid/cart".to_string();
+        let mut cfg = test_config(upstream_cart_url.clone());
+        cfg.telegram_api_base_url = base;
+        let (ops, db) = build_ops_manager_with_config(cfg.clone(), upstream_cart_url).await;
+
+        seed_listed_user(&db, &cfg, "u_1", true).await;
+        seed_catalog_config(&db, "cfg_monitored", "Monitored Config", 2, 19.99).await;
+        sqlx::query(
+            "INSERT INTO monitoring_configs (user_id, config_id, enabled, created_at, updated_at) VALUES (?, ?, 1, ?, ?)",
+        )
+        .bind("u_1")
+        .bind("cfg_monitored")
+        .bind("2026-03-11T00:00:00Z")
+        .bind("2026-03-11T00:00:00Z")
+        .execute(&db)
+        .await
+        .unwrap();
+
+        ops.notify_lifecycle_events(
+            2,
+            &crate::db::ApplyCatalogUrlResult {
+                listed_ids: vec!["cfg_monitored".to_string()],
+                listed_event_ids: vec!["cfg_monitored".to_string()],
+                listed_pending_zero_stock_ids: Vec::new(),
+                delisted_ids: Vec::new(),
+                fetched_at: "2026-03-11T00:00:00Z".to_string(),
+            },
+            &TaskKey {
+                fid: "7".to_string(),
+                gid: Some("40".to_string()),
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(hits.load(Ordering::SeqCst), 0);
+
+        let listed = sqlx::query("SELECT COUNT(*) FROM event_logs WHERE user_id = ? AND scope = ?")
+            .bind("u_1")
+            .bind("catalog.listed")
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        assert_eq!(listed.get::<i64, _>(0), 0);
+
+        let notify_rows = sqlx::query("SELECT COUNT(*) FROM ops_notify_runs")
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        assert_eq!(notify_rows.get::<i64, _>(0), 0);
+    }
+
+    #[tokio::test]
+    async fn notify_lifecycle_events_sends_listed_to_non_monitoring_users() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let hits_for_handler = hits.clone();
+        let telegram = Router::new().route(
+            "/bottoken/sendMessage",
+            post(move || {
+                let hits_for_handler = hits_for_handler.clone();
+                async move {
+                    hits_for_handler.fetch_add(1, Ordering::SeqCst);
+                    (StatusCode::OK, r#"{"ok":true}"#)
+                }
+            }),
+        );
+        let base = spawn_stub_server(telegram).await;
+        let upstream_cart_url = "https://example.invalid/cart".to_string();
+        let mut cfg = test_config(upstream_cart_url.clone());
+        cfg.telegram_api_base_url = base;
+        let (ops, db) = build_ops_manager_with_config(cfg.clone(), upstream_cart_url).await;
+
+        seed_listed_user(&db, &cfg, "u_1", true).await;
+        seed_catalog_config(&db, "cfg_listed", "Listed Config", 2, 29.99).await;
+
+        ops.notify_lifecycle_events(
+            3,
+            &crate::db::ApplyCatalogUrlResult {
+                listed_ids: vec!["cfg_listed".to_string()],
+                listed_event_ids: vec!["cfg_listed".to_string()],
+                listed_pending_zero_stock_ids: Vec::new(),
+                delisted_ids: Vec::new(),
+                fetched_at: "2026-03-11T00:00:00Z".to_string(),
+            },
+            &TaskKey {
+                fid: "7".to_string(),
+                gid: Some("40".to_string()),
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+
+        let listed = sqlx::query("SELECT COUNT(*) FROM event_logs WHERE user_id = ? AND scope = ?")
+            .bind("u_1")
+            .bind("catalog.listed")
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        assert_eq!(listed.get::<i64, _>(0), 1);
+
+        let notify_rows =
+            sqlx::query("SELECT COUNT(*) FROM ops_notify_runs WHERE channel = ? AND result = ?")
+                .bind("telegram")
+                .bind("success")
+                .fetch_one(&db)
+                .await
+                .unwrap();
+        assert_eq!(notify_rows.get::<i64, _>(0), 1);
     }
 }
