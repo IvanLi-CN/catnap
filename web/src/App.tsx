@@ -3914,6 +3914,7 @@ export function NotificationsView({
     const existing = items.find((item) => item.id === targetRecordId);
     if (existing) {
       handledTargetIdRef.current = targetRecordId;
+      setTargetError(null);
       setHighlightedId(existing.id);
       onTargetHandled?.();
       return;
@@ -3934,9 +3935,10 @@ export function NotificationsView({
         if (cancelled) return;
         if (e instanceof ApiHttpError && e.status === 404) {
           setTargetError("记录不存在或已过期");
-        } else {
-          setTargetError(e instanceof Error ? e.message : String(e));
+          return;
         }
+        handledTargetIdRef.current = null;
+        setTargetError(e instanceof Error ? e.message : String(e));
       })
       .finally(() => {
         if (cancelled) return;

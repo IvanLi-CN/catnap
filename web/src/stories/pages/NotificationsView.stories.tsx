@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react";
+import { expect, waitFor } from "storybook/test";
 import { NotificationsView } from "../../App";
 import { demoNotificationRecords, demoNotificationRecordsResponse } from "../fixtures";
 import { ResponsivePageStory, expectResponsiveBreakpoints } from "./responsivePageHelpers";
@@ -48,6 +49,35 @@ export const MissingTarget: Story = {
       nowMs={Date.now()}
     />
   ),
+};
+
+export const RecoversAfterTransientTargetError: Story = {
+  render: () => {
+    let failed = false;
+    return (
+      <NotificationsView
+        fetchRecords={async (params) => {
+          await new Promise((resolve) => window.setTimeout(resolve, 50));
+          return demoNotificationRecordsResponse(params);
+        }}
+        fetchRecord={async (id) => {
+          if (!failed) {
+            failed = true;
+            throw new Error("temporary failure");
+          }
+          return demoFetchRecord(id);
+        }}
+        targetRecordId="nr-1"
+        nowMs={Date.now()}
+      />
+    );
+  },
+  play: async ({ canvasElement }) => {
+    await waitFor(() => {
+      expect(canvasElement.textContent).not.toContain("temporary failure");
+      expect(canvasElement.querySelector('[data-record-id="nr-1"]')).not.toBeNull();
+    });
+  },
 };
 
 export const ResponsiveAllBreakpoints: Story = {
