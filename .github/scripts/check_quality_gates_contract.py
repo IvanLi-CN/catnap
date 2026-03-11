@@ -93,6 +93,7 @@ def validate_label_gate(path: Path) -> None:
     require_text(text, "pull_request.base.sha", "label-gate.yml")
     require_text(text, "merge_group.base_sha", "label-gate.yml")
     forbid_text(text, "pull_request.head.sha", "label-gate.yml")
+    forbid_text(text, "sparse-checkout", "label-gate.yml")
     forbid_text(text, ".github/scripts/label-gate.sh", "label-gate.yml")
     forbid_text(text, "createCommitStatus", "label-gate.yml")
 
@@ -107,6 +108,7 @@ def validate_review_policy(path: Path) -> None:
     require_text(text, "pull_request.base.sha", "review-policy.yml")
     require_text(text, "merge_group.base_sha", "review-policy.yml")
     forbid_text(text, "pull_request.head.sha", "review-policy.yml")
+    forbid_text(text, "sparse-checkout", "review-policy.yml")
     forbid_text(text, "createCommitStatus", "review-policy.yml")
     forbid_text(text, "statuses: write", "review-policy.yml")
 
