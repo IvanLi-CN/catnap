@@ -74,7 +74,7 @@
 
 - `catalog.listed.pending_stock`
   - 面向启用上架监控的用户可见。
-  - 文案应明确是“已上架，但当前库存 0，暂不通知”。
+  - 文案应明确是“已上架，但当前库存 0，暂不通知”，不得暴露内部调试标记。
   - 需要同步写入 ops log，便于观测台追踪为何本轮没有真正发出 listed。
 - `catalog.listed`
   - 仅在 `lifecycle_listed_event_at` 从 `NULL` 首次落值时产生。
@@ -86,6 +86,7 @@
 - 该补货提醒不应复用 listed 订阅集合；即使用户未开启分区/全站上新，只要监控配置已启用，就要在首次有库存时拿到等价补货结果。
 - 若本轮 lifecycle 任务同时包含 `poller_due` 与其他 reason，fanout 仍需为无法依赖 poller 结果的已监控用户补齐 fallback，避免把提醒拖到下一次纯 poller。
 - 若某个已监控配置在纯 `poller_due` 场景下 relisted 且本轮即带库存，也不能因为 poller 仍拿到下架前的正库存快照而漏掉提醒；需要仅对等待中的 poller 用户补一次 lifecycle fallback。
+- fanout 必须读取任务在真正派发时的最新 reason / waiter 集合，而不是仅使用任务启动时的快照；这样运行中晚到的 poller waiter 或 mixed reason joiner 也能参与同一轮 fallback 判定。
 - 反过来，若等待中的 poller 用户本轮仍会收到真实 poller diff（尤其是 mixed reason 的任务），则 lifecycle fallback 不能再给该用户重复发一次补货。
 - 在这种 lifecycle fallback 场景下，若用户启用了 Web Push 且存在订阅，也应保留 Web Push 提醒，避免因为抑制 listed 而完全失联。
 
@@ -162,6 +163,7 @@
   - 已监控用户在首次 `0 -> >0` 只收补货。
   - 已监控但未开启 listed 的用户，首次 `0 -> >0` 仍能收到 fallback 补货。
   - `poller_due` 与 `manual_refresh` 混合时，未等待该 poller 的已监控用户不会因粗粒度 reason gate 丢失首次补货。
+  - 运行中晚到的 poller waiter / mixed reason joiner，仍会按本轮最终任务上下文参与 fallback 判定。
   - 等待中的 poller 用户在 mixed reason 任务里不会重复收到 fallback + poller 两份补货。
   - 纯 `poller_due` relist 且本轮带库存时，等待中的 poller 用户仍能拿到一次 fallback 补货。
   - lifecycle fallback 可为仅启用 Web Push 的已监控用户补齐提醒。
@@ -217,6 +219,7 @@ None
 - 2026-03-11: 完成 DB 迁移、listed/pending_stock 分流、设置页文案与 Rust/Web 校验；待 fast-track PR/checks/review-loop 收口。
 - 2026-03-11: review-fix 同步：已监控用户不再依赖 listed 订阅集合；mixed `poller_due` 任务保留首次补货 fallback；synthetic fallback 补齐 Web Push。
 - 2026-03-11: 第二轮 review-fix：为等待中的 poller 用户记录独立 waiter 身份，补上纯 `poller_due` relist 首次有库存提醒，并避免 mixed reason 任务对 waiter 重复发 fallback。
+- 2026-03-11: 第三轮 review-fix：fanout 在派发前回读任务最新 reason / waiter 集合，确保运行中 join 的 waiter 不漏提醒；`catalog.listed.pending_stock` 改为用户可读中文文案。
 
 ## 参考（References）
 
