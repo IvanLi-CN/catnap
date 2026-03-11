@@ -77,8 +77,11 @@ def validate_ci(path: Path) -> None:
     require_text(text, "merge_group:", "ci.yml")
     require_text(text, "checks_requested", "ci.yml")
     require_text(text, "github.event_name == 'merge_group'", "ci.yml")
+    require_text(text, "bootstrap-label-gate:", "ci.yml")
+    require_text(text, "github.event.inputs.pull_number != ''", "ci.yml")
+    require_text(text, "metadata_gate.py label", "ci.yml")
     forbid_text(text, "pull_request_target:", "ci.yml")
-    forbid_text(text, "name: PR Label Gate", "ci.yml")
+    forbid_text(text, ".github/scripts/label-gate.sh", "ci.yml")
 
 
 def validate_label_gate(path: Path) -> None:
