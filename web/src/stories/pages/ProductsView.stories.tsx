@@ -62,12 +62,27 @@ function buildPartitionMonitoringBootstrap(): BootstrapResponse {
 }
 
 async function findPanelSection(canvasElement: HTMLElement, title: string) {
-  const heading = await within(canvasElement).findByText(title);
-  const section = heading.closest(".panel-section");
+  await within(canvasElement).findByTestId("page-products");
+  const heading = Array.from(canvasElement.querySelectorAll(".panel-section .panel-title")).find(
+    (node) => node.textContent?.trim() === title,
+  );
+  const section = heading?.closest(".panel-section");
   if (!(section instanceof HTMLElement)) {
     throw new Error(`Unable to find panel section for ${title}`);
   }
   return section;
+}
+
+async function findProductRegionBlock(canvasElement: HTMLElement, title: string) {
+  await within(canvasElement).findByTestId("page-products");
+  const heading = Array.from(canvasElement.querySelectorAll(".product-region-title")).find(
+    (node) => node.textContent?.trim() === title,
+  );
+  const block = heading?.closest(".product-region-block");
+  if (!(block instanceof HTMLElement)) {
+    throw new Error(`Unable to find product region block for ${title}`);
+  }
+  return block;
 }
 
 function ProductsViewDemo({ bootstrap: initialBootstrap = demoBootstrap }: DemoProps) {
@@ -170,27 +185,26 @@ export const PartitionMonitoringFocus: Story = {
     bootstrap: buildPartitionMonitoringBootstrap(),
   },
   play: async ({ canvasElement }) => {
-    const tokyoSection = await findPanelSection(canvasElement as HTMLElement, "日本 / 东京");
-    const osakaSection = await findPanelSection(canvasElement as HTMLElement, "日本 / 大阪");
-    const defaultCountrySection = await findPanelSection(
-      canvasElement as HTMLElement,
-      "美国 / 默认",
-    );
+    const japanSection = await findPanelSection(canvasElement as HTMLElement, "日本");
+    const usSection = await findPanelSection(canvasElement as HTMLElement, "美国");
+    const tokyoBlock = await findProductRegionBlock(canvasElement as HTMLElement, "东京");
+    const osakaBlock = await findProductRegionBlock(canvasElement as HTMLElement, "大阪");
 
-    expect(within(tokyoSection).getByRole("button", { name: "分区上新：开" })).toBeVisible();
-    expect(
-      within(defaultCountrySection).getByRole("button", { name: "分区上新：开" }),
-    ).toBeVisible();
-    expect(within(osakaSection).getByRole("button", { name: "分区上新：关" })).toBeVisible();
-    expect(within(tokyoSection).getByText("监控：开")).toBeVisible();
+    expect(within(japanSection).getByRole("button", { name: "地区监控：关" })).toBeVisible();
+    expect(within(usSection).getByRole("button", { name: "地区监控：开" })).toBeVisible();
+    expect(within(tokyoBlock).getByRole("button", { name: "可用区监控：开" })).toBeVisible();
+    expect(within(osakaBlock).getByRole("button", { name: "可用区监控：关" })).toBeVisible();
+    expect(within(tokyoBlock).getByText("监控：开")).toBeVisible();
 
-    await userEvent.click(within(osakaSection).getByRole("button", { name: "分区上新：关" }));
+    await userEvent.click(within(osakaBlock).getByRole("button", { name: "可用区监控：关" }));
 
-    const enabledToggle = await within(osakaSection).findByRole("button", { name: "分区上新：开" });
+    const enabledToggle = await within(osakaBlock).findByRole("button", {
+      name: "可用区监控：开",
+    });
     expect(enabledToggle).toBeVisible();
     await userEvent.click(enabledToggle);
-    expect(await within(osakaSection).findByRole("button", { name: "分区上新：关" })).toBeVisible();
-    expect(within(osakaSection).getAllByText("监控：关")).toHaveLength(2);
+    expect(await within(osakaBlock).findByRole("button", { name: "可用区监控：关" })).toBeVisible();
+    expect(within(osakaBlock).getAllByText("监控：关")).toHaveLength(2);
   },
 };
 

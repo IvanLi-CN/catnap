@@ -239,9 +239,9 @@ export const demoBootstrap: BootstrapResponse = {
     siteBaseUrl: "https://lxc.lazycat.wiki",
     catalogRefresh: { autoIntervalHours: 1 },
     monitoringEvents: {
-      partitionListedEnabled: true,
-      siteListedEnabled: true,
-      delistedEnabled: true,
+      partitionCatalogChangeEnabled: true,
+      regionPartitionChangeEnabled: true,
+      siteRegionChangeEnabled: true,
     },
     notifications: {
       telegram: { enabled: true, configured: true, target: "@catnap" },

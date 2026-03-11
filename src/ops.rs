@@ -1,11 +1,13 @@
 use crate::config::RuntimeConfig;
 use crate::models::Money;
-use crate::notification_content::{self, LifecycleNotificationKind};
+use crate::notification_content::{
+    self, ConfigLifecycleNotificationKind, TopologyNotificationKind,
+};
 use crate::notifications;
 use crate::upstream::{CatalogSnapshot, UpstreamClient};
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use tokio::sync::{broadcast, oneshot, Mutex, Notify, RwLock};
@@ -157,6 +159,354 @@ struct Inner {
     publish_lock: Mutex<()>,
     state: Mutex<RuntimeState>,
     notify: Notify,
+}
+
+#[derive(Debug, Clone)]
+struct NotificationDeliveryTarget {
+    user_id: String,
+    site_base_url: Option<String>,
+    tg_enabled: bool,
+    tg_bot_token: Option<String>,
+    tg_target: Option<String>,
+    wp_enabled: bool,
+}
+
+impl NotificationDeliveryTarget {
+    fn from_row(row: sqlx::sqlite::SqliteRow) -> Self {
+        Self {
+            user_id: row.get::<String, _>(0),
+            site_base_url: row.get::<Option<String>, _>(1),
+            tg_enabled: row.get::<i64, _>(2) != 0,
+            tg_bot_token: row.get::<Option<String>, _>(3),
+            tg_target: row.get::<Option<String>, _>(4),
+            wp_enabled: row.get::<i64, _>(5) != 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ConfigLifecycleRecord {
+    id: String,
+    name: String,
+    price: Money,
+    quantity: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CountryTopologyChange {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RegionTopologyChange {
+    pub country_id: String,
+    pub country_name: String,
+    pub region_id: String,
+    pub region_name: String,
+}
+
+async fn load_partition_label(
+    db: &SqlitePool,
+    country_id: &str,
+    region_id: Option<&str>,
+) -> anyhow::Result<Option<String>> {
+    let country_row = sqlx::query("SELECT name FROM catalog_countries WHERE id = ?")
+        .bind(country_id)
+        .fetch_optional(db)
+        .await?;
+    let Some(country_row) = country_row else {
+        return Ok(None);
+    };
+    let country_name = country_row.get::<String, _>(0);
+    let Some(region_id) = region_id else {
+        return Ok(Some(country_name));
+    };
+    let region_row =
+        sqlx::query("SELECT name FROM catalog_regions WHERE country_id = ? AND id = ?")
+            .bind(country_id)
+            .bind(region_id)
+            .fetch_optional(db)
+            .await?;
+    let Some(region_row) = region_row else {
+        return Ok(Some(country_name));
+    };
+    let region_name = region_row.get::<String, _>(0);
+    Ok(Some(format!("{country_name} / {region_name}")))
+}
+
+async fn load_config_lifecycle_records(
+    db: &SqlitePool,
+    ids: &[String],
+) -> anyhow::Result<HashMap<String, ConfigLifecycleRecord>> {
+    if ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let placeholders = std::iter::repeat_n("?", ids.len())
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql = format!(
+        r#"
+SELECT id, name, price_amount, price_currency, price_period, inventory_quantity
+FROM catalog_configs
+WHERE id IN ({placeholders})
+"#
+    );
+    let mut q = sqlx::query(&sql);
+    for id in ids {
+        q = q.bind(id);
+    }
+    let rows = q.fetch_all(db).await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            let record = ConfigLifecycleRecord {
+                id: row.get::<String, _>(0),
+                name: row.get::<String, _>(1),
+                price: Money {
+                    amount: row.get::<f64, _>(2),
+                    currency: row.get::<String, _>(3),
+                    period: row.get::<String, _>(4),
+                },
+                quantity: row.get::<i64, _>(5),
+            };
+            (record.id.clone(), record)
+        })
+        .collect())
+}
+
+async fn load_country_catalog_summary(
+    db: &SqlitePool,
+    country_id: &str,
+) -> anyhow::Result<(Vec<notification_content::CatalogSummaryItem>, usize)> {
+    let total_count = sqlx::query(
+        r#"
+SELECT COUNT(*)
+FROM catalog_configs
+WHERE country_id = ?
+  AND lifecycle_state = 'active'
+"#,
+    )
+    .bind(country_id)
+    .fetch_one(db)
+    .await?
+    .get::<i64, _>(0)
+    .max(0) as usize;
+
+    let rows = sqlx::query(
+        r#"
+SELECT name, price_amount, price_currency, price_period
+FROM catalog_configs
+WHERE country_id = ?
+  AND lifecycle_state = 'active'
+ORDER BY price_amount ASC, id ASC
+LIMIT 10
+"#,
+    )
+    .bind(country_id)
+    .fetch_all(db)
+    .await?;
+
+    let items = rows
+        .into_iter()
+        .map(|row| notification_content::CatalogSummaryItem {
+            name: row.get::<String, _>(0),
+            price: Money {
+                amount: row.get::<f64, _>(1),
+                currency: row.get::<String, _>(2),
+                period: row.get::<String, _>(3),
+            },
+        })
+        .collect();
+
+    Ok((items, total_count))
+}
+
+async fn load_region_catalog_summary(
+    db: &SqlitePool,
+    country_id: &str,
+    region_id: &str,
+) -> anyhow::Result<(Vec<notification_content::CatalogSummaryItem>, usize)> {
+    let total_count = sqlx::query(
+        r#"
+SELECT COUNT(*)
+FROM catalog_configs
+WHERE country_id = ?
+  AND region_id = ?
+  AND lifecycle_state = 'active'
+"#,
+    )
+    .bind(country_id)
+    .bind(region_id)
+    .fetch_one(db)
+    .await?
+    .get::<i64, _>(0)
+    .max(0) as usize;
+
+    let rows = sqlx::query(
+        r#"
+SELECT name, price_amount, price_currency, price_period
+FROM catalog_configs
+WHERE country_id = ?
+  AND region_id = ?
+  AND lifecycle_state = 'active'
+ORDER BY price_amount ASC, id ASC
+LIMIT 10
+"#,
+    )
+    .bind(country_id)
+    .bind(region_id)
+    .fetch_all(db)
+    .await?;
+
+    let items = rows
+        .into_iter()
+        .map(|row| notification_content::CatalogSummaryItem {
+            name: row.get::<String, _>(0),
+            price: Money {
+                amount: row.get::<f64, _>(1),
+                currency: row.get::<String, _>(2),
+                period: row.get::<String, _>(3),
+            },
+        })
+        .collect();
+
+    Ok((items, total_count))
+}
+
+async fn deliver_outbound_notification(
+    manager: &OpsManager,
+    run_id: Option<i64>,
+    target: &NotificationDeliveryTarget,
+    scope: &str,
+    msg: &str,
+    meta: serde_json::Value,
+    notification: &notification_content::OutboundNotification,
+) -> anyhow::Result<()> {
+    let _ = crate::db::insert_log(
+        &manager.inner.db,
+        Some(&target.user_id),
+        "info",
+        scope,
+        msg,
+        Some(meta.clone()),
+    )
+    .await;
+    let _ = manager
+        .log(
+            "info",
+            scope,
+            msg,
+            Some(serde_json::json!({
+                "runId": run_id,
+                "userId": target.user_id,
+                "meta": meta,
+            })),
+        )
+        .await;
+
+    if target.tg_enabled {
+        match (target.tg_bot_token.as_deref(), target.tg_target.as_deref()) {
+            (Some(token), Some(target_chat)) => match notifications::send_telegram(
+                &manager.inner.cfg.telegram_api_base_url,
+                token,
+                target_chat,
+                &notification.telegram_text,
+            )
+            .await
+            {
+                Ok(_) => {
+                    if let Some(run_id) = run_id {
+                        let _ = manager
+                            .record_notify(run_id, "telegram", "success", None)
+                            .await;
+                    }
+                }
+                Err(err) => {
+                    let err_msg = err.to_string();
+                    if let Some(run_id) = run_id {
+                        let _ = manager
+                            .record_notify(run_id, "telegram", "error", Some(&err_msg))
+                            .await;
+                    }
+                    let _ = crate::db::insert_log(
+                        &manager.inner.db,
+                        Some(&target.user_id),
+                        "warn",
+                        "notify.telegram",
+                        "telegram send failed",
+                        Some(serde_json::json!({ "error": err.to_string() })),
+                    )
+                    .await;
+                }
+            },
+            _ => {
+                if let Some(run_id) = run_id {
+                    let _ = manager
+                        .record_notify(
+                            run_id,
+                            "telegram",
+                            "skipped",
+                            Some("missing telegram config"),
+                        )
+                        .await;
+                }
+            }
+        }
+    }
+
+    if target.wp_enabled {
+        match crate::db::get_latest_web_push_subscription(&manager.inner.db, &target.user_id).await
+        {
+            Ok(Some(sub)) => match notifications::send_web_push(
+                &manager.inner.cfg,
+                &sub,
+                &notification.web_push_title,
+                &notification.web_push_body,
+                &notification.web_push_url,
+            )
+            .await
+            {
+                Ok(_) => {
+                    if let Some(run_id) = run_id {
+                        let _ = manager
+                            .record_notify(run_id, "webPush", "success", None)
+                            .await;
+                    }
+                }
+                Err(err) => {
+                    let err_msg = err.to_string();
+                    if let Some(run_id) = run_id {
+                        let _ = manager
+                            .record_notify(run_id, "webPush", "error", Some(&err_msg))
+                            .await;
+                    }
+                }
+            },
+            Ok(None) => {
+                if let Some(run_id) = run_id {
+                    let _ = manager
+                        .record_notify(
+                            run_id,
+                            "webPush",
+                            "skipped",
+                            Some("missing web push subscription"),
+                        )
+                        .await;
+                }
+            }
+            Err(err) => {
+                let err_msg = err.to_string();
+                if let Some(run_id) = run_id {
+                    let _ = manager
+                        .record_notify(run_id, "webPush", "error", Some(&err_msg))
+                        .await;
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 #[derive(Debug, Clone)]
@@ -1336,16 +1686,15 @@ VALUES (?, ?, ?, NULL, 0, 'fetch', NULL, ?, 0)
         applied: &crate::db::ApplyCatalogUrlResult,
         key: &TaskKey,
     ) -> anyhow::Result<()> {
+        if applied.listed_ids.is_empty() && applied.delisted_ids.is_empty() {
+            return Ok(());
+        }
+
         let partition_key = crate::db::monitoring_partition_key(&key.fid, key.gid.as_deref());
         let partition_label =
             load_partition_label(&self.inner.db, &key.fid, key.gid.as_deref()).await?;
-        let mut targets_partition_listed = Vec::new();
-        let mut targets_site_listed = Vec::new();
-        let mut targets_delisted = Vec::new();
-
-        if !applied.listed_ids.is_empty() {
-            targets_partition_listed = sqlx::query(
-                r#"
+        let targets = sqlx::query(
+            r#"
 SELECT
   s.user_id,
   s.site_base_url,
@@ -1358,305 +1707,166 @@ JOIN monitoring_partitions m
   ON m.user_id = s.user_id
  AND m.partition_key = ?
  AND m.enabled = 1
-WHERE s.monitoring_events_partition_listed_enabled = 1
+WHERE s.monitoring_events_partition_catalog_change_enabled = 1
 "#,
-            )
-            .bind(&partition_key)
-            .fetch_all(&self.inner.db)
-            .await?;
-            targets_site_listed = sqlx::query(
-                r#"
-SELECT
-  user_id,
-  site_base_url,
-  telegram_enabled,
-  telegram_bot_token,
-  telegram_target,
-  web_push_enabled
-FROM settings
-WHERE monitoring_events_site_listed_enabled = 1
-"#,
-            )
-            .fetch_all(&self.inner.db)
-            .await?;
-        }
-        if !applied.delisted_ids.is_empty() {
-            targets_delisted = sqlx::query(
-                r#"
-SELECT
-  user_id,
-  site_base_url,
-  telegram_enabled,
-  telegram_bot_token,
-  telegram_target,
-  web_push_enabled
-FROM settings
-WHERE monitoring_events_delisted_enabled = 1
-"#,
-            )
-            .fetch_all(&self.inner.db)
-            .await?;
+        )
+        .bind(&partition_key)
+        .fetch_all(&self.inner.db)
+        .await?
+        .into_iter()
+        .map(NotificationDeliveryTarget::from_row)
+        .collect::<Vec<_>>();
+
+        if targets.is_empty() {
+            return Ok(());
         }
 
-        if targets_partition_listed.is_empty()
-            && targets_site_listed.is_empty()
-            && targets_delisted.is_empty()
+        let mut ids = applied.listed_ids.clone();
+        ids.extend(applied.delisted_ids.iter().cloned());
+        let config_by_id = load_config_lifecycle_records(&self.inner.db, &ids).await?;
+
+        for target in &targets {
+            for config_id in &applied.listed_ids {
+                let Some(record) = config_by_id.get(config_id) else {
+                    continue;
+                };
+                let msg = format!(
+                    "[config_added] {} ({}) qty={} price={}",
+                    record.name, record.id, record.quantity, record.price.amount
+                );
+                let notification = notification_content::build_config_lifecycle_notification(
+                    ConfigLifecycleNotificationKind::Added,
+                    &record.name,
+                    partition_label.as_deref(),
+                    record.quantity,
+                    &record.price,
+                    target.site_base_url.as_deref(),
+                );
+                deliver_outbound_notification(
+                    self,
+                    Some(run_id),
+                    target,
+                    "catalog.config.added",
+                    &msg,
+                    serde_json::json!({
+                        "fid": &key.fid,
+                        "gid": key.gid.as_deref(),
+                        "configId": &record.id,
+                        "partitionKey": &partition_key,
+                        "fetchedAt": &applied.fetched_at,
+                        "changeKind": "added",
+                    }),
+                    &notification,
+                )
+                .await?;
+            }
+
+            for config_id in &applied.delisted_ids {
+                let Some(record) = config_by_id.get(config_id) else {
+                    continue;
+                };
+                let msg = format!(
+                    "[config_removed] {} ({}) qty={} price={}",
+                    record.name, record.id, record.quantity, record.price.amount
+                );
+                let notification = notification_content::build_config_lifecycle_notification(
+                    ConfigLifecycleNotificationKind::Removed,
+                    &record.name,
+                    partition_label.as_deref(),
+                    record.quantity,
+                    &record.price,
+                    target.site_base_url.as_deref(),
+                );
+                deliver_outbound_notification(
+                    self,
+                    Some(run_id),
+                    target,
+                    "catalog.config.removed",
+                    &msg,
+                    serde_json::json!({
+                        "fid": &key.fid,
+                        "gid": key.gid.as_deref(),
+                        "configId": &record.id,
+                        "partitionKey": &partition_key,
+                        "fetchedAt": &applied.fetched_at,
+                        "changeKind": "removed",
+                    }),
+                    &notification,
+                )
+                .await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    pub async fn notify_topology_changes(
+        &self,
+        added_countries: &[CountryTopologyChange],
+        removed_countries: &[CountryTopologyChange],
+        added_regions: &[RegionTopologyChange],
+        removed_regions: &[RegionTopologyChange],
+    ) -> anyhow::Result<()> {
+        if added_countries.is_empty()
+            && removed_countries.is_empty()
+            && added_regions.is_empty()
+            && removed_regions.is_empty()
         {
             return Ok(());
         }
 
-        async fn load_configs(
-            db: &SqlitePool,
-            ids: &[String],
-        ) -> anyhow::Result<Vec<(String, String, Money, i64)>> {
-            if ids.is_empty() {
-                return Ok(Vec::new());
-            }
-            let placeholders = std::iter::repeat_n("?", ids.len())
-                .collect::<Vec<_>>()
-                .join(",");
-            let sql = format!(
+        let site_targets = if added_countries.is_empty() && removed_countries.is_empty() {
+            Vec::new()
+        } else {
+            sqlx::query(
                 r#"
-SELECT id, name, price_amount, price_currency, price_period, inventory_quantity
-FROM catalog_configs
-WHERE id IN ({placeholders})
-"#
-            );
-            let mut q = sqlx::query(&sql);
-            for id in ids {
-                q = q.bind(id);
-            }
-            let rows = q.fetch_all(db).await?;
-            Ok(rows
-                .into_iter()
-                .map(|r| {
-                    (
-                        r.get::<String, _>(0),
-                        r.get::<String, _>(1),
-                        Money {
-                            amount: r.get::<f64, _>(2),
-                            currency: r.get::<String, _>(3),
-                            period: r.get::<String, _>(4),
-                        },
-                        r.get::<i64, _>(5),
-                    )
-                })
-                .collect())
-        }
-
-        async fn load_partition_label(
-            db: &SqlitePool,
-            country_id: &str,
-            region_id: Option<&str>,
-        ) -> anyhow::Result<Option<String>> {
-            let country_row = sqlx::query("SELECT name FROM catalog_countries WHERE id = ?")
-                .bind(country_id)
-                .fetch_optional(db)
-                .await?;
-            let Some(country_row) = country_row else {
-                return Ok(None);
-            };
-            let country_name = country_row.get::<String, _>(0);
-            let Some(region_id) = region_id else {
-                return Ok(Some(country_name));
-            };
-            let region_row =
-                sqlx::query("SELECT name FROM catalog_regions WHERE country_id = ? AND id = ?")
-                    .bind(country_id)
-                    .bind(region_id)
-                    .fetch_optional(db)
-                    .await?;
-            let Some(region_row) = region_row else {
-                return Ok(Some(country_name));
-            };
-            let region_name = region_row.get::<String, _>(0);
-            Ok(Some(format!("{country_name} / {region_name}")))
-        }
-
-        #[derive(Debug, Clone)]
-        struct LifecycleDeliveryTarget {
-            user_id: String,
-            site_base_url: Option<String>,
-            tg_enabled: bool,
-            tg_bot_token: Option<String>,
-            tg_target: Option<String>,
-            wp_enabled: bool,
-        }
-
-        impl LifecycleDeliveryTarget {
-            fn from_row(row: sqlx::sqlite::SqliteRow) -> Self {
-                Self {
-                    user_id: row.get::<String, _>(0),
-                    site_base_url: row.get::<Option<String>, _>(1),
-                    tg_enabled: row.get::<i64, _>(2) != 0,
-                    tg_bot_token: row.get::<Option<String>, _>(3),
-                    tg_target: row.get::<Option<String>, _>(4),
-                    wp_enabled: row.get::<i64, _>(5) != 0,
-                }
-            }
-        }
-
-        async fn deliver_lifecycle_notification(
-            manager: &OpsManager,
-            run_id: i64,
-            target: &LifecycleDeliveryTarget,
-            scope: &str,
-            msg: &str,
-            meta: serde_json::Value,
-            notification: &notification_content::OutboundNotification,
-        ) -> anyhow::Result<()> {
-            let _ = crate::db::insert_log(
-                &manager.inner.db,
-                Some(&target.user_id),
-                "info",
-                scope,
-                msg,
-                Some(meta.clone()),
+SELECT
+  user_id,
+  site_base_url,
+  telegram_enabled,
+  telegram_bot_token,
+  telegram_target,
+  web_push_enabled
+FROM settings
+WHERE monitoring_events_site_region_change_enabled = 1
+"#,
             )
-            .await;
-            let _ = manager
-                .log(
-                    "info",
-                    scope,
-                    msg,
-                    Some(serde_json::json!({
-                        "runId": run_id,
-                        "userId": target.user_id,
-                        "meta": meta,
-                    })),
-                )
-                .await;
+            .fetch_all(&self.inner.db)
+            .await?
+            .into_iter()
+            .map(NotificationDeliveryTarget::from_row)
+            .collect::<Vec<_>>()
+        };
 
-            if target.tg_enabled {
-                match (target.tg_bot_token.as_deref(), target.tg_target.as_deref()) {
-                    (Some(token), Some(target_chat)) => match notifications::send_telegram(
-                        &manager.inner.cfg.telegram_api_base_url,
-                        token,
-                        target_chat,
-                        &notification.telegram_text,
-                    )
-                    .await
-                    {
-                        Ok(_) => {
-                            let _ = manager
-                                .record_notify(run_id, "telegram", "success", None)
-                                .await;
-                        }
-                        Err(err) => {
-                            let err_msg = err.to_string();
-                            let _ = manager
-                                .record_notify(run_id, "telegram", "error", Some(&err_msg))
-                                .await;
-                            let _ = crate::db::insert_log(
-                                &manager.inner.db,
-                                Some(&target.user_id),
-                                "warn",
-                                "notify.telegram",
-                                "telegram send failed",
-                                Some(serde_json::json!({ "error": err.to_string() })),
-                            )
-                            .await;
-                        }
-                    },
-                    _ => {
-                        let _ = manager
-                            .record_notify(
-                                run_id,
-                                "telegram",
-                                "skipped",
-                                Some("missing telegram config"),
-                            )
-                            .await;
-                    }
-                }
+        for change in added_countries {
+            if site_targets.is_empty() {
+                break;
             }
-
-            if target.wp_enabled {
-                match crate::db::get_latest_web_push_subscription(
-                    &manager.inner.db,
-                    &target.user_id,
-                )
-                .await
-                {
-                    Ok(Some(sub)) => match notifications::send_web_push(
-                        &manager.inner.cfg,
-                        &sub,
-                        &notification.web_push_title,
-                        &notification.web_push_body,
-                        &notification.web_push_url,
-                    )
-                    .await
-                    {
-                        Ok(_) => {
-                            let _ = manager
-                                .record_notify(run_id, "webPush", "success", None)
-                                .await;
-                        }
-                        Err(err) => {
-                            let err_msg = err.to_string();
-                            let _ = manager
-                                .record_notify(run_id, "webPush", "error", Some(&err_msg))
-                                .await;
-                        }
-                    },
-                    Ok(None) => {
-                        let _ = manager
-                            .record_notify(
-                                run_id,
-                                "webPush",
-                                "skipped",
-                                Some("missing web push subscription"),
-                            )
-                            .await;
-                    }
-                    Err(err) => {
-                        let err_msg = err.to_string();
-                        let _ = manager
-                            .record_notify(run_id, "webPush", "error", Some(&err_msg))
-                            .await;
-                    }
-                }
-            }
-
-            Ok(())
-        }
-
-        let listed = load_configs(&self.inner.db, &applied.listed_ids).await?;
-        let delisted = load_configs(&self.inner.db, &applied.delisted_ids).await?;
-        let mut partition_target_user_ids = HashSet::new();
-
-        for row in targets_partition_listed {
-            let target = LifecycleDeliveryTarget::from_row(row);
-            partition_target_user_ids.insert(target.user_id.clone());
-
-            for (id, name, price, qty) in listed.iter() {
-                let url = target
-                    .site_base_url
-                    .as_deref()
-                    .unwrap_or("")
-                    .trim_end_matches('/');
+            let (catalog_items, total_catalog_count) =
+                load_country_catalog_summary(&self.inner.db, &change.id).await?;
+            for target in &site_targets {
                 let msg = format!(
-                    "[partition_listed] {name} ({id}) qty={qty} price={} {url}/monitoring",
-                    price.amount
+                    "[region_added] {} catalogCount={}",
+                    change.name, total_catalog_count
                 );
-                let notification = notification_content::build_lifecycle_notification(
-                    LifecycleNotificationKind::PartitionListed,
-                    name,
-                    partition_label.as_deref(),
-                    *qty,
-                    price,
+                let notification = notification_content::build_topology_notification(
+                    TopologyNotificationKind::RegionAdded,
+                    &change.name,
+                    &catalog_items,
+                    total_catalog_count,
                     target.site_base_url.as_deref(),
                 );
-                deliver_lifecycle_notification(
+                deliver_outbound_notification(
                     self,
-                    run_id,
-                    &target,
-                    "catalog.listed",
+                    None,
+                    target,
+                    "catalog.region.added",
                     &msg,
                     serde_json::json!({
-                        "fid": key.fid.clone(),
-                        "gid": key.gid.clone(),
-                        "listedKind": "partition",
+                        "countryId": &change.id,
+                        "countryName": &change.name,
+                        "catalogCount": total_catalog_count,
+                        "changeKind": "added",
                     }),
                     &notification,
                 )
@@ -1664,40 +1874,102 @@ WHERE id IN ({placeholders})
             }
         }
 
-        for row in targets_site_listed {
-            let target = LifecycleDeliveryTarget::from_row(row);
-            if partition_target_user_ids.contains(&target.user_id) {
+        for change in removed_countries {
+            for target in &site_targets {
+                let msg = format!("[region_removed] {}", change.name);
+                let notification = notification_content::build_topology_notification(
+                    TopologyNotificationKind::RegionRemoved,
+                    &change.name,
+                    &[],
+                    0,
+                    target.site_base_url.as_deref(),
+                );
+                deliver_outbound_notification(
+                    self,
+                    None,
+                    target,
+                    "catalog.region.removed",
+                    &msg,
+                    serde_json::json!({
+                        "countryId": &change.id,
+                        "countryName": &change.name,
+                        "changeKind": "removed",
+                    }),
+                    &notification,
+                )
+                .await?;
+            }
+        }
+
+        let mut region_targets_by_country =
+            HashMap::<String, Vec<NotificationDeliveryTarget>>::new();
+
+        for change in added_regions {
+            let country_partition_key =
+                crate::db::monitoring_partition_key(&change.country_id, None);
+            let targets =
+                if let Some(existing) = region_targets_by_country.get(&country_partition_key) {
+                    existing.clone()
+                } else {
+                    let loaded = sqlx::query(
+                        r#"
+SELECT
+  s.user_id,
+  s.site_base_url,
+  s.telegram_enabled,
+  s.telegram_bot_token,
+  s.telegram_target,
+  s.web_push_enabled
+FROM settings s
+JOIN monitoring_partitions m
+  ON m.user_id = s.user_id
+ AND m.partition_key = ?
+ AND m.enabled = 1
+WHERE s.monitoring_events_region_partition_change_enabled = 1
+"#,
+                    )
+                    .bind(&country_partition_key)
+                    .fetch_all(&self.inner.db)
+                    .await?
+                    .into_iter()
+                    .map(NotificationDeliveryTarget::from_row)
+                    .collect::<Vec<_>>();
+                    region_targets_by_country.insert(country_partition_key.clone(), loaded.clone());
+                    loaded
+                };
+            if targets.is_empty() {
                 continue;
             }
 
-            for (id, name, price, qty) in listed.iter() {
-                let url = target
-                    .site_base_url
-                    .as_deref()
-                    .unwrap_or("")
-                    .trim_end_matches('/');
+            let label = format!("{} / {}", change.country_name, change.region_name);
+            let (catalog_items, total_catalog_count) =
+                load_region_catalog_summary(&self.inner.db, &change.country_id, &change.region_id)
+                    .await?;
+            for target in &targets {
                 let msg = format!(
-                    "[site_listed] {name} ({id}) qty={qty} price={} {url}/monitoring",
-                    price.amount
+                    "[partition_added] {} catalogCount={}",
+                    label, total_catalog_count
                 );
-                let notification = notification_content::build_lifecycle_notification(
-                    LifecycleNotificationKind::SiteListed,
-                    name,
-                    partition_label.as_deref(),
-                    *qty,
-                    price,
+                let notification = notification_content::build_topology_notification(
+                    TopologyNotificationKind::PartitionAdded,
+                    &label,
+                    &catalog_items,
+                    total_catalog_count,
                     target.site_base_url.as_deref(),
                 );
-                deliver_lifecycle_notification(
+                deliver_outbound_notification(
                     self,
-                    run_id,
-                    &target,
-                    "catalog.listed",
+                    None,
+                    target,
+                    "catalog.partition.added",
                     &msg,
                     serde_json::json!({
-                        "fid": key.fid.clone(),
-                        "gid": key.gid.clone(),
-                        "listedKind": "site",
+                        "countryId": &change.country_id,
+                        "countryName": &change.country_name,
+                        "regionId": &change.region_id,
+                        "regionName": &change.region_name,
+                        "catalogCount": total_catalog_count,
+                        "changeKind": "added",
                     }),
                     &notification,
                 )
@@ -1705,34 +1977,66 @@ WHERE id IN ({placeholders})
             }
         }
 
-        for row in targets_delisted {
-            let target = LifecycleDeliveryTarget::from_row(row);
+        for change in removed_regions {
+            let country_partition_key =
+                crate::db::monitoring_partition_key(&change.country_id, None);
+            let targets =
+                if let Some(existing) = region_targets_by_country.get(&country_partition_key) {
+                    existing.clone()
+                } else {
+                    let loaded = sqlx::query(
+                        r#"
+SELECT
+  s.user_id,
+  s.site_base_url,
+  s.telegram_enabled,
+  s.telegram_bot_token,
+  s.telegram_target,
+  s.web_push_enabled
+FROM settings s
+JOIN monitoring_partitions m
+  ON m.user_id = s.user_id
+ AND m.partition_key = ?
+ AND m.enabled = 1
+WHERE s.monitoring_events_region_partition_change_enabled = 1
+"#,
+                    )
+                    .bind(&country_partition_key)
+                    .fetch_all(&self.inner.db)
+                    .await?
+                    .into_iter()
+                    .map(NotificationDeliveryTarget::from_row)
+                    .collect::<Vec<_>>();
+                    region_targets_by_country.insert(country_partition_key.clone(), loaded.clone());
+                    loaded
+                };
+            if targets.is_empty() {
+                continue;
+            }
 
-            for (id, name, price, qty) in delisted.iter() {
-                let url = target
-                    .site_base_url
-                    .as_deref()
-                    .unwrap_or("")
-                    .trim_end_matches('/');
-                let msg = format!(
-                    "[delisted] {name} ({id}) qty={qty} price={} {url}/monitoring",
-                    price.amount
-                );
-                let notification = notification_content::build_lifecycle_notification(
-                    LifecycleNotificationKind::Delisted,
-                    name,
-                    None,
-                    *qty,
-                    price,
+            let label = format!("{} / {}", change.country_name, change.region_name);
+            for target in &targets {
+                let msg = format!("[partition_removed] {}", label);
+                let notification = notification_content::build_topology_notification(
+                    TopologyNotificationKind::PartitionRemoved,
+                    &label,
+                    &[],
+                    0,
                     target.site_base_url.as_deref(),
                 );
-                deliver_lifecycle_notification(
+                deliver_outbound_notification(
                     self,
-                    run_id,
-                    &target,
-                    "catalog.delisted",
+                    None,
+                    target,
+                    "catalog.partition.removed",
                     &msg,
-                    serde_json::json!({ "fid": key.fid.clone(), "gid": key.gid.clone() }),
+                    serde_json::json!({
+                        "countryId": &change.country_id,
+                        "countryName": &change.country_name,
+                        "regionId": &change.region_id,
+                        "regionName": &change.region_name,
+                        "changeKind": "removed",
+                    }),
                     &notification,
                 )
                 .await?;
@@ -2250,7 +2554,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn listed_notifications_prefer_partition_targets_over_site_wide_targets() {
+    async fn config_lifecycle_notifications_only_target_monitored_partition_users() {
         let (ops, db) = build_ops_manager("https://example.com/cart".to_string()).await;
 
         crate::db::replace_catalog_topology(
@@ -2297,10 +2601,10 @@ mod tests {
         .await
         .unwrap();
 
-        for (user_id, partition_listed, site_listed) in [
-            ("u_partition_only", true, false),
-            ("u_site_only", false, true),
-            ("u_both", true, true),
+        for (user_id, partition_enabled) in [
+            ("u_partition_only", true),
+            ("u_partition_disabled", false),
+            ("u_unmonitored", true),
         ] {
             crate::db::ensure_user(&db, &ops.inner.cfg, user_id)
                 .await
@@ -2308,16 +2612,15 @@ mod tests {
             sqlx::query(
                 r#"
 UPDATE settings
-SET monitoring_events_partition_listed_enabled = ?,
-    monitoring_events_site_listed_enabled = ?,
-    monitoring_events_delisted_enabled = 0,
+SET monitoring_events_partition_catalog_change_enabled = ?,
+    monitoring_events_region_partition_change_enabled = 0,
+    monitoring_events_site_region_change_enabled = 0,
     telegram_enabled = 0,
     web_push_enabled = 0
 WHERE user_id = ?
 "#,
             )
-            .bind(if partition_listed { 1 } else { 0 })
-            .bind(if site_listed { 1 } else { 0 })
+            .bind(if partition_enabled { 1 } else { 0 })
             .bind(user_id)
             .execute(&db)
             .await
@@ -2327,15 +2630,21 @@ WHERE user_id = ?
         crate::db::set_monitoring_partition_enabled(&db, "u_partition_only", "7", Some("40"), true)
             .await
             .unwrap();
-        crate::db::set_monitoring_partition_enabled(&db, "u_both", "7", Some("40"), true)
-            .await
-            .unwrap();
+        crate::db::set_monitoring_partition_enabled(
+            &db,
+            "u_partition_disabled",
+            "7",
+            Some("40"),
+            true,
+        )
+        .await
+        .unwrap();
 
         ops.notify_lifecycle_events(
             42,
             &crate::db::ApplyCatalogUrlResult {
                 listed_ids: vec!["lc:7:40:test".to_string()],
-                delisted_ids: vec![],
+                delisted_ids: vec!["lc:7:40:test".to_string()],
                 fetched_at: "2026-03-10T00:00:00Z".to_string(),
             },
             &TaskKey {
@@ -2347,31 +2656,156 @@ WHERE user_id = ?
         .unwrap();
 
         let rows = sqlx::query(
-            "SELECT user_id, message, meta_json FROM event_logs WHERE scope = 'catalog.listed' ORDER BY user_id ASC",
+            "SELECT user_id, scope FROM event_logs WHERE scope LIKE 'catalog.config.%' ORDER BY user_id ASC, scope ASC",
         )
         .fetch_all(&db)
         .await
         .unwrap();
-        assert_eq!(rows.len(), 3);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].get::<String, _>(0), "u_partition_only");
+        assert_eq!(rows[0].get::<String, _>(1), "catalog.config.added");
+        assert_eq!(rows[1].get::<String, _>(0), "u_partition_only");
+        assert_eq!(rows[1].get::<String, _>(1), "catalog.config.removed");
+    }
 
-        let expected = std::collections::HashMap::from([
-            ("u_both", ("partition", "[partition_listed]")),
-            ("u_partition_only", ("partition", "[partition_listed]")),
-            ("u_site_only", ("site", "[site_listed]")),
-        ]);
-        for row in rows {
-            let user_id = row.get::<String, _>(0);
-            let message = row.get::<String, _>(1);
-            let meta = serde_json::from_str::<serde_json::Value>(
-                &row.get::<Option<String>, _>(2).expect("meta json"),
+    #[tokio::test]
+    async fn topology_notifications_route_to_parent_scopes() {
+        let (ops, db) = build_ops_manager("https://example.com/cart".to_string()).await;
+
+        crate::db::replace_catalog_topology(
+            &db,
+            "https://example.com/cart",
+            &[crate::models::Country {
+                id: "7".to_string(),
+                name: "德国".to_string(),
+            }],
+            &[crate::models::Region {
+                id: "40".to_string(),
+                country_id: "7".to_string(),
+                name: "德国特惠".to_string(),
+                location_name: None,
+            }],
+        )
+        .await
+        .unwrap();
+        crate::db::upsert_catalog_configs(
+            &db,
+            &[crate::upstream::ConfigBase {
+                id: "lc:7:40:test".to_string(),
+                country_id: "7".to_string(),
+                region_id: Some("40".to_string()),
+                name: "德国特惠年付 Mini".to_string(),
+                specs: vec![],
+                price: crate::models::Money {
+                    amount: 9.99,
+                    currency: "CNY".to_string(),
+                    period: "year".to_string(),
+                },
+                inventory: crate::models::Inventory {
+                    status: "in_stock".to_string(),
+                    quantity: 2,
+                    checked_at: "2026-03-10T00:00:00Z".to_string(),
+                },
+                digest: "digest-1".to_string(),
+                monitor_supported: true,
+                source_pid: Some("test".to_string()),
+                source_fid: Some("7".to_string()),
+                source_gid: Some("40".to_string()),
+            }],
+        )
+        .await
+        .unwrap();
+
+        for (user_id, region_enabled, site_enabled) in [
+            ("u_region_scope", true, false),
+            ("u_region_disabled", false, false),
+            ("u_site_scope", false, true),
+            ("u_site_disabled", false, false),
+        ] {
+            crate::db::ensure_user(&db, &ops.inner.cfg, user_id)
+                .await
+                .unwrap();
+            sqlx::query(
+                r#"
+UPDATE settings
+SET monitoring_events_partition_catalog_change_enabled = 0,
+    monitoring_events_region_partition_change_enabled = ?,
+    monitoring_events_site_region_change_enabled = ?,
+    telegram_enabled = 0,
+    web_push_enabled = 0
+WHERE user_id = ?
+"#,
             )
+            .bind(if region_enabled { 1 } else { 0 })
+            .bind(if site_enabled { 1 } else { 0 })
+            .bind(user_id)
+            .execute(&db)
+            .await
             .unwrap();
-            let (listed_kind, message_prefix) = expected
-                .get(user_id.as_str())
-                .copied()
-                .expect("unexpected recipient");
-            assert_eq!(meta["listedKind"].as_str(), Some(listed_kind));
-            assert!(message.starts_with(message_prefix));
         }
+
+        crate::db::set_monitoring_partition_enabled(&db, "u_region_scope", "7", None, true)
+            .await
+            .unwrap();
+        crate::db::set_monitoring_partition_enabled(&db, "u_region_disabled", "7", None, true)
+            .await
+            .unwrap();
+
+        ops.notify_topology_changes(
+            &[CountryTopologyChange {
+                id: "8".to_string(),
+                name: "芬兰".to_string(),
+            }],
+            &[CountryTopologyChange {
+                id: "9".to_string(),
+                name: "冰岛".to_string(),
+            }],
+            &[RegionTopologyChange {
+                country_id: "7".to_string(),
+                country_name: "德国".to_string(),
+                region_id: "41".to_string(),
+                region_name: "德国精品".to_string(),
+            }],
+            &[RegionTopologyChange {
+                country_id: "7".to_string(),
+                country_name: "德国".to_string(),
+                region_id: "42".to_string(),
+                region_name: "德国下架区".to_string(),
+            }],
+        )
+        .await
+        .unwrap();
+
+        let rows = sqlx::query(
+            "SELECT user_id, scope FROM event_logs WHERE scope LIKE 'catalog.%' ORDER BY user_id ASC, scope ASC",
+        )
+        .fetch_all(&db)
+        .await
+        .unwrap();
+        let actual = rows
+            .into_iter()
+            .map(|row| (row.get::<String, _>(0), row.get::<String, _>(1)))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            actual,
+            vec![
+                (
+                    "u_region_scope".to_string(),
+                    "catalog.partition.added".to_string()
+                ),
+                (
+                    "u_region_scope".to_string(),
+                    "catalog.partition.removed".to_string()
+                ),
+                (
+                    "u_site_scope".to_string(),
+                    "catalog.region.added".to_string()
+                ),
+                (
+                    "u_site_scope".to_string(),
+                    "catalog.region.removed".to_string()
+                ),
+            ]
+        );
     }
 }

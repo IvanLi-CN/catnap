@@ -13,6 +13,14 @@ const INVENTORY_HISTORY_RETENTION_DAYS: i64 = 30;
 const DISCOVERY_INTERVAL_SECONDS: i64 = 5 * 60;
 const TOPOLOGY_RETRY_SECONDS: i64 = 5 * 60;
 
+#[derive(Debug, Default, PartialEq, Eq)]
+struct TopologyNotificationChanges {
+    added_countries: Vec<crate::ops::CountryTopologyChange>,
+    removed_countries: Vec<crate::ops::CountryTopologyChange>,
+    added_regions: Vec<crate::ops::RegionTopologyChange>,
+    removed_regions: Vec<crate::ops::RegionTopologyChange>,
+}
+
 fn initial_topology_due(
     now: OffsetDateTime,
     topology_interval: time::Duration,
@@ -51,6 +59,18 @@ pub async fn refresh_catalog_topology(state: &AppState, reason: &str) -> anyhow:
             let previous_snapshot = state.catalog.read().await.clone();
             let preserved_ambiguous_countries =
                 preserve_ambiguous_country_regions(&mut topology, &previous_snapshot);
+            let addition_topology =
+                merge_topology_probe_result(&previous_snapshot, topology.clone());
+            let added_changes = collect_topology_notification_changes(
+                &previous_snapshot,
+                &addition_topology.countries,
+                &addition_topology.regions,
+            );
+            let removed_changes = collect_topology_notification_changes(
+                &previous_snapshot,
+                &topology.countries,
+                &topology.regions,
+            );
             let previous_targets = known_catalog_targets(state).await?;
             db::replace_catalog_topology(
                 &state.db,
@@ -72,6 +92,18 @@ pub async fn refresh_catalog_topology(state: &AppState, reason: &str) -> anyhow:
                 .collect::<Vec<_>>();
             let retired_ids = db::retire_catalog_targets(&state.db, &removed_targets).await?;
             persist_topology_region_notices(state, &topology).await?;
+            if let Err(err) = state
+                .ops
+                .notify_topology_changes(
+                    &added_changes.added_countries,
+                    &removed_changes.removed_countries,
+                    &added_changes.added_regions,
+                    &removed_changes.removed_regions,
+                )
+                .await
+            {
+                warn!(error = %err, "topology lifecycle notify failed");
+            }
             let request_count = topology.request_count;
             apply_topology_snapshot(&state.catalog, topology, &state.config.upstream_cart_url)
                 .await;
@@ -117,6 +149,11 @@ pub async fn probe_catalog_topology(state: &AppState, reason: &str) -> anyhow::R
                 .map(|(fid, gid)| catalog_region_key(&fid, gid.as_deref()))
                 .collect::<HashSet<_>>();
             let topology = merge_topology_probe_result(&previous_snapshot, topology);
+            let added_changes = collect_topology_notification_changes(
+                &previous_snapshot,
+                &topology.countries,
+                &topology.regions,
+            );
             db::replace_catalog_topology(
                 &state.db,
                 &state.config.upstream_cart_url,
@@ -125,6 +162,18 @@ pub async fn probe_catalog_topology(state: &AppState, reason: &str) -> anyhow::R
             )
             .await?;
             persist_topology_region_notices(state, &topology).await?;
+            if let Err(err) = state
+                .ops
+                .notify_topology_changes(
+                    &added_changes.added_countries,
+                    &[],
+                    &added_changes.added_regions,
+                    &[],
+                )
+                .await
+            {
+                warn!(error = %err, "topology lifecycle notify failed");
+            }
             let discovered_target_count =
                 topology
                     .countries
@@ -275,6 +324,116 @@ fn merge_topology_probe_result(
         refreshed_at: topology.refreshed_at,
         request_count: topology.request_count,
     }
+}
+
+fn collect_topology_notification_changes(
+    previous: &CatalogSnapshot,
+    next_countries: &[crate::models::Country],
+    next_regions: &[crate::models::Region],
+) -> TopologyNotificationChanges {
+    let previous_country_ids = previous
+        .countries
+        .iter()
+        .map(|country| country.id.as_str())
+        .collect::<HashSet<_>>();
+    let next_country_ids = next_countries
+        .iter()
+        .map(|country| country.id.as_str())
+        .collect::<HashSet<_>>();
+    let previous_country_names = previous
+        .countries
+        .iter()
+        .map(|country| (country.id.as_str(), country.name.as_str()))
+        .collect::<HashMap<_, _>>();
+    let next_country_names = next_countries
+        .iter()
+        .map(|country| (country.id.as_str(), country.name.as_str()))
+        .collect::<HashMap<_, _>>();
+
+    let mut changes = TopologyNotificationChanges {
+        added_countries: next_countries
+            .iter()
+            .filter(|country| !previous_country_ids.contains(country.id.as_str()))
+            .map(|country| crate::ops::CountryTopologyChange {
+                id: country.id.clone(),
+                name: country.name.clone(),
+            })
+            .collect(),
+        removed_countries: previous
+            .countries
+            .iter()
+            .filter(|country| !next_country_ids.contains(country.id.as_str()))
+            .map(|country| crate::ops::CountryTopologyChange {
+                id: country.id.clone(),
+                name: country.name.clone(),
+            })
+            .collect(),
+        ..TopologyNotificationChanges::default()
+    };
+
+    let previous_region_keys = previous
+        .regions
+        .iter()
+        .map(|region| catalog_region_key(&region.country_id, Some(region.id.as_str())))
+        .collect::<HashSet<_>>();
+    let next_region_keys = next_regions
+        .iter()
+        .map(|region| catalog_region_key(&region.country_id, Some(region.id.as_str())))
+        .collect::<HashSet<_>>();
+
+    changes.added_regions = next_regions
+        .iter()
+        .filter(|region| {
+            !previous_region_keys.contains(&catalog_region_key(
+                &region.country_id,
+                Some(region.id.as_str()),
+            ))
+        })
+        .map(|region| crate::ops::RegionTopologyChange {
+            country_id: region.country_id.clone(),
+            country_name: next_country_names
+                .get(region.country_id.as_str())
+                .copied()
+                .unwrap_or(region.country_id.as_str())
+                .to_string(),
+            region_id: region.id.clone(),
+            region_name: region.name.clone(),
+        })
+        .collect();
+
+    changes.removed_regions = previous
+        .regions
+        .iter()
+        .filter(|region| {
+            !next_region_keys.contains(&catalog_region_key(
+                &region.country_id,
+                Some(region.id.as_str()),
+            ))
+        })
+        .map(|region| crate::ops::RegionTopologyChange {
+            country_id: region.country_id.clone(),
+            country_name: previous_country_names
+                .get(region.country_id.as_str())
+                .copied()
+                .unwrap_or(region.country_id.as_str())
+                .to_string(),
+            region_id: region.id.clone(),
+            region_name: region.name.clone(),
+        })
+        .collect();
+
+    changes.added_countries.sort_by(|a, b| a.id.cmp(&b.id));
+    changes.removed_countries.sort_by(|a, b| a.id.cmp(&b.id));
+    changes.added_regions.sort_by(|a, b| {
+        (a.country_id.as_str(), a.region_id.as_str())
+            .cmp(&(b.country_id.as_str(), b.region_id.as_str()))
+    });
+    changes.removed_regions.sort_by(|a, b| {
+        (a.country_id.as_str(), a.region_id.as_str())
+            .cmp(&(b.country_id.as_str(), b.region_id.as_str()))
+    });
+
+    changes
 }
 
 async fn run(state: AppState) -> anyhow::Result<()> {

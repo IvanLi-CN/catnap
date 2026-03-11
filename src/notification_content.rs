@@ -35,24 +35,61 @@ impl MonitorEventKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LifecycleNotificationKind {
-    PartitionListed,
-    SiteListed,
-    Delisted,
+pub enum ConfigLifecycleNotificationKind {
+    Added,
+    Removed,
 }
 
-impl LifecycleNotificationKind {
+impl ConfigLifecycleNotificationKind {
     fn label(self) -> &'static str {
         match self {
-            Self::PartitionListed => "分区上新机",
-            Self::SiteListed => "全站上新机",
-            Self::Delisted => "已下架",
+            Self::Added => "套餐新增",
+            Self::Removed => "套餐已删除",
         }
     }
 
-    fn is_listed(self) -> bool {
-        matches!(self, Self::PartitionListed | Self::SiteListed)
+    fn summary_prefix(self) -> &'static str {
+        match self {
+            Self::Added => "库存",
+            Self::Removed => "最近状态：库存",
+        }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TopologyNotificationKind {
+    RegionAdded,
+    RegionRemoved,
+    PartitionAdded,
+    PartitionRemoved,
+}
+
+impl TopologyNotificationKind {
+    fn label(self) -> &'static str {
+        match self {
+            Self::RegionAdded => "新地区",
+            Self::RegionRemoved => "地区已删除",
+            Self::PartitionAdded => "新可用区",
+            Self::PartitionRemoved => "可用区已删除",
+        }
+    }
+
+    fn target_label(self) -> &'static str {
+        match self {
+            Self::RegionAdded | Self::RegionRemoved => "地区",
+            Self::PartitionAdded | Self::PartitionRemoved => "可用区",
+        }
+    }
+
+    fn includes_catalog(self) -> bool {
+        matches!(self, Self::RegionAdded | Self::PartitionAdded)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CatalogSummaryItem {
+    pub name: String,
+    pub price: Money,
 }
 
 pub struct MonitoringSnapshot<'a> {
@@ -148,19 +185,19 @@ pub fn build_monitoring_change_notification(
     })
 }
 
-pub fn build_lifecycle_notification(
-    kind: LifecycleNotificationKind,
+pub fn build_config_lifecycle_notification(
+    kind: ConfigLifecycleNotificationKind,
     name: &str,
     partition_label: Option<&str>,
     quantity: i64,
     price: &Money,
     site_base_url: Option<&str>,
 ) -> OutboundNotification {
-    let summary = if kind.is_listed() {
-        format!("库存 {quantity}｜{}", format_money(price))
-    } else {
-        format!("最近状态：库存 {quantity}｜{}", format_money(price))
-    };
+    let summary = format!(
+        "{} {quantity}｜{}",
+        kind.summary_prefix(),
+        format_money(price)
+    );
 
     let normalized_partition_label = partition_label
         .map(str::trim)
@@ -168,11 +205,11 @@ pub fn build_lifecycle_notification(
 
     let mut telegram_lines = vec![format!("【{}】{name}", kind.label())];
     if let Some(partition_label) = normalized_partition_label {
-        telegram_lines.push(format!("分区：{partition_label}"));
+        telegram_lines.push(format!("可用区：{partition_label}"));
     }
     telegram_lines.push(summary.clone());
-    if let Some(url) = monitoring_url(site_base_url) {
-        telegram_lines.push(format!("查看监控：{url}"));
+    if let Some(url) = products_url(site_base_url) {
+        telegram_lines.push(format!("查看全部产品：{url}"));
     }
 
     let web_push_body = if let Some(partition_label) = normalized_partition_label {
@@ -185,7 +222,70 @@ pub fn build_lifecycle_notification(
         telegram_text: telegram_lines.join("\n"),
         web_push_title: format!("Catnap · {}", kind.label()),
         web_push_body,
-        web_push_url: "/monitoring".to_string(),
+        web_push_url: "/products".to_string(),
+    }
+}
+
+pub fn build_topology_notification(
+    kind: TopologyNotificationKind,
+    scope_label: &str,
+    catalog_items: &[CatalogSummaryItem],
+    total_catalog_count: usize,
+    site_base_url: Option<&str>,
+) -> OutboundNotification {
+    let normalized_scope_label = scope_label.trim();
+    let mut telegram_lines = vec![format!("【{}】{}", kind.label(), normalized_scope_label)];
+    telegram_lines.push(format!(
+        "{}：{}",
+        kind.target_label(),
+        normalized_scope_label
+    ));
+
+    if kind.includes_catalog() {
+        if catalog_items.is_empty() {
+            telegram_lines.push("当前未发现套餐。".to_string());
+        } else {
+            telegram_lines.push("当前套餐：".to_string());
+            telegram_lines.extend(catalog_items.iter().enumerate().map(|(idx, item)| {
+                format!("{}. {}｜{}", idx + 1, item.name, format_money(&item.price))
+            }));
+            if total_catalog_count > catalog_items.len() {
+                telegram_lines.push(format!(
+                    "其余 {} 个套餐未展开。",
+                    total_catalog_count - catalog_items.len()
+                ));
+            }
+        }
+    }
+
+    if let Some(url) = products_url(site_base_url) {
+        telegram_lines.push(format!("查看全部产品：{url}"));
+    }
+
+    let web_push_body = if kind.includes_catalog() {
+        if catalog_items.is_empty() {
+            format!("{normalized_scope_label}｜当前未发现套餐")
+        } else if total_catalog_count > catalog_items.len() {
+            format!(
+                "{normalized_scope_label}｜{} 个套餐，已展开前 {} 个",
+                total_catalog_count,
+                catalog_items.len()
+            )
+        } else {
+            format!(
+                "{normalized_scope_label}｜{} 个当前套餐",
+                catalog_items.len()
+            )
+        }
+    } else {
+        normalized_scope_label.to_string()
+    };
+
+    OutboundNotification {
+        telegram_text: telegram_lines.join("\n"),
+        web_push_title: format!("Catnap · {}", kind.label()),
+        web_push_body,
+        web_push_url: "/products".to_string(),
     }
 }
 
@@ -270,6 +370,14 @@ fn monitoring_url(site_base_url: Option<&str>) -> Option<String> {
     Some(format!("{}/monitoring", base.trim_end_matches('/')))
 }
 
+fn products_url(site_base_url: Option<&str>) -> Option<String> {
+    let base = site_base_url?.trim();
+    if base.is_empty() {
+        return None;
+    }
+    Some(format!("{}/products", base.trim_end_matches('/')))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -349,9 +457,9 @@ mod tests {
     }
 
     #[test]
-    fn builds_site_listed_notification_for_web_push() {
-        let notification = build_lifecycle_notification(
-            LifecycleNotificationKind::SiteListed,
+    fn builds_config_added_notification_for_products_page() {
+        let notification = build_config_lifecycle_notification(
+            ConfigLifecycleNotificationKind::Added,
             "芬兰特惠年付 Mini",
             Some("德国 / 德国特惠"),
             5,
@@ -359,42 +467,95 @@ mod tests {
             Some("https://catnap.example/base/"),
         );
 
-        assert_eq!(notification.web_push_title, "Catnap · 全站上新机");
+        assert_eq!(notification.web_push_title, "Catnap · 套餐新增");
         assert_eq!(
             notification.web_push_body,
             "德国 / 德国特惠｜芬兰特惠年付 Mini｜库存 5｜¥4.99 / 年"
         );
-        assert_eq!(notification.web_push_url, "/monitoring");
+        assert_eq!(notification.web_push_url, "/products");
         assert_eq!(
             notification.telegram_text,
-            "【全站上新机】芬兰特惠年付 Mini
-分区：德国 / 德国特惠
+            "【套餐新增】芬兰特惠年付 Mini
+可用区：德国 / 德国特惠
 库存 5｜¥4.99 / 年
-查看监控：https://catnap.example/base/monitoring"
+查看全部产品：https://catnap.example/base/products"
         );
     }
 
     #[test]
-    fn builds_partition_listed_notification_with_partition_label() {
-        let notification = build_lifecycle_notification(
-            LifecycleNotificationKind::PartitionListed,
+    fn builds_config_removed_notification_with_latest_state() {
+        let notification = build_config_lifecycle_notification(
+            ConfigLifecycleNotificationKind::Removed,
             "德国特惠年付 Mini",
             Some("德国 / 德国特惠"),
-            2,
+            0,
             &money(9.99, "CNY", "year"),
             None,
         );
 
-        assert_eq!(notification.web_push_title, "Catnap · 分区上新机");
+        assert_eq!(notification.web_push_title, "Catnap · 套餐已删除");
         assert_eq!(
             notification.web_push_body,
-            "德国 / 德国特惠｜德国特惠年付 Mini｜库存 2｜¥9.99 / 年"
+            "德国 / 德国特惠｜德国特惠年付 Mini｜最近状态：库存 0｜¥9.99 / 年"
         );
         assert_eq!(
             notification.telegram_text,
-            "【分区上新机】德国特惠年付 Mini
-分区：德国 / 德国特惠
-库存 2｜¥9.99 / 年"
+            "【套餐已删除】德国特惠年付 Mini
+可用区：德国 / 德国特惠
+最近状态：库存 0｜¥9.99 / 年"
+        );
+    }
+
+    #[test]
+    fn builds_region_added_notification_with_catalog_summary() {
+        let notification = build_topology_notification(
+            TopologyNotificationKind::RegionAdded,
+            "德国",
+            &[
+                CatalogSummaryItem {
+                    name: "德国特惠年付 Mini".to_string(),
+                    price: money(9.99, "CNY", "year"),
+                },
+                CatalogSummaryItem {
+                    name: "德国特惠月付 Pro".to_string(),
+                    price: money(19.99, "CNY", "month"),
+                },
+            ],
+            3,
+            Some("https://catnap.example/base"),
+        );
+
+        assert_eq!(notification.web_push_title, "Catnap · 新地区");
+        assert_eq!(notification.web_push_body, "德国｜3 个套餐，已展开前 2 个");
+        assert_eq!(notification.web_push_url, "/products");
+        assert_eq!(
+            notification.telegram_text,
+            "【新地区】德国
+地区：德国
+当前套餐：
+1. 德国特惠年付 Mini｜¥9.99 / 年
+2. 德国特惠月付 Pro｜¥19.99 / 月
+其余 1 个套餐未展开。
+查看全部产品：https://catnap.example/base/products"
+        );
+    }
+
+    #[test]
+    fn builds_partition_removed_notification_without_catalog_summary() {
+        let notification = build_topology_notification(
+            TopologyNotificationKind::PartitionRemoved,
+            "德国 / 德国特惠",
+            &[],
+            0,
+            None,
+        );
+
+        assert_eq!(notification.web_push_title, "Catnap · 可用区已删除");
+        assert_eq!(notification.web_push_body, "德国 / 德国特惠");
+        assert_eq!(
+            notification.telegram_text,
+            "【可用区已删除】德国 / 德国特惠
+可用区：德国 / 德国特惠"
         );
     }
 

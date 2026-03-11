@@ -110,9 +110,9 @@ export type SettingsView = {
   siteBaseUrl: string | null;
   catalogRefresh: { autoIntervalHours: number | null };
   monitoringEvents: {
-    partitionListedEnabled: boolean;
-    siteListedEnabled: boolean;
-    delistedEnabled: boolean;
+    partitionCatalogChangeEnabled: boolean;
+    regionPartitionChangeEnabled: boolean;
+    siteRegionChangeEnabled: boolean;
   };
   notifications: {
     telegram: { enabled: boolean; configured: boolean; target?: string };
@@ -1914,11 +1914,29 @@ export function ProductsView({
     return out;
   }, [bootstrap, countryFilter]);
 
+  const enabledPartitionKeys = useMemo(
+    () => buildEnabledPartitionKeySet(bootstrap.monitoring.enabledPartitions),
+    [bootstrap.monitoring.enabledPartitions],
+  );
+  const groupNoticeByKey = useMemo(
+    () => buildGroupNoticeByKey(bootstrap.catalog.regionNotices),
+    [bootstrap.catalog.regionNotices],
+  );
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return filterConfigsByArchiveMode(bootstrap.catalog.configs, archiveFilterMode).filter(
       (cfg) => {
-        if (onlyMonitored && !cfg.monitorEnabled) return false;
+        if (onlyMonitored) {
+          const configMonitored = cfg.monitorEnabled;
+          const partitionMonitored = enabledPartitionKeys.has(
+            buildPartitionKey(cfg.countryId, cfg.regionId),
+          );
+          const countryMonitored = enabledPartitionKeys.has(buildPartitionKey(cfg.countryId, null));
+          if (!configMonitored && !partitionMonitored && !countryMonitored) {
+            return false;
+          }
+        }
         if (countryFilter !== "all" && cfg.countryId !== countryFilter) return false;
         if (regionFilter !== "all" && (cfg.regionId ?? "") !== regionFilter) return false;
         if (!q) return true;
@@ -1930,7 +1948,15 @@ export function ProductsView({
         return specText.includes(q);
       },
     );
-  }, [bootstrap, archiveFilterMode, onlyMonitored, countryFilter, regionFilter, search]);
+  }, [
+    archiveFilterMode,
+    bootstrap.catalog.configs,
+    countryFilter,
+    enabledPartitionKeys,
+    onlyMonitored,
+    regionFilter,
+    search,
+  ]);
 
   const archiveCandidates = useMemo(
     () =>
@@ -1944,33 +1970,92 @@ export function ProductsView({
     [archiveCandidates],
   );
 
-  const groups = useMemo(() => {
-    const m = new Map<string, Config[]>();
-    for (const cfg of filtered) {
-      const k = groupKey(cfg);
-      const list = m.get(k);
-      if (list) list.push(cfg);
-      else m.set(k, [cfg]);
-    }
-    const entries = Array.from(m.entries());
-    entries.sort((a, b) => {
-      const aCloud = countriesById.get(a[1][0]?.countryId ?? "")?.name.includes("云服务器");
-      const bCloud = countriesById.get(b[1][0]?.countryId ?? "")?.name.includes("云服务器");
-      if (aCloud && !bCloud) return 1;
-      if (!aCloud && bCloud) return -1;
-      return a[0].localeCompare(b[0]);
-    });
-    return entries;
-  }, [filtered, countriesById]);
+  const countryGroups = useMemo(() => {
+    type RegionGroup = {
+      key: string;
+      regionId: string | null;
+      title: string;
+      partitionEnabled: boolean;
+      showPartitionToggle: boolean;
+      notice: string | null;
+      configs: Config[];
+      sortLabel: string;
+    };
 
-  const groupNoticeByKey = useMemo(
-    () => buildGroupNoticeByKey(bootstrap.catalog.regionNotices),
-    [bootstrap.catalog.regionNotices],
-  );
-  const enabledPartitionKeys = useMemo(
-    () => buildEnabledPartitionKeySet(bootstrap.monitoring.enabledPartitions),
-    [bootstrap.monitoring.enabledPartitions],
-  );
+    type CountryGroup = {
+      countryId: string;
+      countryName: string;
+      isCloud: boolean;
+      countryMonitorEnabled: boolean;
+      countryNotice: string | null;
+      groups: RegionGroup[];
+    };
+
+    const byCountry = new Map<string, CountryGroup & { groupsByKey: Map<string, RegionGroup> }>();
+
+    for (const cfg of filtered) {
+      const countryName = countriesById.get(cfg.countryId)?.name ?? cfg.countryId;
+      const isCloud = countryName.includes("云服务器");
+      const countryKey = buildPartitionKey(cfg.countryId, null);
+      let country = byCountry.get(cfg.countryId);
+      if (!country) {
+        country = {
+          countryId: cfg.countryId,
+          countryName,
+          isCloud,
+          countryMonitorEnabled: enabledPartitionKeys.has(countryKey),
+          countryNotice: groupNoticeByKey.get(countryKey) ?? null,
+          groups: [],
+          groupsByKey: new Map(),
+        };
+        byCountry.set(cfg.countryId, country);
+      }
+
+      const groupKey = buildPartitionKey(cfg.countryId, cfg.regionId);
+      let regionGroup = country.groupsByKey.get(groupKey);
+      if (!regionGroup) {
+        const region = cfg.regionId ? regionsById.get(cfg.regionId) : null;
+        const regionLabel = cfg.regionId ? (region?.name ?? cfg.regionId) : "默认可用区";
+        regionGroup = {
+          key: groupKey,
+          regionId: cfg.regionId,
+          title: regionLabel,
+          partitionEnabled: enabledPartitionKeys.has(groupKey),
+          showPartitionToggle: cfg.regionId !== null,
+          notice: groupNoticeByKey.get(groupKey) ?? null,
+          configs: [],
+          sortLabel: cfg.regionId ? `${regionLabel}::${region?.locationName ?? ""}` : "",
+        };
+        country.groupsByKey.set(groupKey, regionGroup);
+        country.groups.push(regionGroup);
+      }
+      regionGroup.configs.push(cfg);
+    }
+
+    const out = Array.from(byCountry.values()).map((country) => {
+      country.groups.sort((a, b) => {
+        if (!a.regionId && b.regionId) return -1;
+        if (a.regionId && !b.regionId) return 1;
+        return a.sortLabel.localeCompare(b.sortLabel, "zh-Hans-CN");
+      });
+      return {
+        countryId: country.countryId,
+        countryName: country.countryName,
+        isCloud: country.isCloud,
+        countryMonitorEnabled: country.countryMonitorEnabled,
+        countryNotice: country.countryNotice,
+        groups: country.groups,
+      } satisfies CountryGroup;
+    });
+
+    out.sort((a, b) => {
+      if (a.isCloud && !b.isCloud) return 1;
+      if (!a.isCloud && b.isCloud) return -1;
+      return a.countryName.localeCompare(b.countryName, "zh-Hans-CN");
+    });
+
+    return out;
+  }, [filtered, countriesById, enabledPartitionKeys, groupNoticeByKey, regionsById]);
 
   const visibleIds = useMemo(() => filtered.map((c) => c.id), [filtered]);
   const { window: historyWindow, byId: historyById } = useInventoryHistory(
@@ -2085,34 +2170,24 @@ export function ProductsView({
         ) : null}
       </div>
 
-      {groups.length === 0 ? <div className="empty">没有匹配的配置。</div> : null}
+      {countryGroups.length === 0 ? <div className="empty">没有匹配的配置。</div> : null}
 
-      {groups.map(([k, items]) => {
-        const [countryId, regionIdRaw] = k.split("::");
-        const regionId = regionIdRaw || null;
-        const countryName = countriesById.get(countryId)?.name;
-        const isCloud = countryName?.includes("云服务器") ?? false;
-        const countryCatalogLink = buildCountryCatalogLink(orderBaseUrl, countryId);
-        const regionLabel = regionId ? (regionsById.get(regionId)?.name ?? "默认") : "默认";
-        const title = !countryName
-          ? "分组信息加载中…"
-          : isCloud
-            ? countryName
-            : `${countryName} / ${regionLabel}`;
-        const groupNotice = groupNoticeByKey.get(k) ?? null;
-        const partitionEnabled = enabledPartitionKeys.has(buildPartitionKey(countryId, regionId));
+      {countryGroups.map((country) => {
+        const countryCatalogLink = buildCountryCatalogLink(orderBaseUrl, country.countryId);
         return (
-          <div className="panel-section" key={k}>
+          <div className="panel-section" key={country.countryId}>
             <div className="panel-title-row">
-              <div className="panel-title">{title}</div>
+              <div className="panel-title">{country.countryName}</div>
               <div className="panel-title-actions">
                 <button
                   type="button"
-                  className={`pill badge ${partitionEnabled ? "on" : ""}`}
-                  onClick={() => onTogglePartition(countryId, regionId, !partitionEnabled)}
-                  title="只影响分区上新机通知，不影响卡片监控。"
+                  className={`pill badge ${country.countryMonitorEnabled ? "on" : ""}`}
+                  onClick={() =>
+                    onTogglePartition(country.countryId, null, !country.countryMonitorEnabled)
+                  }
+                  title="只影响该地区下可用区的新增与删除提示，不影响卡片监控。"
                 >
-                  {`分区上新：${partitionEnabled ? "开" : "关"}`}
+                  {`地区监控：${country.countryMonitorEnabled ? "开" : "关"}`}
                 </button>
                 {countryCatalogLink ? (
                   <a
@@ -2120,7 +2195,7 @@ export function ProductsView({
                     href={countryCatalogLink}
                     target="_blank"
                     rel="noopener noreferrer"
-                    aria-label={`打开上游分组页（新标签页）fid=${countryId}`}
+                    aria-label={`打开上游分组页（新标签页）fid=${country.countryId}`}
                     title={`打开上游分组页（新标签页）
 ${countryCatalogLink}`}
                   >
@@ -2133,22 +2208,57 @@ ${countryCatalogLink}`}
                 ) : null}
               </div>
             </div>
-            {groupNotice ? <div className="panel-subtitle group-notice">{groupNotice}</div> : null}
-            <div className="divider-bleed" />
-            <div className="grid">
-              {items.map((cfg) => (
-                <ProductCard
-                  cfg={cfg}
-                  countriesById={countriesById}
-                  key={cfg.id}
-                  orderLink={buildOrderLink(orderBaseUrl, cfg)}
-                  onOpenOrder={onOpenOrder}
-                  onToggle={onToggle}
-                  historyWindow={historyWindow}
-                  historyPoints={historyById.get(cfg.id)}
-                />
-              ))}
-            </div>
+            {country.countryNotice ? (
+              <div className="panel-subtitle group-notice">{country.countryNotice}</div>
+            ) : null}
+
+            {country.groups.map((group, index) => (
+              <div
+                className={`product-region-block ${index === 0 ? "first" : ""}`}
+                data-testid={group.regionId ? `products-region-${group.regionId}` : undefined}
+                key={group.key}
+              >
+                <div className="panel-title-row product-region-title-row">
+                  <div className="product-region-title">{group.title}</div>
+                  {group.showPartitionToggle ? (
+                    <div className="panel-title-actions">
+                      <button
+                        type="button"
+                        className={`pill badge ${group.partitionEnabled ? "on" : ""}`}
+                        onClick={() =>
+                          onTogglePartition(
+                            country.countryId,
+                            group.regionId,
+                            !group.partitionEnabled,
+                          )
+                        }
+                        title="只影响该可用区下套餐的新增与删除提示，不影响卡片监控。"
+                      >
+                        {`可用区监控：${group.partitionEnabled ? "开" : "关"}`}
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+                {group.notice ? (
+                  <div className="panel-subtitle group-notice">{group.notice}</div>
+                ) : null}
+                <div className="divider-bleed" />
+                <div className="grid">
+                  {group.configs.map((cfg) => (
+                    <ProductCard
+                      cfg={cfg}
+                      countriesById={countriesById}
+                      key={cfg.id}
+                      orderLink={buildOrderLink(orderBaseUrl, cfg)}
+                      onOpenOrder={onOpenOrder}
+                      onToggle={onToggle}
+                      historyWindow={historyWindow}
+                      historyPoints={historyById.get(cfg.id)}
+                    />
+                  ))}
+                </div>
+              </div>
+            ))}
           </div>
         );
       })}
@@ -2438,9 +2548,9 @@ type SettingsFieldKey =
   | "jitterPct"
   | "siteBaseUrl"
   | "siteAutofill"
-  | "partitionListedEnabled"
-  | "siteListedEnabled"
-  | "delistedEnabled"
+  | "partitionCatalogChangeEnabled"
+  | "regionPartitionChangeEnabled"
+  | "siteRegionChangeEnabled"
   | "tgEnabled"
   | "tgTarget"
   | "tgBotToken"
@@ -2458,9 +2568,9 @@ type SettingsDraft = {
   intervalMinutesInput: string;
   jitterPctInput: string;
   siteBaseUrlInput: string;
-  partitionListedEnabled: boolean;
-  siteListedEnabled: boolean;
-  delistedEnabled: boolean;
+  partitionCatalogChangeEnabled: boolean;
+  regionPartitionChangeEnabled: boolean;
+  siteRegionChangeEnabled: boolean;
   tgEnabled: boolean;
   tgTargetInput: string;
   tgBotTokenInput: string;
@@ -2472,9 +2582,9 @@ type SettingsPersistSnapshot = {
   siteBaseUrl: string | null;
   catalogRefresh: { autoIntervalHours: number | null };
   monitoringEvents: {
-    partitionListedEnabled: boolean;
-    siteListedEnabled: boolean;
-    delistedEnabled: boolean;
+    partitionCatalogChangeEnabled: boolean;
+    regionPartitionChangeEnabled: boolean;
+    siteRegionChangeEnabled: boolean;
   };
   notifications: {
     telegram: { enabled: boolean; target: string | null };
@@ -2515,9 +2625,9 @@ function buildPersistedSnapshotFromSettings(settings: SettingsView): SettingsPer
       autoIntervalHours: settings.catalogRefresh.autoIntervalHours,
     },
     monitoringEvents: {
-      partitionListedEnabled: settings.monitoringEvents.partitionListedEnabled,
-      siteListedEnabled: settings.monitoringEvents.siteListedEnabled,
-      delistedEnabled: settings.monitoringEvents.delistedEnabled,
+      partitionCatalogChangeEnabled: settings.monitoringEvents.partitionCatalogChangeEnabled,
+      regionPartitionChangeEnabled: settings.monitoringEvents.regionPartitionChangeEnabled,
+      siteRegionChangeEnabled: settings.monitoringEvents.siteRegionChangeEnabled,
     },
     notifications: {
       telegram: {
@@ -2561,9 +2671,9 @@ function snapshotToOnSaveInput(
       autoIntervalHours: snapshot.catalogRefresh.autoIntervalHours,
     },
     monitoringEvents: {
-      partitionListedEnabled: snapshot.monitoringEvents.partitionListedEnabled,
-      siteListedEnabled: snapshot.monitoringEvents.siteListedEnabled,
-      delistedEnabled: snapshot.monitoringEvents.delistedEnabled,
+      partitionCatalogChangeEnabled: snapshot.monitoringEvents.partitionCatalogChangeEnabled,
+      regionPartitionChangeEnabled: snapshot.monitoringEvents.regionPartitionChangeEnabled,
+      siteRegionChangeEnabled: snapshot.monitoringEvents.siteRegionChangeEnabled,
     },
     notifications: {
       telegram: {
@@ -2610,14 +2720,14 @@ export function SettingsViewPanel({
   const [siteBaseUrlInput, setSiteBaseUrlInput] = useState<string>(
     bootstrap.settings.siteBaseUrl ?? "",
   );
-  const [partitionListedEnabled, setPartitionListedEnabled] = useState<boolean>(
-    bootstrap.settings.monitoringEvents.partitionListedEnabled,
+  const [partitionCatalogChangeEnabled, setPartitionCatalogChangeEnabled] = useState<boolean>(
+    bootstrap.settings.monitoringEvents.partitionCatalogChangeEnabled,
   );
-  const [siteListedEnabled, setSiteListedEnabled] = useState<boolean>(
-    bootstrap.settings.monitoringEvents.siteListedEnabled,
+  const [regionPartitionChangeEnabled, setRegionPartitionChangeEnabled] = useState<boolean>(
+    bootstrap.settings.monitoringEvents.regionPartitionChangeEnabled,
   );
-  const [delistedEnabled, setDelistedEnabled] = useState<boolean>(
-    bootstrap.settings.monitoringEvents.delistedEnabled,
+  const [siteRegionChangeEnabled, setSiteRegionChangeEnabled] = useState<boolean>(
+    bootstrap.settings.monitoringEvents.siteRegionChangeEnabled,
   );
   const [tgEnabled, setTgEnabled] = useState<boolean>(
     bootstrap.settings.notifications.telegram.enabled,
@@ -2721,9 +2831,9 @@ export function SettingsViewPanel({
       intervalMinutesInput,
       jitterPctInput,
       siteBaseUrlInput,
-      partitionListedEnabled,
-      siteListedEnabled,
-      delistedEnabled,
+      partitionCatalogChangeEnabled,
+      regionPartitionChangeEnabled,
+      siteRegionChangeEnabled,
       tgEnabled,
       tgTargetInput,
       tgBotTokenInput,
@@ -2734,9 +2844,9 @@ export function SettingsViewPanel({
       intervalMinutesInput,
       jitterPctInput,
       siteBaseUrlInput,
-      partitionListedEnabled,
-      siteListedEnabled,
-      delistedEnabled,
+      partitionCatalogChangeEnabled,
+      regionPartitionChangeEnabled,
+      siteRegionChangeEnabled,
       tgEnabled,
       tgTargetInput,
       tgBotTokenInput,
@@ -2862,18 +2972,22 @@ export function SettingsViewPanel({
         }
       }
 
-      if (draft.partitionListedEnabled !== next.monitoringEvents.partitionListedEnabled) {
-        next.monitoringEvents.partitionListedEnabled = draft.partitionListedEnabled;
+      if (
+        draft.partitionCatalogChangeEnabled !== next.monitoringEvents.partitionCatalogChangeEnabled
+      ) {
+        next.monitoringEvents.partitionCatalogChangeEnabled = draft.partitionCatalogChangeEnabled;
         changed = true;
       }
 
-      if (draft.siteListedEnabled !== next.monitoringEvents.siteListedEnabled) {
-        next.monitoringEvents.siteListedEnabled = draft.siteListedEnabled;
+      if (
+        draft.regionPartitionChangeEnabled !== next.monitoringEvents.regionPartitionChangeEnabled
+      ) {
+        next.monitoringEvents.regionPartitionChangeEnabled = draft.regionPartitionChangeEnabled;
         changed = true;
       }
 
-      if (draft.delistedEnabled !== next.monitoringEvents.delistedEnabled) {
-        next.monitoringEvents.delistedEnabled = draft.delistedEnabled;
+      if (draft.siteRegionChangeEnabled !== next.monitoringEvents.siteRegionChangeEnabled) {
+        next.monitoringEvents.siteRegionChangeEnabled = draft.siteRegionChangeEnabled;
         changed = true;
       }
 
@@ -3170,65 +3284,75 @@ export function SettingsViewPanel({
             用于保守收敛拓扑变化与移除目标；已知 URL 的新机发现仍走 5 分钟轻扫
           </div>
 
-          <div>分区上新机</div>
+          <div>套餐变更</div>
           <div className="settings-action-wrap">
             <button
               type="button"
-              className={`pill sm center ${partitionListedEnabled ? "on" : ""}`}
+              className={`pill sm center ${partitionCatalogChangeEnabled ? "on" : ""}`}
               style={{ width: "92px" }}
               onClick={() => {
-                const next = !partitionListedEnabled;
-                setPartitionListedEnabled(next);
-                setFieldError("partitionListedEnabled", null);
+                const next = !partitionCatalogChangeEnabled;
+                setPartitionCatalogChangeEnabled(next);
+                setFieldError("partitionCatalogChangeEnabled", null);
                 void flushAutosaveImmediate(
-                  { partitionListedEnabled: next },
-                  "partitionListedEnabled",
+                  { partitionCatalogChangeEnabled: next },
+                  "partitionCatalogChangeEnabled",
                 );
               }}
             >
-              {partitionListedEnabled ? "启用" : "关闭"}
+              {partitionCatalogChangeEnabled ? "启用" : "关闭"}
             </button>
-            {renderFieldError("partitionListedEnabled")}
+            {renderFieldError("partitionCatalogChangeEnabled")}
           </div>
-          <div className="hint">启用后：仅通知已在 products 分组头部开启分区上新的分区。</div>
+          <div className="hint">
+            启用后：仅通知已在 products 中开启“可用区监控”的可用区，关注套餐新增与删除。
+          </div>
 
-          <div>全站上新机</div>
+          <div>可用区变更</div>
           <div className="settings-action-wrap">
             <button
               type="button"
-              className={`pill sm center ${siteListedEnabled ? "on" : ""}`}
+              className={`pill sm center ${regionPartitionChangeEnabled ? "on" : ""}`}
               style={{ width: "92px" }}
               onClick={() => {
-                const next = !siteListedEnabled;
-                setSiteListedEnabled(next);
-                setFieldError("siteListedEnabled", null);
-                void flushAutosaveImmediate({ siteListedEnabled: next }, "siteListedEnabled");
+                const next = !regionPartitionChangeEnabled;
+                setRegionPartitionChangeEnabled(next);
+                setFieldError("regionPartitionChangeEnabled", null);
+                void flushAutosaveImmediate(
+                  { regionPartitionChangeEnabled: next },
+                  "regionPartitionChangeEnabled",
+                );
               }}
             >
-              {siteListedEnabled ? "启用" : "关闭"}
+              {regionPartitionChangeEnabled ? "启用" : "关闭"}
             </button>
-            {renderFieldError("siteListedEnabled")}
+            {renderFieldError("regionPartitionChangeEnabled")}
           </div>
-          <div className="hint">启用后：任意分区上架 / 重新上架都会通知，不受分区开关限制。</div>
+          <div className="hint">
+            启用后：仅通知已在 products 中开启“地区监控”的地区，关注可用区新增与删除。
+          </div>
 
-          <div>下架监控</div>
+          <div>地区变更</div>
           <div className="settings-action-wrap">
             <button
               type="button"
-              className={`pill sm center ${delistedEnabled ? "on" : ""}`}
+              className={`pill sm center ${siteRegionChangeEnabled ? "on" : ""}`}
               style={{ width: "92px" }}
               onClick={() => {
-                const next = !delistedEnabled;
-                setDelistedEnabled(next);
-                setFieldError("delistedEnabled", null);
-                void flushAutosaveImmediate({ delistedEnabled: next }, "delistedEnabled");
+                const next = !siteRegionChangeEnabled;
+                setSiteRegionChangeEnabled(next);
+                setFieldError("siteRegionChangeEnabled", null);
+                void flushAutosaveImmediate(
+                  { siteRegionChangeEnabled: next },
+                  "siteRegionChangeEnabled",
+                );
               }}
             >
-              {delistedEnabled ? "启用" : "关闭"}
+              {siteRegionChangeEnabled ? "启用" : "关闭"}
             </button>
-            {renderFieldError("delistedEnabled")}
+            {renderFieldError("siteRegionChangeEnabled")}
           </div>
-          <div className="hint">启用后：下架会通知所有启用者。</div>
+          <div className="hint">启用后：全站范围关注地区新增与删除。</div>
         </div>
       </div>
 
