@@ -244,12 +244,12 @@ export const MonitoringEventModes: Story = {
     expect(within(delistedAction).getByRole("button", { name: "启用" })).toBeVisible();
     expect(
       within(monitoringSection).getByText(
-        "启用后：仅通知已在 products 分组头部开启分区上新的分区。",
+        "启用后：仅通知已在 products 分组头部开启分区上新的分区；上架/重新上架会在首次有库存后触发。",
       ),
     ).toBeVisible();
     expect(
       within(monitoringSection).getByText(
-        "启用后：任意分区上架 / 重新上架都会通知，不受分区开关限制。",
+        "启用后：任意分区上架 / 重新上架都会在首次有库存后通知，不受分区开关限制。",
       ),
     ).toBeVisible();
 
