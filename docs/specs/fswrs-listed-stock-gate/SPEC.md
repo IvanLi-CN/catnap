@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 部分完成（3/4）
+- Status: 已完成
 - Created: 2026-03-11
 - Last: 2026-03-11
 
@@ -198,7 +198,7 @@ None
 - [x] M1: 冻结 follow-up spec、索引与分支命名
 - [x] M2: 完成 DB / apply / lifecycle fanout 改造
 - [x] M3: 完成设置文案与回归测试
-- [ ] M4: 完成 fast-track 收口（push / PR / checks / review-loop / spec sync）
+- [x] M4: 完成 fast-track 收口（push / PR / checks / review-loop / spec sync）
 
 ## 方案概述（Approach, high-level）
 
@@ -220,6 +220,7 @@ None
 - 2026-03-11: review-fix 同步：已监控用户不再依赖 listed 订阅集合；mixed `poller_due` 任务保留首次补货 fallback；synthetic fallback 补齐 Web Push。
 - 2026-03-11: 第二轮 review-fix：为等待中的 poller 用户记录独立 waiter 身份，补上纯 `poller_due` relist 首次有库存提醒，并避免 mixed reason 任务对 waiter 重复发 fallback。
 - 2026-03-11: 第三轮 review-fix：fanout 在派发前回读任务最新 reason / waiter 集合，确保运行中 join 的 waiter 不漏提醒；`catalog.listed.pending_stock` 改为用户可读中文文案。
+- 2026-03-11: 合并前收口：规格状态切换为已完成，M4 门禁改为已满足，允许按 fast-track 直接合并。
 
 ## 参考（References）
 
