@@ -1935,6 +1935,12 @@ export function ProductsView({
     return out;
   }, [bootstrap, countryFilter]);
 
+  useEffect(() => {
+    if (regionFilter === "all") return;
+    if (regionOptions.some((region) => region.id === regionFilter)) return;
+    setRegionFilter("all");
+  }, [regionFilter, regionOptions]);
+
   const enabledPartitionKeys = useMemo(
     () => buildEnabledPartitionKeySet(bootstrap.monitoring.enabledPartitions),
     [bootstrap.monitoring.enabledPartitions],

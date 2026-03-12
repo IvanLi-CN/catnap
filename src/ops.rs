@@ -1878,7 +1878,10 @@ VALUES (?, ?, ?, NULL, 0, 'fetch', NULL, ?, 0)
             &url_key,
             &fetch.url,
             fetch.configs,
-            region_notice.as_deref(),
+            crate::db::CatalogUrlFetchHints {
+                region_notice: region_notice.as_deref(),
+                empty_result_authoritative: fetch.empty_result_authoritative,
+            },
         )
         .await
         {
@@ -2303,7 +2306,7 @@ WHERE monitoring_events_site_region_change_enabled = 1
             let (catalog_items, total_catalog_count) =
                 load_country_catalog_summary(&self.inner.db, &change.id).await?;
             let country_key = catalog_region_key(&change.id, None);
-            let summary_fetch_failed = added_catalog_fetch_failures.contains(&country_key)
+            let summary_fetch_incomplete = added_catalog_fetch_failures.contains(&country_key)
                 || added_regions.iter().any(|region| {
                     region.country_id == change.id
                         && added_catalog_fetch_failures.contains(&catalog_region_key(
@@ -2311,6 +2314,9 @@ WHERE monitoring_events_site_region_change_enabled = 1
                             Some(region.region_id.as_str()),
                         ))
                 });
+            let summary_fetch_failed = summary_fetch_incomplete && catalog_items.is_empty();
+            let summary_fetch_partially_failed =
+                summary_fetch_incomplete && !catalog_items.is_empty();
             for target in &site_targets {
                 let msg = format!(
                     "[region_added] {} catalogCount={}",
@@ -2322,6 +2328,7 @@ WHERE monitoring_events_site_region_change_enabled = 1
                     &catalog_items,
                     total_catalog_count,
                     summary_fetch_failed,
+                    summary_fetch_partially_failed,
                     target.site_base_url.as_deref(),
                 );
                 deliver_outbound_notification(
@@ -2350,6 +2357,7 @@ WHERE monitoring_events_site_region_change_enabled = 1
                     &change.name,
                     &[],
                     0,
+                    false,
                     false,
                     target.site_base_url.as_deref(),
                 );
@@ -2414,11 +2422,12 @@ WHERE s.monitoring_events_region_partition_change_enabled = 1
             let (catalog_items, total_catalog_count) =
                 load_region_catalog_summary(&self.inner.db, &change.country_id, &change.region_id)
                     .await?;
-            let summary_fetch_failed = total_catalog_count == 0
-                && added_catalog_fetch_failures.contains(&catalog_region_key(
-                    &change.country_id,
-                    Some(change.region_id.as_str()),
-                ));
+            let summary_fetch_incomplete = added_catalog_fetch_failures.contains(
+                &catalog_region_key(&change.country_id, Some(change.region_id.as_str())),
+            );
+            let summary_fetch_failed = summary_fetch_incomplete && catalog_items.is_empty();
+            let summary_fetch_partially_failed =
+                summary_fetch_incomplete && !catalog_items.is_empty();
             for target in &targets {
                 let msg = format!(
                     "[partition_added] {} catalogCount={}",
@@ -2430,6 +2439,7 @@ WHERE s.monitoring_events_region_partition_change_enabled = 1
                     &catalog_items,
                     total_catalog_count,
                     summary_fetch_failed,
+                    summary_fetch_partially_failed,
                     target.site_base_url.as_deref(),
                 );
                 deliver_outbound_notification(
@@ -2497,6 +2507,7 @@ WHERE s.monitoring_events_region_partition_change_enabled = 1
                     &label,
                     &[],
                     0,
+                    false,
                     false,
                     target.site_base_url.as_deref(),
                 );
@@ -3716,7 +3727,7 @@ WHERE user_id = ?
     }
 
     #[tokio::test]
-    async fn country_added_notification_marks_partial_summary_failure() {
+    async fn country_added_notification_keeps_summary_when_partially_failed() {
         let telegram_texts = Arc::new(Mutex::new(Vec::<String>::new()));
         let telegram_texts_for_handler = telegram_texts.clone();
         let telegram = Router::new().route(
@@ -3815,7 +3826,9 @@ WHERE user_id = ?
 
         let texts = telegram_texts.lock().unwrap().clone();
         assert_eq!(texts.len(), 1);
-        assert!(texts[0].contains("套餐摘要抓取失败，稍后重试。"));
+        assert!(texts[0].contains("当前套餐："));
+        assert!(texts[0].contains("芬兰精品年付 Mini"));
+        assert!(texts[0].contains("部分套餐摘要抓取失败，稍后重试。"));
     }
 
     #[tokio::test]

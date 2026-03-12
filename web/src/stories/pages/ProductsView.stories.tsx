@@ -269,9 +269,12 @@ export const TopologyOnlyScopes: Story = {
     bootstrap: buildTopologyOnlyBootstrap(),
   },
   play: async ({ canvasElement }) => {
-    const [countrySelect] = within(canvasElement as HTMLElement).getAllByRole("combobox");
+    const [countrySelect, regionSelect] = within(canvasElement as HTMLElement).getAllByRole(
+      "combobox",
+    );
 
     await userEvent.selectOptions(countrySelect, "nl");
+    await userEvent.selectOptions(regionSelect, "nl-ams");
     const netherlandsSection = await findPanelSection(canvasElement as HTMLElement, "荷兰");
     const amsterdamBlock = await findProductRegionBlock(canvasElement as HTMLElement, "阿姆斯特丹");
     expect(within(netherlandsSection).getByTestId("country-monitor-nl")).toHaveTextContent(
@@ -283,6 +286,7 @@ export const TopologyOnlyScopes: Story = {
     expect(within(amsterdamBlock).getByText("当前暂无套餐。")).toBeVisible();
 
     await userEvent.selectOptions(countrySelect, "sg");
+    expect(regionSelect).toHaveValue("all");
     const singaporeSection = await findPanelSection(canvasElement as HTMLElement, "新加坡");
     expect(within(singaporeSection).getByTestId("country-monitor-sg")).toHaveTextContent(
       "监控：关",

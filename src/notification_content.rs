@@ -252,6 +252,7 @@ pub fn build_topology_notification(
     catalog_items: &[CatalogSummaryItem],
     total_catalog_count: usize,
     catalog_summary_fetch_failed: bool,
+    catalog_summary_partially_failed: bool,
     site_base_url: Option<&str>,
 ) -> OutboundNotification {
     let normalized_scope_label = scope_label.trim();
@@ -263,7 +264,7 @@ pub fn build_topology_notification(
     ));
 
     if kind.includes_catalog() {
-        if catalog_summary_fetch_failed {
+        if catalog_items.is_empty() && catalog_summary_fetch_failed {
             telegram_lines.push("套餐摘要抓取失败，稍后重试。".to_string());
         } else if catalog_items.is_empty() {
             telegram_lines.push("当前未发现套餐。".to_string());
@@ -278,6 +279,9 @@ pub fn build_topology_notification(
                     total_catalog_count - catalog_items.len()
                 ));
             }
+            if catalog_summary_partially_failed {
+                telegram_lines.push("部分套餐摘要抓取失败，稍后重试。".to_string());
+            }
         }
     }
 
@@ -286,10 +290,15 @@ pub fn build_topology_notification(
     }
 
     let web_push_body = if kind.includes_catalog() {
-        if catalog_summary_fetch_failed {
+        if catalog_items.is_empty() && catalog_summary_fetch_failed {
             format!("{normalized_scope_label}｜套餐摘要抓取失败，稍后重试")
         } else if catalog_items.is_empty() {
             format!("{normalized_scope_label}｜当前未发现套餐")
+        } else if catalog_summary_partially_failed {
+            format!(
+                "{normalized_scope_label}｜已抓到 {} 个套餐，部分摘要抓取失败",
+                catalog_items.len()
+            )
         } else if total_catalog_count > catalog_items.len() {
             format!(
                 "{normalized_scope_label}｜{} 个套餐，已展开前 {} 个",
@@ -548,6 +557,7 @@ mod tests {
             ],
             3,
             false,
+            false,
             Some("https://catnap.example/base"),
         );
 
@@ -574,6 +584,7 @@ mod tests {
             &[],
             0,
             false,
+            false,
             None,
         );
 
@@ -594,6 +605,7 @@ mod tests {
             &[],
             0,
             true,
+            false,
             Some("https://catnap.example/base"),
         );
 
@@ -607,6 +619,37 @@ mod tests {
             "【新国家】德国
 国家：德国
 套餐摘要抓取失败，稍后重试。
+查看全部产品：https://catnap.example/base/products"
+        );
+    }
+
+    #[test]
+    fn builds_region_added_notification_with_partial_summary_failure() {
+        let notification = build_topology_notification(
+            TopologyNotificationKind::RegionAdded,
+            "德国",
+            &[CatalogSummaryItem {
+                name: "德国特惠年付 Mini".to_string(),
+                price: money(9.99, "CNY", "year"),
+            }],
+            1,
+            false,
+            true,
+            Some("https://catnap.example/base"),
+        );
+
+        assert_eq!(notification.web_push_title, "Catnap · 新国家");
+        assert_eq!(
+            notification.web_push_body,
+            "德国｜已抓到 1 个套餐，部分摘要抓取失败"
+        );
+        assert_eq!(
+            notification.telegram_text,
+            "【新国家】德国
+国家：德国
+当前套餐：
+1. 德国特惠年付 Mini｜¥9.99 / 年
+部分套餐摘要抓取失败，稍后重试。
 查看全部产品：https://catnap.example/base/products"
         );
     }

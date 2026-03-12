@@ -119,6 +119,7 @@ pub struct RegionFetchDetailed {
     pub parse_elapsed_ms: i64,
     pub configs: Vec<ConfigBase>,
     pub region_notice: Option<String>,
+    pub empty_result_authoritative: bool,
 }
 
 impl UpstreamClient {
@@ -307,8 +308,9 @@ impl UpstreamClient {
         let configs = parse_configs(fid, gid, &html);
         let parse_elapsed_ms = parse_start.elapsed().as_millis() as i64;
         let region_notice = parse_region_notice(&html);
+        let empty_result_authoritative = gid.is_none() && !parse_regions(fid, &html).is_empty();
 
-        if configs.is_empty() {
+        if configs.is_empty() && !empty_result_authoritative {
             anyhow::bail!("upstream parse produced 0 configs for {url}");
         }
 
@@ -320,6 +322,7 @@ impl UpstreamClient {
             parse_elapsed_ms,
             configs,
             region_notice,
+            empty_result_authoritative,
         })
     }
 

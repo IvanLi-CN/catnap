@@ -1593,6 +1593,12 @@ pub struct ApplyCatalogUrlResult {
     pub fetched_at: String,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CatalogUrlFetchHints<'a> {
+    pub region_notice: Option<&'a str>,
+    pub empty_result_authoritative: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct ArchiveDelistedResult {
     pub archived_count: i64,
@@ -1651,7 +1657,7 @@ pub async fn apply_catalog_url_fetch_success(
     url_key: &str,
     url: &str,
     mut configs: Vec<crate::upstream::ConfigBase>,
-    region_notice: Option<&str>,
+    hints: CatalogUrlFetchHints<'_>,
 ) -> anyhow::Result<ApplyCatalogUrlResult> {
     let fetched_at = now_rfc3339();
     for c in configs.iter_mut() {
@@ -1691,23 +1697,11 @@ WHERE source_fid = ?
         rows.into_iter().map(|r| r.get::<String, _>(0)).collect()
     };
 
-    let allow_empty_regioned_country_root = if gid.is_none() {
-        sqlx::query_scalar::<_, i64>(
-            "SELECT EXISTS(SELECT 1 FROM catalog_regions WHERE country_id = ?)",
-        )
-        .bind(fid)
-        .fetch_one(&mut *tx)
-        .await?
-            != 0
-    } else {
-        false
-    };
-
     // An empty parse is usually ambiguous: it could mean the upstream cart truly has no items, or
-    // it could be an upstream HTML change/error page that our parser didn't catch. Keep refusing
-    // it for normal targets, but allow country-root empty lists when the country also has explicit
-    // regions because that state legitimately means the country-direct packages disappeared.
-    if configs.is_empty() && !prev_ids.is_empty() && !allow_empty_regioned_country_root {
+    // it could be an upstream HTML change/error page that our parser didn't catch. Only apply an
+    // empty result when the fetch path could prove the upstream page structure still matches a
+    // valid "no direct packages" state.
+    if configs.is_empty() && !prev_ids.is_empty() && !hints.empty_result_authoritative {
         anyhow::bail!(
             "refusing to apply empty catalog config list for {url_key} (would delist {} ids)",
             prev_ids.len()
@@ -1927,7 +1921,8 @@ ON CONFLICT(url_key) DO UPDATE SET
     .execute(&mut *tx)
     .await?;
 
-    let notice = region_notice
+    let notice = hints
+        .region_notice
         .map(str::trim)
         .filter(|value| !value.is_empty());
     if let Some(notice) = notice {

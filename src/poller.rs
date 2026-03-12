@@ -2,7 +2,8 @@ use crate::defaults::{
     FIXED_CATALOG_TOPOLOGY_PROBE_INTERVAL_MINUTES, FIXED_CATALOG_TOPOLOGY_REFRESH_INTERVAL_HOURS,
 };
 use crate::upstream::{
-    catalog_region_key, parse_configs, parse_region_notice, CatalogSnapshot, UpstreamClient,
+    catalog_region_key, parse_configs, parse_region_notice, parse_regions, CatalogSnapshot,
+    UpstreamClient,
 };
 use crate::{app::AppState, db};
 use crate::{models::Money, notification_content};
@@ -334,6 +335,8 @@ async fn prefetch_added_target_catalogs(
             let html = upstream.fetch_html_raw(&url).await?;
             let configs = parse_configs(&fid, gid.as_deref(), &html);
             let region_notice = parse_region_notice(&html);
+            let empty_result_authoritative =
+                gid.is_none() && !parse_regions(&fid, &html).is_empty();
             db::apply_catalog_url_fetch_success(
                 &state.db,
                 &fid,
@@ -341,7 +344,10 @@ async fn prefetch_added_target_catalogs(
                 &url_key,
                 &url,
                 configs,
-                region_notice.as_deref(),
+                db::CatalogUrlFetchHints {
+                    region_notice: region_notice.as_deref(),
+                    empty_result_authoritative,
+                },
             )
             .await
         }

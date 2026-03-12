@@ -281,7 +281,10 @@ async fn lifecycle_marks_delisted_and_relisted() {
         "7:40",
         "http://example.invalid/cart?fid=7&gid=40",
         only_first,
-        None,
+        catnap::db::CatalogUrlFetchHints {
+            region_notice: None,
+            empty_result_authoritative: false,
+        },
     )
     .await
     .unwrap();
@@ -316,7 +319,10 @@ async fn lifecycle_marks_delisted_and_relisted() {
         "7:40",
         "http://example.invalid/cart?fid=7&gid=40",
         both,
-        None,
+        catnap::db::CatalogUrlFetchHints {
+            region_notice: None,
+            empty_result_authoritative: false,
+        },
     )
     .await
     .unwrap();
