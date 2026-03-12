@@ -665,7 +665,6 @@ pub async fn list_catalog_task_keys(
         r#"
 SELECT id
 FROM catalog_countries
-WHERE has_regions = 0
 ORDER BY sort_index ASC, id ASC
 "#,
     )

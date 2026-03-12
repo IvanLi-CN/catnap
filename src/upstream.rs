@@ -152,16 +152,16 @@ impl UpstreamClient {
             let fid_url = format!("{}?fid={fid}", self.cart_url);
             let fid_html = self.fetch_html(&fid_url).await?;
             request_count += 1;
+            region_notice_initialized_keys.insert(catalog_region_key(fid, None));
+            if let Some(text) = parse_region_notice(&fid_html) {
+                upsert_region_notice(&mut region_notices, fid, None, &text);
+            }
 
             let mut fid_regions = parse_regions(fid, &fid_html);
             if fid_regions.is_empty() {
                 if parse_configs(fid, None, &fid_html).is_empty() {
                     ambiguous_country_ids.insert(fid.clone());
                     continue;
-                }
-                region_notice_initialized_keys.insert(catalog_region_key(fid, None));
-                if let Some(text) = parse_region_notice(&fid_html) {
-                    upsert_region_notice(&mut region_notices, fid, None, &text);
                 }
             } else {
                 regions.append(&mut fid_regions);
@@ -201,15 +201,19 @@ impl UpstreamClient {
             let fid_url = format!("{}?fid={fid}", self.cart_url);
             let fid_html = self.fetch_html(&fid_url).await?;
             let mut fid_regions = parse_regions(fid, &fid_html);
+            region_notice_initialized_keys.insert(catalog_region_key(fid, None));
+            if let Some(text) = parse_region_notice(&fid_html) {
+                upsert_region_notice(&mut region_notices, fid, None, &text);
+            }
+
+            let direct_configs = parse_configs(fid, None, &fid_html);
             if fid_regions.is_empty() {
-                region_notice_initialized_keys.insert(catalog_region_key(fid, None));
                 // Some pages may not have a region selector.
-                if let Some(text) = parse_region_notice(&fid_html) {
-                    upsert_region_notice(&mut region_notices, fid, None, &text);
-                }
-                let parsed = parse_configs(fid, None, &fid_html);
-                configs.extend(parsed);
+                configs.extend(direct_configs);
             } else {
+                if !direct_configs.is_empty() {
+                    configs.extend(direct_configs);
+                }
                 regions.append(&mut fid_regions);
             }
 

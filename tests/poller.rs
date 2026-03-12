@@ -258,7 +258,29 @@ async fn probe_catalog_topology_discovers_new_targets_without_retiring_existing_
   <span class="yy-bth-text-a">CN</span>
 </div>
 "#;
-    let fid_html = include_str!("fixtures/cart-fid-2.html");
+    let fid_html = format!(
+        r#"{}
+<div class="card cartitem shadow w-100">
+  <div class="card-body">
+    <h4>CN Direct Premium</h4>
+    <div class="card-text mb-4 mt-3">
+      <p>CPU：4核心</p>
+      <p>内存：8G</p>
+    </div>
+  </div>
+  <div class="ml-4">
+    <p class="card-text">库存： 3</p>
+  </div>
+  <div class="text-right">
+    ¥ <a class="cart-num DINCondensed-Bold">66.00</a> 元 / 月
+  </div>
+  <div class="card-footer">
+    <a href="/cart?action=configureproduct&pid=256">立即购买</a>
+  </div>
+</div>
+"#,
+        include_str!("fixtures/cart-fid-2.html")
+    );
     let gid_57_html = r#"
 <!doctype html>
 <html lang="zh-CN">
@@ -296,10 +318,10 @@ async fn probe_catalog_topology_discovers_new_targets_without_retiring_existing_
         axum::routing::get(
             move |axum::extract::Query(q): axum::extract::Query<CartQuery>| async move {
                 match (q.fid.as_deref(), q.gid.as_deref()) {
-                    (None, None) => root_html,
-                    (Some("2"), None) => fid_html,
-                    (Some("2"), Some("57")) => gid_57_html,
-                    _ => "not found",
+                    (None, None) => root_html.to_string(),
+                    (Some("2"), None) => fid_html.clone(),
+                    (Some("2"), Some("57")) => gid_57_html.to_string(),
+                    _ => "not found".to_string(),
                 }
             },
         ),
@@ -371,6 +393,7 @@ WHERE user_id = ?
     assert_eq!(
         targets,
         vec![
+            ("2".to_string(), None),
             ("2".to_string(), Some("56".to_string())),
             ("2".to_string(), Some("57".to_string())),
         ]
@@ -408,6 +431,97 @@ WHERE user_id = ?
             "catalog.partition.added".to_string(),
         )]
     );
+}
+
+#[tokio::test]
+async fn probe_catalog_topology_prefetches_country_root_configs_for_new_country() {
+    let root_html = r#"
+<!doctype html>
+<div class="firstgroup_item" onclick="window.location.href='/cart?fid=2'">
+  <span class="yy-bth-text-a">CN</span>
+</div>
+"#;
+    let fid_html = r#"
+<!doctype html>
+<html lang="zh-CN">
+  <body>
+    <div class="firstgroup_box_group">
+      <div class="secondgroup_item pointer active" onclick="window.location.href='/cart?fid=2&gid=56'">
+        <a class="yy-bth-text-a">HKG Premium</a>
+        <a class="yy-bth-text-b">湾仔</a>
+      </div>
+    </div>
+    <div class="card cartitem shadow w-100">
+      <div class="card-body">
+        <h4>CN Direct Premium</h4>
+      </div>
+      <div class="ml-4">
+        <p class="card-text">库存： 3</p>
+      </div>
+      <div class="text-right">
+        ¥ <a class="cart-num DINCondensed-Bold">66.00</a> 元 / 月
+      </div>
+      <div class="card-footer">
+        <a href="/cart?action=configureproduct&pid=256">立即购买</a>
+      </div>
+    </div>
+  </body>
+</html>
+"#;
+    let gid_56_html = include_str!("fixtures/cart-fid-2-gid-56.html");
+
+    #[derive(serde::Deserialize)]
+    struct CartQuery {
+        fid: Option<String>,
+        gid: Option<String>,
+    }
+
+    let upstream = Router::new().route(
+        "/cart",
+        axum::routing::get(
+            move |axum::extract::Query(q): axum::extract::Query<CartQuery>| async move {
+                match (q.fid.as_deref(), q.gid.as_deref()) {
+                    (None, None) => root_html.to_string(),
+                    (Some("2"), None) => fid_html.to_string(),
+                    (Some("2"), Some("56")) => gid_56_html.to_string(),
+                    _ => "not found".to_string(),
+                }
+            },
+        ),
+    );
+    let base = spawn_stub_server(upstream).await;
+
+    let mut cfg = test_config();
+    cfg.upstream_cart_url = format!("{base}/cart");
+
+    let db = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&cfg.db_url)
+        .await
+        .unwrap();
+    catnap::db::init_db(&db).await.unwrap();
+
+    let state = build_state(cfg.clone(), db.clone()).await;
+    catnap::poller::probe_catalog_topology(&state, "test")
+        .await
+        .unwrap();
+
+    let targets = catnap::db::list_catalog_task_keys(&db).await.unwrap();
+    assert_eq!(
+        targets,
+        vec![
+            ("2".to_string(), None),
+            ("2".to_string(), Some("56".to_string())),
+        ]
+    );
+
+    let row = sqlx::query("SELECT name, source_gid FROM catalog_configs WHERE id = ?")
+        .bind("lc:2:0:256")
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    assert_eq!(row.get::<String, _>(0), "CN Direct Premium");
+    assert_eq!(row.get::<Option<String>, _>(1), None);
 }
 
 #[tokio::test]

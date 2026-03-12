@@ -4,7 +4,7 @@ use crate::notification_content::{
     self, ConfigLifecycleNotificationKind, TopologyNotificationKind,
 };
 use crate::notifications;
-use crate::upstream::{CatalogSnapshot, UpstreamClient};
+use crate::upstream::{catalog_region_key, CatalogSnapshot, UpstreamClient};
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -412,6 +412,7 @@ async fn deliver_outbound_notification(
     meta: serde_json::Value,
     notification: &notification_content::OutboundNotification,
 ) -> anyhow::Result<()> {
+    let notify_run_id = run_id.unwrap_or(0);
     let _ = crate::db::insert_log(
         &manager.inner.db,
         Some(&target.user_id),
@@ -445,19 +446,15 @@ async fn deliver_outbound_notification(
             .await
             {
                 Ok(_) => {
-                    if let Some(run_id) = run_id {
-                        let _ = manager
-                            .record_notify(run_id, "telegram", "success", None)
-                            .await;
-                    }
+                    let _ = manager
+                        .record_notify(notify_run_id, "telegram", "success", None)
+                        .await;
                 }
                 Err(err) => {
                     let err_msg = err.to_string();
-                    if let Some(run_id) = run_id {
-                        let _ = manager
-                            .record_notify(run_id, "telegram", "error", Some(&err_msg))
-                            .await;
-                    }
+                    let _ = manager
+                        .record_notify(notify_run_id, "telegram", "error", Some(&err_msg))
+                        .await;
                     let _ = crate::db::insert_log(
                         &manager.inner.db,
                         Some(&target.user_id),
@@ -470,16 +467,14 @@ async fn deliver_outbound_notification(
                 }
             },
             _ => {
-                if let Some(run_id) = run_id {
-                    let _ = manager
-                        .record_notify(
-                            run_id,
-                            "telegram",
-                            "skipped",
-                            Some("missing telegram config"),
-                        )
-                        .await;
-                }
+                let _ = manager
+                    .record_notify(
+                        notify_run_id,
+                        "telegram",
+                        "skipped",
+                        Some("missing telegram config"),
+                    )
+                    .await;
             }
         }
     }
@@ -497,40 +492,32 @@ async fn deliver_outbound_notification(
             .await
             {
                 Ok(_) => {
-                    if let Some(run_id) = run_id {
-                        let _ = manager
-                            .record_notify(run_id, "webPush", "success", None)
-                            .await;
-                    }
+                    let _ = manager
+                        .record_notify(notify_run_id, "webPush", "success", None)
+                        .await;
                 }
                 Err(err) => {
                     let err_msg = err.to_string();
-                    if let Some(run_id) = run_id {
-                        let _ = manager
-                            .record_notify(run_id, "webPush", "error", Some(&err_msg))
-                            .await;
-                    }
+                    let _ = manager
+                        .record_notify(notify_run_id, "webPush", "error", Some(&err_msg))
+                        .await;
                 }
             },
             Ok(None) => {
-                if let Some(run_id) = run_id {
-                    let _ = manager
-                        .record_notify(
-                            run_id,
-                            "webPush",
-                            "skipped",
-                            Some("missing web push subscription"),
-                        )
-                        .await;
-                }
+                let _ = manager
+                    .record_notify(
+                        notify_run_id,
+                        "webPush",
+                        "skipped",
+                        Some("missing web push subscription"),
+                    )
+                    .await;
             }
             Err(err) => {
                 let err_msg = err.to_string();
-                if let Some(run_id) = run_id {
-                    let _ = manager
-                        .record_notify(run_id, "webPush", "error", Some(&err_msg))
-                        .await;
-                }
+                let _ = manager
+                    .record_notify(notify_run_id, "webPush", "error", Some(&err_msg))
+                    .await;
             }
         }
     }
@@ -2276,6 +2263,7 @@ WHERE s.monitoring_events_partition_catalog_change_enabled = 1
         removed_countries: &[CountryTopologyChange],
         added_regions: &[RegionTopologyChange],
         removed_regions: &[RegionTopologyChange],
+        added_catalog_fetch_failures: &HashSet<String>,
     ) -> anyhow::Result<()> {
         if added_countries.is_empty()
             && removed_countries.is_empty()
@@ -2314,6 +2302,16 @@ WHERE monitoring_events_site_region_change_enabled = 1
             }
             let (catalog_items, total_catalog_count) =
                 load_country_catalog_summary(&self.inner.db, &change.id).await?;
+            let country_key = catalog_region_key(&change.id, None);
+            let summary_fetch_failed = total_catalog_count == 0
+                && (added_catalog_fetch_failures.contains(&country_key)
+                    || added_regions.iter().any(|region| {
+                        region.country_id == change.id
+                            && added_catalog_fetch_failures.contains(&catalog_region_key(
+                                &region.country_id,
+                                Some(region.region_id.as_str()),
+                            ))
+                    }));
             for target in &site_targets {
                 let msg = format!(
                     "[region_added] {} catalogCount={}",
@@ -2324,6 +2322,7 @@ WHERE monitoring_events_site_region_change_enabled = 1
                     &change.name,
                     &catalog_items,
                     total_catalog_count,
+                    summary_fetch_failed,
                     target.site_base_url.as_deref(),
                 );
                 deliver_outbound_notification(
@@ -2352,6 +2351,7 @@ WHERE monitoring_events_site_region_change_enabled = 1
                     &change.name,
                     &[],
                     0,
+                    false,
                     target.site_base_url.as_deref(),
                 );
                 deliver_outbound_notification(
@@ -2415,6 +2415,11 @@ WHERE s.monitoring_events_region_partition_change_enabled = 1
             let (catalog_items, total_catalog_count) =
                 load_region_catalog_summary(&self.inner.db, &change.country_id, &change.region_id)
                     .await?;
+            let summary_fetch_failed = total_catalog_count == 0
+                && added_catalog_fetch_failures.contains(&catalog_region_key(
+                    &change.country_id,
+                    Some(change.region_id.as_str()),
+                ));
             for target in &targets {
                 let msg = format!(
                     "[partition_added] {} catalogCount={}",
@@ -2425,6 +2430,7 @@ WHERE s.monitoring_events_region_partition_change_enabled = 1
                     &label,
                     &catalog_items,
                     total_catalog_count,
+                    summary_fetch_failed,
                     target.site_base_url.as_deref(),
                 );
                 deliver_outbound_notification(
@@ -2492,6 +2498,7 @@ WHERE s.monitoring_events_region_partition_change_enabled = 1
                     &label,
                     &[],
                     0,
+                    false,
                     target.site_base_url.as_deref(),
                 );
                 deliver_outbound_notification(
@@ -3532,7 +3539,23 @@ WHERE user_id = ?
 
     #[tokio::test]
     async fn topology_notifications_route_to_parent_scopes() {
-        let (ops, db) = build_ops_manager("https://example.com/cart".to_string()).await;
+        let hits = Arc::new(AtomicUsize::new(0));
+        let hits_for_handler = hits.clone();
+        let telegram = Router::new().route(
+            "/bottoken/sendMessage",
+            post(move || {
+                let hits_for_handler = hits_for_handler.clone();
+                async move {
+                    hits_for_handler.fetch_add(1, Ordering::SeqCst);
+                    (StatusCode::OK, r#"{"ok":true}"#)
+                }
+            }),
+        );
+        let base = spawn_stub_server(telegram).await;
+        let upstream_cart_url = "https://example.com/cart".to_string();
+        let mut cfg = test_config(upstream_cart_url.clone());
+        cfg.telegram_api_base_url = base;
+        let (ops, db) = build_ops_manager_with_config(cfg.clone(), upstream_cart_url).await;
 
         crate::db::replace_catalog_topology(
             &db,
@@ -3578,11 +3601,11 @@ WHERE user_id = ?
         .await
         .unwrap();
 
-        for (user_id, region_enabled, site_enabled) in [
-            ("u_region_scope", true, false),
-            ("u_region_disabled", false, false),
-            ("u_site_scope", false, true),
-            ("u_site_disabled", false, false),
+        for (user_id, region_enabled, site_enabled, telegram_enabled) in [
+            ("u_region_scope", true, false, true),
+            ("u_region_disabled", false, false, false),
+            ("u_site_scope", false, true, true),
+            ("u_site_disabled", false, false, false),
         ] {
             crate::db::ensure_user(&db, &ops.inner.cfg, user_id)
                 .await
@@ -3593,13 +3616,22 @@ UPDATE settings
 SET monitoring_events_partition_catalog_change_enabled = 0,
     monitoring_events_region_partition_change_enabled = ?,
     monitoring_events_site_region_change_enabled = ?,
-    telegram_enabled = 0,
+    telegram_enabled = ?,
+    telegram_bot_token = ?,
+    telegram_target = ?,
     web_push_enabled = 0
 WHERE user_id = ?
 "#,
             )
             .bind(if region_enabled { 1 } else { 0 })
             .bind(if site_enabled { 1 } else { 0 })
+            .bind(if telegram_enabled { 1 } else { 0 })
+            .bind(if telegram_enabled {
+                Some("token")
+            } else {
+                None
+            })
+            .bind(if telegram_enabled { Some("chat") } else { None })
             .bind(user_id)
             .execute(&db)
             .await
@@ -3634,6 +3666,7 @@ WHERE user_id = ?
                 region_id: "42".to_string(),
                 region_name: "德国下架区".to_string(),
             }],
+            &HashSet::new(),
         )
         .await
         .unwrap();
@@ -3669,6 +3702,16 @@ WHERE user_id = ?
                 ),
             ]
         );
+
+        assert_eq!(hits.load(Ordering::SeqCst), 4);
+        let notify_rows =
+            sqlx::query("SELECT COUNT(*) FROM ops_notify_runs WHERE channel = ? AND result = ?")
+                .bind("telegram")
+                .bind("success")
+                .fetch_one(&db)
+                .await
+                .unwrap();
+        assert_eq!(notify_rows.get::<i64, _>(0), 4);
     }
 
     #[tokio::test]

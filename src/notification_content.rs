@@ -251,6 +251,7 @@ pub fn build_topology_notification(
     scope_label: &str,
     catalog_items: &[CatalogSummaryItem],
     total_catalog_count: usize,
+    catalog_summary_fetch_failed: bool,
     site_base_url: Option<&str>,
 ) -> OutboundNotification {
     let normalized_scope_label = scope_label.trim();
@@ -262,7 +263,9 @@ pub fn build_topology_notification(
     ));
 
     if kind.includes_catalog() {
-        if catalog_items.is_empty() {
+        if catalog_summary_fetch_failed {
+            telegram_lines.push("套餐摘要抓取失败，稍后重试。".to_string());
+        } else if catalog_items.is_empty() {
             telegram_lines.push("当前未发现套餐。".to_string());
         } else {
             telegram_lines.push("当前套餐：".to_string());
@@ -283,7 +286,9 @@ pub fn build_topology_notification(
     }
 
     let web_push_body = if kind.includes_catalog() {
-        if catalog_items.is_empty() {
+        if catalog_summary_fetch_failed {
+            format!("{normalized_scope_label}｜套餐摘要抓取失败，稍后重试")
+        } else if catalog_items.is_empty() {
             format!("{normalized_scope_label}｜当前未发现套餐")
         } else if total_catalog_count > catalog_items.len() {
             format!(
@@ -542,6 +547,7 @@ mod tests {
                 },
             ],
             3,
+            false,
             Some("https://catnap.example/base"),
         );
 
@@ -567,6 +573,7 @@ mod tests {
             "德国 / 德国特惠",
             &[],
             0,
+            false,
             None,
         );
 
@@ -576,6 +583,31 @@ mod tests {
             notification.telegram_text,
             "【可用区已删除】德国 / 德国特惠
 可用区：德国 / 德国特惠"
+        );
+    }
+
+    #[test]
+    fn builds_region_added_notification_with_summary_fetch_failure() {
+        let notification = build_topology_notification(
+            TopologyNotificationKind::RegionAdded,
+            "德国",
+            &[],
+            0,
+            true,
+            Some("https://catnap.example/base"),
+        );
+
+        assert_eq!(notification.web_push_title, "Catnap · 新国家");
+        assert_eq!(
+            notification.web_push_body,
+            "德国｜套餐摘要抓取失败，稍后重试"
+        );
+        assert_eq!(
+            notification.telegram_text,
+            "【新国家】德国
+国家：德国
+套餐摘要抓取失败，稍后重试。
+查看全部产品：https://catnap.example/base/products"
         );
     }
 

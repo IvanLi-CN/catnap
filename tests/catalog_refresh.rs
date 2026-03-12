@@ -223,6 +223,7 @@ async fn catalog_refresh_job_runs_and_persists_url_cache() {
         .into_iter()
         .map(|r| r.get::<String, _>(0))
         .collect::<Vec<_>>();
+    assert!(keys.contains(&"2:0".to_string()));
     assert!(keys.contains(&"2:56".to_string()));
 
     // Fetched configs are marked as active.
