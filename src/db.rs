@@ -1691,10 +1691,23 @@ WHERE source_fid = ?
         rows.into_iter().map(|r| r.get::<String, _>(0)).collect()
     };
 
-    // A parse that yields an empty list is ambiguous: it could mean the upstream cart truly has no
-    // items, or it could be an upstream HTML change/error page that our parser didn't catch.
-    // Treat it as a failure when we have previously active IDs to avoid incorrect mass-delisting.
-    if configs.is_empty() && !prev_ids.is_empty() {
+    let allow_empty_regioned_country_root = if gid.is_none() {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT EXISTS(SELECT 1 FROM catalog_regions WHERE country_id = ?)",
+        )
+        .bind(fid)
+        .fetch_one(&mut *tx)
+        .await?
+            != 0
+    } else {
+        false
+    };
+
+    // An empty parse is usually ambiguous: it could mean the upstream cart truly has no items, or
+    // it could be an upstream HTML change/error page that our parser didn't catch. Keep refusing
+    // it for normal targets, but allow country-root empty lists when the country also has explicit
+    // regions because that state legitimately means the country-direct packages disappeared.
+    if configs.is_empty() && !prev_ids.is_empty() && !allow_empty_regioned_country_root {
         anyhow::bail!(
             "refusing to apply empty catalog config list for {url_key} (would delist {} ids)",
             prev_ids.len()

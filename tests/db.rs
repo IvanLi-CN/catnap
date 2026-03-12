@@ -138,6 +138,99 @@ INSERT INTO catalog_configs (
 }
 
 #[tokio::test]
+async fn empty_parse_allows_delisting_country_root_when_country_has_regions() {
+    let cfg = test_config();
+    let db = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&cfg.db_url)
+        .await
+        .unwrap();
+
+    catnap::db::init_db(&db).await.unwrap();
+    catnap::db::replace_catalog_topology(
+        &db,
+        "https://example.invalid/cart",
+        &[catnap::models::Country {
+            id: "2".to_string(),
+            name: "CN".to_string(),
+        }],
+        &[catnap::models::Region {
+            id: "56".to_string(),
+            country_id: "2".to_string(),
+            name: "Hong Kong".to_string(),
+            location_name: Some("Hong Kong".to_string()),
+        }],
+    )
+    .await
+    .unwrap();
+
+    sqlx::query(
+        r#"
+INSERT INTO catalog_configs (
+  id, country_id, region_id, name, specs_json,
+  price_amount, price_currency, price_period,
+  inventory_status, inventory_quantity, checked_at,
+  config_digest,
+  lifecycle_state, lifecycle_listed_at, lifecycle_delisted_at, lifecycle_last_seen_at,
+  lifecycle_listed_event_at,
+  source_pid, source_fid, source_gid
+) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, NULL, ?, ?, NULL, ?, NULL)
+"#,
+    )
+    .bind("cfg_country_root")
+    .bind("2")
+    .bind("seed")
+    .bind("{}")
+    .bind(1.0_f64)
+    .bind("USD")
+    .bind("month")
+    .bind("in_stock")
+    .bind(1_i64)
+    .bind("2026-01-01T00:00:00Z")
+    .bind("digest")
+    .bind("2026-01-01T00:00:00Z")
+    .bind("2026-01-01T00:00:00Z")
+    .bind("2026-01-01T00:00:00Z")
+    .bind("2")
+    .execute(&db)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "INSERT INTO catalog_url_cache (url_key, url, config_ids_json, last_success_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind("2:0")
+    .bind("https://example.invalid/cart?fid=2")
+    .bind("[\"cfg_country_root\"]")
+    .bind("2026-01-01T00:00:00Z")
+    .bind("2026-01-01T00:00:00Z")
+    .execute(&db)
+    .await
+    .unwrap();
+
+    let res = catnap::db::apply_catalog_url_fetch_success(
+        &db,
+        "2",
+        None,
+        "2:0",
+        "https://example.invalid/cart?fid=2",
+        vec![],
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(res.delisted_ids, vec!["cfg_country_root".to_string()]);
+
+    let row = sqlx::query("SELECT lifecycle_state FROM catalog_configs WHERE id = ?")
+        .bind("cfg_country_root")
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    let state: String = row.get(0);
+    assert_eq!(state, "delisted");
+}
+
+#[tokio::test]
 async fn apply_catalog_url_fetch_success_persists_region_notice() {
     let cfg = test_config();
     let db = SqlitePoolOptions::new()

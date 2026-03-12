@@ -2303,15 +2303,14 @@ WHERE monitoring_events_site_region_change_enabled = 1
             let (catalog_items, total_catalog_count) =
                 load_country_catalog_summary(&self.inner.db, &change.id).await?;
             let country_key = catalog_region_key(&change.id, None);
-            let summary_fetch_failed = total_catalog_count == 0
-                && (added_catalog_fetch_failures.contains(&country_key)
-                    || added_regions.iter().any(|region| {
-                        region.country_id == change.id
-                            && added_catalog_fetch_failures.contains(&catalog_region_key(
-                                &region.country_id,
-                                Some(region.region_id.as_str()),
-                            ))
-                    }));
+            let summary_fetch_failed = added_catalog_fetch_failures.contains(&country_key)
+                || added_regions.iter().any(|region| {
+                    region.country_id == change.id
+                        && added_catalog_fetch_failures.contains(&catalog_region_key(
+                            &region.country_id,
+                            Some(region.region_id.as_str()),
+                        ))
+                });
             for target in &site_targets {
                 let msg = format!(
                     "[region_added] {} catalogCount={}",
@@ -2877,10 +2876,12 @@ mod tests {
         extract::Query,
         http::StatusCode,
         routing::{get, post},
-        Router,
+        Json, Router,
     };
+    use serde_json::Value;
     use sqlx::sqlite::SqlitePoolOptions;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
     use time::format_description::well_known::Rfc3339;
 
     fn test_config(upstream_cart_url: String) -> RuntimeConfig {
@@ -3712,6 +3713,109 @@ WHERE user_id = ?
                 .await
                 .unwrap();
         assert_eq!(notify_rows.get::<i64, _>(0), 4);
+    }
+
+    #[tokio::test]
+    async fn country_added_notification_marks_partial_summary_failure() {
+        let telegram_texts = Arc::new(Mutex::new(Vec::<String>::new()));
+        let telegram_texts_for_handler = telegram_texts.clone();
+        let telegram = Router::new().route(
+            "/bottoken/sendMessage",
+            post(move |Json(payload): Json<Value>| {
+                let telegram_texts_for_handler = telegram_texts_for_handler.clone();
+                async move {
+                    if let Some(text) = payload.get("text").and_then(Value::as_str) {
+                        telegram_texts_for_handler
+                            .lock()
+                            .unwrap()
+                            .push(text.to_string());
+                    }
+                    (StatusCode::OK, r#"{"ok":true}"#)
+                }
+            }),
+        );
+        let base = spawn_stub_server(telegram).await;
+        let upstream_cart_url = "https://example.com/cart".to_string();
+        let mut cfg = test_config(upstream_cart_url.clone());
+        cfg.telegram_api_base_url = base;
+        let (ops, db) = build_ops_manager_with_config(cfg.clone(), upstream_cart_url).await;
+
+        crate::db::replace_catalog_topology(&db, "https://example.com/cart", &[], &[])
+            .await
+            .unwrap();
+        crate::db::upsert_catalog_configs(
+            &db,
+            &[crate::upstream::ConfigBase {
+                id: "lc:8:41:test".to_string(),
+                country_id: "8".to_string(),
+                region_id: Some("41".to_string()),
+                name: "芬兰精品年付 Mini".to_string(),
+                specs: vec![],
+                price: crate::models::Money {
+                    amount: 9.99,
+                    currency: "CNY".to_string(),
+                    period: "year".to_string(),
+                },
+                inventory: crate::models::Inventory {
+                    status: "in_stock".to_string(),
+                    quantity: 2,
+                    checked_at: "2026-03-10T00:00:00Z".to_string(),
+                },
+                digest: "digest-1".to_string(),
+                monitor_supported: true,
+                source_pid: Some("test".to_string()),
+                source_fid: Some("8".to_string()),
+                source_gid: Some("41".to_string()),
+            }],
+        )
+        .await
+        .unwrap();
+
+        crate::db::ensure_user(&db, &ops.inner.cfg, "u_site_scope")
+            .await
+            .unwrap();
+        sqlx::query(
+            r#"
+UPDATE settings
+SET monitoring_events_site_region_change_enabled = 1,
+    telegram_enabled = 1,
+    telegram_bot_token = ?,
+    telegram_target = ?,
+    web_push_enabled = 0
+WHERE user_id = ?
+"#,
+        )
+        .bind("token")
+        .bind("chat")
+        .bind("u_site_scope")
+        .execute(&db)
+        .await
+        .unwrap();
+
+        let mut failures = HashSet::new();
+        failures.insert(crate::upstream::catalog_region_key("8", None));
+
+        ops.notify_topology_changes(
+            &[CountryTopologyChange {
+                id: "8".to_string(),
+                name: "芬兰".to_string(),
+            }],
+            &[],
+            &[RegionTopologyChange {
+                country_id: "8".to_string(),
+                country_name: "芬兰".to_string(),
+                region_id: "41".to_string(),
+                region_name: "赫尔辛基".to_string(),
+            }],
+            &[],
+            &failures,
+        )
+        .await
+        .unwrap();
+
+        let texts = telegram_texts.lock().unwrap().clone();
+        assert_eq!(texts.len(), 1);
+        assert!(texts[0].contains("套餐摘要抓取失败，稍后重试。"));
     }
 
     #[tokio::test]
