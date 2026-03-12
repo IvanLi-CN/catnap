@@ -309,6 +309,39 @@ export const SearchByCountryNameKeepsConfigs: Story = {
   },
 };
 
+export const ArchivedViewHidesTopologyOnlyScopes: Story = {
+  args: {
+    bootstrap: buildTopologyOnlyBootstrap(),
+  },
+  play: async ({ canvasElement }) => {
+    await userEvent.click(
+      within(canvasElement as HTMLElement).getByRole("button", {
+        name: "一键归档下架（1）",
+      }),
+    );
+    await userEvent.click(
+      await within(canvasElement as HTMLElement).findByRole("button", {
+        name: "确认归档",
+      }),
+    );
+
+    const archiveSelect = within(canvasElement as HTMLElement).getByDisplayValue("仅正常");
+    await userEvent.selectOptions(archiveSelect, "archived");
+
+    const japanSection = await findPanelSection(canvasElement as HTMLElement, "日本");
+    expect(within(japanSection).getByText("VPS • 2C/8G")).toBeVisible();
+    expect(
+      within(canvasElement as HTMLElement).queryByTestId("country-monitor-nl"),
+    ).not.toBeInTheDocument();
+    expect(
+      within(canvasElement as HTMLElement).queryByTestId("country-monitor-sg"),
+    ).not.toBeInTheDocument();
+    expect(
+      within(canvasElement as HTMLElement).queryByText("当前暂无可用区与套餐。"),
+    ).not.toBeInTheDocument();
+  },
+};
+
 export const ResponsiveAllBreakpoints: Story = {
   render: () => (
     <ResponsivePageStory

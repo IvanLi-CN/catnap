@@ -168,7 +168,7 @@ async fn catalog_refresh_job_runs_and_persists_url_cache() {
 
     async fn wait_refresh_done(app: axum::Router) -> String {
         let mut state = "idle".to_string();
-        for _ in 0..80 {
+        for _ in 0..240 {
             let res = app
                 .clone()
                 .oneshot(

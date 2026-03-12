@@ -2089,74 +2089,79 @@ export function ProductsView({
       regionGroup.configs.push(cfg);
     }
 
-    for (const country of bootstrap.catalog.countries) {
-      if (!matchesCountryFilter(country.id)) {
-        continue;
-      }
-
-      const topologyRegions = bootstrap.catalog.regions.filter(
-        (region) => region.countryId === country.id,
-      );
-      const countryMonitorEnabled = enabledPartitionKeys.has(buildPartitionKey(country.id, null));
-      const monitoredTopologyRegionIds = topologyRegions.filter((region) =>
-        enabledPartitionKeys.has(buildPartitionKey(country.id, region.id)),
-      );
-      const countryMatchesSearch = matchesSearch(country.name);
-      const visibleTopologyRegions = topologyRegions.filter((region) => {
-        if (!matchesRegionFilter(region.id)) {
-          return false;
+    if (archiveFilterMode !== "archived") {
+      for (const country of bootstrap.catalog.countries) {
+        if (!matchesCountryFilter(country.id)) {
+          continue;
         }
-        if (onlyMonitored && !enabledPartitionKeys.has(buildPartitionKey(country.id, region.id))) {
-          return false;
-        }
-        if (!q) {
-          return true;
-        }
-        return countryMatchesSearch || matchesSearch(region.name, region.locationName ?? "");
-      });
 
-      const hasVisibleTopologyScopes = visibleTopologyRegions.length > 0;
-      const shouldIncludeCountry =
-        byCountry.has(country.id) ||
-        countryMonitorEnabled ||
-        monitoredTopologyRegionIds.length > 0 ||
-        ((regionFilter === "all" || matchesRegionFilter(null)) &&
-          !q &&
-          topologyRegions.length === 0) ||
-        hasVisibleTopologyScopes ||
-        countryMatchesSearch;
-
-      if (!shouldIncludeCountry) {
-        continue;
-      }
-      if (
-        onlyMonitored &&
-        !byCountry.has(country.id) &&
-        !countryMonitorEnabled &&
-        monitoredTopologyRegionIds.length === 0
-      ) {
-        continue;
-      }
-      if (q && !byCountry.has(country.id) && !countryMatchesSearch && !hasVisibleTopologyScopes) {
-        continue;
-      }
-      if (
-        !matchesRegionFilter(null) &&
-        topologyRegions.length === 0 &&
-        !byCountry.has(country.id)
-      ) {
-        continue;
-      }
-
-      const countryEntry = ensureCountry(country.id);
-      for (const region of visibleTopologyRegions) {
-        ensureRegionGroup(
-          countryEntry,
-          region.id,
-          region.name,
-          region.locationName ?? null,
-          `${region.name}::${region.locationName ?? ""}`,
+        const topologyRegions = bootstrap.catalog.regions.filter(
+          (region) => region.countryId === country.id,
         );
+        const countryMonitorEnabled = enabledPartitionKeys.has(buildPartitionKey(country.id, null));
+        const monitoredTopologyRegionIds = topologyRegions.filter((region) =>
+          enabledPartitionKeys.has(buildPartitionKey(country.id, region.id)),
+        );
+        const countryMatchesSearch = matchesSearch(country.name);
+        const visibleTopologyRegions = topologyRegions.filter((region) => {
+          if (!matchesRegionFilter(region.id)) {
+            return false;
+          }
+          if (
+            onlyMonitored &&
+            !enabledPartitionKeys.has(buildPartitionKey(country.id, region.id))
+          ) {
+            return false;
+          }
+          if (!q) {
+            return true;
+          }
+          return countryMatchesSearch || matchesSearch(region.name, region.locationName ?? "");
+        });
+
+        const hasVisibleTopologyScopes = visibleTopologyRegions.length > 0;
+        const shouldIncludeCountry =
+          byCountry.has(country.id) ||
+          countryMonitorEnabled ||
+          monitoredTopologyRegionIds.length > 0 ||
+          ((regionFilter === "all" || matchesRegionFilter(null)) &&
+            !q &&
+            topologyRegions.length === 0) ||
+          hasVisibleTopologyScopes ||
+          countryMatchesSearch;
+
+        if (!shouldIncludeCountry) {
+          continue;
+        }
+        if (
+          onlyMonitored &&
+          !byCountry.has(country.id) &&
+          !countryMonitorEnabled &&
+          monitoredTopologyRegionIds.length === 0
+        ) {
+          continue;
+        }
+        if (q && !byCountry.has(country.id) && !countryMatchesSearch && !hasVisibleTopologyScopes) {
+          continue;
+        }
+        if (
+          !matchesRegionFilter(null) &&
+          topologyRegions.length === 0 &&
+          !byCountry.has(country.id)
+        ) {
+          continue;
+        }
+
+        const countryEntry = ensureCountry(country.id);
+        for (const region of visibleTopologyRegions) {
+          ensureRegionGroup(
+            countryEntry,
+            region.id,
+            region.name,
+            region.locationName ?? null,
+            `${region.name}::${region.locationName ?? ""}`,
+          );
+        }
       }
     }
 
@@ -2183,6 +2188,7 @@ export function ProductsView({
 
     return out;
   }, [
+    archiveFilterMode,
     bootstrap.catalog.countries,
     bootstrap.catalog.regions,
     countriesById,

@@ -259,20 +259,47 @@ async fn probe_catalog_topology_discovers_new_targets_without_retiring_existing_
 </div>
 "#;
     let fid_html = include_str!("fixtures/cart-fid-2.html");
+    let gid_57_html = r#"
+<!doctype html>
+<html lang="zh-CN">
+  <body>
+    <div class="card cartitem shadow w-100">
+      <div class="card-body">
+        <h4>HKG Premium Plus</h4>
+        <div class="card-text mb-4 mt-3">
+          <p>CPU：2核心</p>
+          <p>内存：2G</p>
+        </div>
+      </div>
+      <div class="ml-4">
+        <p class="card-text">库存： 5</p>
+      </div>
+      <div class="text-right">
+        ¥ <a class="cart-num DINCondensed-Bold">88.00</a> 元 / 月
+      </div>
+      <div class="card-footer">
+        <a href="/cart?action=configureproduct&pid=257">立即购买</a>
+      </div>
+    </div>
+  </body>
+</html>
+"#;
 
     #[derive(serde::Deserialize)]
     struct CartQuery {
         fid: Option<String>,
+        gid: Option<String>,
     }
 
     let upstream = Router::new().route(
         "/cart",
         axum::routing::get(
             move |axum::extract::Query(q): axum::extract::Query<CartQuery>| async move {
-                match q.fid.as_deref() {
-                    None => root_html,
-                    Some("2") => fid_html,
-                    Some(_) => "not found",
+                match (q.fid.as_deref(), q.gid.as_deref()) {
+                    (None, None) => root_html,
+                    (Some("2"), None) => fid_html,
+                    (Some("2"), Some("57")) => gid_57_html,
+                    _ => "not found",
                 }
             },
         ),
@@ -348,6 +375,14 @@ WHERE user_id = ?
             ("2".to_string(), Some("57".to_string())),
         ]
     );
+
+    let row = sqlx::query("SELECT name, source_gid FROM catalog_configs WHERE id = ?")
+        .bind("lc:2:57:257")
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    assert_eq!(row.get::<String, _>(0), "HKG Premium Plus");
+    assert_eq!(row.get::<Option<String>, _>(1), Some("57".to_string()));
 
     let row = sqlx::query("SELECT lifecycle_state FROM catalog_configs WHERE id = ?")
         .bind(&configs[0].id)
