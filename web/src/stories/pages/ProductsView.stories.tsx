@@ -88,6 +88,12 @@ function buildRegionFilterMonitorBootstrap(): BootstrapResponse {
   return bootstrap;
 }
 
+function buildCountryMonitorTopologyBootstrap(): BootstrapResponse {
+  const bootstrap = buildTopologyOnlyBootstrap();
+  bootstrap.monitoring.enabledPartitions = [{ countryId: "nl", regionId: null }];
+  return bootstrap;
+}
+
 async function findPanelSection(canvasElement: HTMLElement, title: string) {
   await within(canvasElement).findByTestId("page-products");
   const heading = Array.from(canvasElement.querySelectorAll(".panel-section .panel-title")).find(
@@ -248,7 +254,12 @@ export const PartitionMonitoringFocus: Story = {
     expect(
       await within(canvasElement as HTMLElement).findByText("VPS • 4C/8G（美国）"),
     ).toBeVisible();
-    expect(within(canvasElement as HTMLElement).queryByText("加州")).not.toBeInTheDocument();
+    const monitoredCaliforniaBlock = await findProductRegionBlock(
+      canvasElement as HTMLElement,
+      "加州",
+    );
+    expect(monitoredCaliforniaBlock).toBeVisible();
+    expect(within(monitoredCaliforniaBlock).getByText("当前暂无套餐。")).toBeVisible();
     expect(within(canvasElement as HTMLElement).queryByText("大阪")).not.toBeInTheDocument();
     expect(await within(canvasElement as HTMLElement).findByText("东京")).toBeVisible();
 
@@ -325,6 +336,27 @@ export const RegionFilterHidesUnrelatedCountryMonitorScopes: Story = {
         (canvasElement as HTMLElement).querySelectorAll(".panel-section .panel-title"),
       ).some((node) => node.textContent?.trim() === "新加坡"),
     ).toBe(false);
+  },
+};
+
+export const CountryMonitorKeepsTopologyOnlyRegionsVisible: Story = {
+  args: {
+    bootstrap: buildCountryMonitorTopologyBootstrap(),
+  },
+  play: async ({ canvasElement }) => {
+    await userEvent.click(
+      within(canvasElement as HTMLElement).getByRole("button", { name: "仅看已监控" }),
+    );
+
+    const netherlandsSection = await findPanelSection(canvasElement as HTMLElement, "荷兰");
+    const amsterdamBlock = await findProductRegionBlock(canvasElement as HTMLElement, "阿姆斯特丹");
+    expect(within(netherlandsSection).getByTestId("country-monitor-nl")).toHaveTextContent(
+      "监控：开",
+    );
+    expect(within(amsterdamBlock).getByText("当前暂无套餐。")).toBeVisible();
+    expect(
+      within(netherlandsSection).queryByText("当前暂无可用区与套餐。"),
+    ).not.toBeInTheDocument();
   },
 };
 

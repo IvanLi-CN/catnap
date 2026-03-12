@@ -2167,6 +2167,39 @@ export function ProductsView({
       countryFilter === "all" || countryId === countryFilter;
     const matchesRegionFilter = (regionId: string | null) =>
       regionFilter === "all" || (regionId ?? "") === regionFilter;
+    const visibleCatalogRegionKeys = new Set(
+      filterConfigsByArchiveMode(bootstrap.catalog.configs, archiveFilterMode)
+        .filter((cfg) => {
+          if (!cfg.regionId) {
+            return false;
+          }
+          if (!matchesCountryFilter(cfg.countryId) || !matchesRegionFilter(cfg.regionId)) {
+            return false;
+          }
+          if (!q) {
+            return true;
+          }
+          if (cfg.name.toLowerCase().includes(q)) {
+            return true;
+          }
+          const specText = cfg.specs
+            .map((spec) => `${spec.key} ${spec.value}`.trim())
+            .join(" ")
+            .toLowerCase();
+          if (specText.includes(q)) {
+            return true;
+          }
+          const countryName = countriesById.get(cfg.countryId)?.name?.toLowerCase() ?? "";
+          if (countryName.includes(q)) {
+            return true;
+          }
+          const region = regionsById.get(cfg.regionId);
+          const regionName = region?.name?.toLowerCase() ?? "";
+          const regionLocation = region?.locationName?.toLowerCase() ?? "";
+          return regionName.includes(q) || regionLocation.includes(q);
+        })
+        .map((cfg) => buildPartitionKey(cfg.countryId, cfg.regionId)),
+    );
 
     const ensureCountry = (countryId: string) => {
       let country = byCountry.get(countryId);
@@ -2255,11 +2288,14 @@ export function ProductsView({
           if (!matchesRegionFilter(region.id)) {
             return false;
           }
-          if (
-            onlyMonitored &&
-            !enabledPartitionKeys.has(buildPartitionKey(country.id, region.id))
-          ) {
-            return false;
+          const regionKey = buildPartitionKey(country.id, region.id);
+          const regionMonitored = enabledPartitionKeys.has(regionKey);
+          if (onlyMonitored && !regionMonitored) {
+            const emptyTopologyScopeUnderCountryMonitor =
+              countryMonitorEnabled && !visibleCatalogRegionKeys.has(regionKey);
+            if (!emptyTopologyScopeUnderCountryMonitor) {
+              return false;
+            }
           }
           if (!q) {
             return true;
@@ -2337,6 +2373,7 @@ export function ProductsView({
     return out;
   }, [
     archiveFilterMode,
+    bootstrap.catalog.configs,
     bootstrap.catalog.countries,
     bootstrap.catalog.regions,
     countriesById,

@@ -1,4 +1,4 @@
-use axum::Router;
+use axum::{http::StatusCode, Router};
 use catnap::{AppState, RuntimeConfig};
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::{Row, SqlitePool};
@@ -524,6 +524,241 @@ async fn probe_catalog_topology_prefetches_country_root_configs_for_new_country(
         .unwrap();
     assert_eq!(row.get::<String, _>(0), "CN Direct Premium");
     assert_eq!(row.get::<Option<String>, _>(1), None);
+}
+
+#[tokio::test]
+async fn probe_catalog_topology_keeps_country_direct_summary_when_region_prefetch_fails() {
+    let root_html = r#"
+<!doctype html>
+<div class="firstgroup_item" onclick="window.location.href='/cart?fid=2'">
+  <span class="yy-bth-text-a">CN</span>
+</div>
+"#;
+    let fid_html = r#"
+<!doctype html>
+<html lang="zh-CN">
+  <body>
+    <div class="firstgroup_box_group">
+      <div class="secondgroup_item pointer active" onclick="window.location.href='/cart?fid=2&gid=56'">
+        <a class="yy-bth-text-a">HKG Premium</a>
+        <a class="yy-bth-text-b">湾仔</a>
+      </div>
+    </div>
+    <div class="card cartitem shadow w-100">
+      <div class="card-body">
+        <h4>CN Direct Premium</h4>
+      </div>
+      <div class="ml-4">
+        <p class="card-text">库存： 3</p>
+      </div>
+      <div class="text-right">
+        ¥ <a class="cart-num DINCondensed-Bold">66.00</a> 元 / 月
+      </div>
+      <div class="card-footer">
+        <a href="/cart?action=configureproduct&pid=256">立即购买</a>
+      </div>
+    </div>
+  </body>
+</html>
+"#;
+
+    #[derive(serde::Deserialize)]
+    struct CartQuery {
+        fid: Option<String>,
+        gid: Option<String>,
+    }
+
+    let upstream = Router::new().route(
+        "/cart",
+        axum::routing::get(
+            move |axum::extract::Query(q): axum::extract::Query<CartQuery>| async move {
+                match (q.fid.as_deref(), q.gid.as_deref()) {
+                    (None, None) => (StatusCode::OK, root_html.to_string()),
+                    (Some("2"), None) => (StatusCode::OK, fid_html.to_string()),
+                    (Some("2"), Some("56")) => (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "temporary upstream issue".to_string(),
+                    ),
+                    _ => (StatusCode::NOT_FOUND, "not found".to_string()),
+                }
+            },
+        ),
+    );
+    let base = spawn_stub_server(upstream).await;
+
+    let mut cfg = test_config();
+    cfg.upstream_cart_url = format!("{base}/cart");
+
+    let db = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&cfg.db_url)
+        .await
+        .unwrap();
+    catnap::db::init_db(&db).await.unwrap();
+    catnap::db::ensure_user(&db, &cfg, "u_site_scope")
+        .await
+        .unwrap();
+    sqlx::query(
+        r#"
+UPDATE settings
+SET monitoring_events_partition_catalog_change_enabled = 0,
+    monitoring_events_region_partition_change_enabled = 0,
+    monitoring_events_site_region_change_enabled = 1,
+    telegram_enabled = 0,
+    web_push_enabled = 0
+WHERE user_id = ?
+"#,
+    )
+    .bind("u_site_scope")
+    .execute(&db)
+    .await
+    .unwrap();
+
+    let state = build_state(cfg.clone(), db.clone()).await;
+    catnap::poller::probe_catalog_topology(&state, "test")
+        .await
+        .unwrap();
+
+    let row = sqlx::query("SELECT name, source_gid FROM catalog_configs WHERE id = ?")
+        .bind("lc:2:0:256")
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    assert_eq!(row.get::<String, _>(0), "CN Direct Premium");
+    assert_eq!(row.get::<Option<String>, _>(1), None);
+
+    let record = sqlx::query(
+        "SELECT summary FROM notification_records WHERE user_id = ? AND kind = ? ORDER BY id DESC LIMIT 1",
+    )
+    .bind("u_site_scope")
+    .bind("catalog.region.added")
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    let summary = record.get::<String, _>(0);
+    assert!(summary.contains("已抓到 1 个套餐"));
+    assert!(summary.contains("部分摘要抓取失败"));
+}
+
+#[tokio::test]
+async fn probe_catalog_topology_marks_added_region_summary_fetch_failed_for_ambiguous_empty_page() {
+    let root_html = r#"
+<!doctype html>
+<div class="firstgroup_item" onclick="window.location.href='/cart?fid=2'">
+  <span class="yy-bth-text-a">CN</span>
+</div>
+"#;
+    let fid_html = r#"
+<!doctype html>
+<html lang="zh-CN">
+  <body>
+    <div class="firstgroup_box_group">
+      <div class="secondgroup_item pointer active" onclick="window.location.href='/cart?fid=2&gid=57'">
+        <a class="yy-bth-text-a">HKG Premium Plus</a>
+        <a class="yy-bth-text-b">九龙</a>
+      </div>
+    </div>
+  </body>
+</html>
+"#;
+    let gid_57_html = "<!doctype html><html><body>temporary upstream issue</body></html>";
+
+    #[derive(serde::Deserialize)]
+    struct CartQuery {
+        fid: Option<String>,
+        gid: Option<String>,
+    }
+
+    let upstream = Router::new().route(
+        "/cart",
+        axum::routing::get(
+            move |axum::extract::Query(q): axum::extract::Query<CartQuery>| async move {
+                match (q.fid.as_deref(), q.gid.as_deref()) {
+                    (None, None) => (StatusCode::OK, root_html.to_string()),
+                    (Some("2"), None) => (StatusCode::OK, fid_html.to_string()),
+                    (Some("2"), Some("57")) => (StatusCode::OK, gid_57_html.to_string()),
+                    _ => (StatusCode::NOT_FOUND, "not found".to_string()),
+                }
+            },
+        ),
+    );
+    let base = spawn_stub_server(upstream).await;
+
+    let mut cfg = test_config();
+    cfg.upstream_cart_url = format!("{base}/cart");
+
+    let db = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&cfg.db_url)
+        .await
+        .unwrap();
+    catnap::db::init_db(&db).await.unwrap();
+    catnap::db::replace_catalog_topology(
+        &db,
+        &cfg.upstream_cart_url,
+        &[catnap::models::Country {
+            id: "2".to_string(),
+            name: "CN".to_string(),
+        }],
+        &[],
+    )
+    .await
+    .unwrap();
+    catnap::db::ensure_user(&db, &cfg, "u_region_scope")
+        .await
+        .unwrap();
+    sqlx::query(
+        r#"
+UPDATE settings
+SET monitoring_events_partition_catalog_change_enabled = 0,
+    monitoring_events_region_partition_change_enabled = 1,
+    monitoring_events_site_region_change_enabled = 0,
+    telegram_enabled = 0,
+    web_push_enabled = 0
+WHERE user_id = ?
+"#,
+    )
+    .bind("u_region_scope")
+    .execute(&db)
+    .await
+    .unwrap();
+    catnap::db::set_monitoring_partition_enabled(&db, "u_region_scope", "2", None, true)
+        .await
+        .unwrap();
+
+    let state = build_state(cfg.clone(), db.clone()).await;
+    catnap::poller::probe_catalog_topology(&state, "test")
+        .await
+        .unwrap();
+
+    let targets = catnap::db::list_catalog_task_keys(&db).await.unwrap();
+    assert_eq!(
+        targets,
+        vec![
+            ("2".to_string(), None),
+            ("2".to_string(), Some("57".to_string())),
+        ]
+    );
+
+    let cache_count = sqlx::query("SELECT COUNT(*) FROM catalog_url_cache WHERE url_key = '2:57'")
+        .fetch_one(&db)
+        .await
+        .unwrap()
+        .get::<i64, _>(0);
+    assert_eq!(cache_count, 0);
+
+    let record = sqlx::query(
+        "SELECT summary FROM notification_records WHERE user_id = ? AND kind = ? ORDER BY id DESC LIMIT 1",
+    )
+    .bind("u_region_scope")
+    .bind("catalog.partition.added")
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    assert_eq!(
+        record.get::<String, _>(0),
+        "CN / HKG Premium Plus｜套餐摘要抓取失败，稍后重试"
+    );
 }
 
 #[tokio::test]

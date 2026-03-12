@@ -343,7 +343,6 @@ async fn prefetch_added_target_catalogs(
         };
 
         let mut region_configs = Vec::new();
-        let mut all_region_fetches_succeeded = true;
         for region in added_regions
             .iter()
             .filter(|region| region.country_id == fid)
@@ -352,33 +351,35 @@ async fn prefetch_added_target_catalogs(
             let region_url = format!("{}?fid={fid}&gid={gid}", state.config.upstream_cart_url);
             let region_key = catalog_region_key(&fid, Some(gid.as_str()));
 
-            let fetch = async {
-                let html = upstream.fetch_html_raw(&region_url).await?;
-                let configs = parse_configs(&fid, Some(gid.as_str()), &html);
-                let region_notice = parse_region_notice(&html);
-                let apply_result = db::apply_catalog_url_fetch_success(
-                    &state.db,
-                    &fid,
-                    Some(gid.as_str()),
-                    &region_key,
-                    &region_url,
-                    configs.clone(),
-                    db::CatalogUrlFetchHints {
-                        region_notice: region_notice.as_deref(),
-                        empty_result_authoritative: false,
-                    },
-                )
-                .await;
-                apply_result.map(|_| configs)
-            }
-            .await;
-
-            match fetch {
-                Ok(configs) => region_configs.extend(configs),
+            match upstream
+                .fetch_region_configs_detailed(&fid, Some(gid.as_str()))
+                .await
+            {
+                Ok(fetch) => {
+                    let apply_result = db::apply_catalog_url_fetch_success(
+                        &state.db,
+                        &fid,
+                        Some(gid.as_str()),
+                        &region_key,
+                        &region_url,
+                        fetch.configs.clone(),
+                        db::CatalogUrlFetchHints {
+                            region_notice: fetch.region_notice.as_deref(),
+                            empty_result_authoritative: fetch.empty_result_authoritative,
+                        },
+                    )
+                    .await;
+                    match apply_result {
+                        Ok(_) => region_configs.extend(fetch.configs),
+                        Err(err) => {
+                            warn!(error = %err, fid, gid = ?Some(gid.clone()), "prefetch added target catalog failed");
+                            failed_target_keys.insert(region_key);
+                        }
+                    }
+                }
                 Err(err) => {
                     warn!(error = %err, fid, gid = ?Some(gid.clone()), "prefetch added target catalog failed");
                     failed_target_keys.insert(region_key);
-                    all_region_fetches_succeeded = false;
                 }
             }
         }
@@ -389,11 +390,17 @@ async fn prefetch_added_target_catalogs(
         let root_regions = parse_regions(&fid, &root_html);
         let direct_configs = parse_configs(&fid, None, &root_html);
         let root_configs = if root_regions.is_empty() {
+            if direct_configs.is_empty() {
+                failed_target_keys.insert(root_key.clone());
+                continue;
+            }
             direct_configs
-        } else if all_region_fetches_succeeded {
-            retain_country_direct_configs(direct_configs, &region_configs)
-        } else {
+        } else if direct_configs.is_empty() {
             Vec::new()
+        } else {
+            // Keep root-page packages we can still prove locally and let failed region fetches
+            // mark the country summary as partial instead of erasing successful root results.
+            retain_country_direct_configs(direct_configs, &region_configs)
         };
         let region_notice = parse_region_notice(&root_html);
         if let Err(err) = db::apply_catalog_url_fetch_success(
@@ -424,29 +431,33 @@ async fn prefetch_added_target_catalogs(
         let url = format!("{}?fid={fid}&gid={gid}", state.config.upstream_cart_url);
         let url_key = catalog_region_key(&fid, Some(gid.as_str()));
 
-        let fetch = async {
-            let html = upstream.fetch_html_raw(&url).await?;
-            let configs = parse_configs(&fid, Some(gid.as_str()), &html);
-            let region_notice = parse_region_notice(&html);
-            db::apply_catalog_url_fetch_success(
-                &state.db,
-                &fid,
-                Some(gid.as_str()),
-                &url_key,
-                &url,
-                configs,
-                db::CatalogUrlFetchHints {
-                    region_notice: region_notice.as_deref(),
-                    empty_result_authoritative: false,
-                },
-            )
+        match upstream
+            .fetch_region_configs_detailed(&fid, Some(gid.as_str()))
             .await
-        }
-        .await;
-
-        if let Err(err) = fetch {
-            warn!(error = %err, fid, gid = ?Some(gid.clone()), "prefetch added target catalog failed");
-            failed_target_keys.insert(url_key);
+        {
+            Ok(fetch) => {
+                if let Err(err) = db::apply_catalog_url_fetch_success(
+                    &state.db,
+                    &fid,
+                    Some(gid.as_str()),
+                    &url_key,
+                    &url,
+                    fetch.configs,
+                    db::CatalogUrlFetchHints {
+                        region_notice: fetch.region_notice.as_deref(),
+                        empty_result_authoritative: fetch.empty_result_authoritative,
+                    },
+                )
+                .await
+                {
+                    warn!(error = %err, fid, gid = ?Some(gid.clone()), "prefetch added target catalog failed");
+                    failed_target_keys.insert(url_key);
+                }
+            }
+            Err(err) => {
+                warn!(error = %err, fid, gid = ?Some(gid.clone()), "prefetch added target catalog failed");
+                failed_target_keys.insert(url_key);
+            }
         }
     }
 
