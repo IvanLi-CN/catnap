@@ -244,7 +244,7 @@ export const MonitoringEventModes: Story = {
     expect(within(regionAction).getByRole("button", { name: "启用" })).toBeVisible();
     expect(
       within(monitoringSection).getByText(
-        "启用后：仅通知已在 products 中开启“可用区监控”的可用区，关注套餐新增与删除。",
+        "启用后：仅通知已在 products 中开启“国家监控”的国家直属套餐，以及已开启“可用区监控”的可用区套餐，关注套餐新增与删除。",
       ),
     ).toBeVisible();
     expect(

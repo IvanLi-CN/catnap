@@ -235,15 +235,32 @@ export const PartitionMonitoringFocus: Story = {
     expect(within(usSection).getByText("VPS • 4C/8G（美国）")).toBeVisible();
     expect(within(tokyoBlock).getAllByText("监控：开")).toHaveLength(2);
 
-    await userEvent.click(within(osakaBlock).getByTestId("region-monitor-jp-osaka"));
+    await userEvent.click(
+      within(canvasElement as HTMLElement).getByRole("button", { name: "仅看已监控" }),
+    );
 
-    const enabledToggle = await within(osakaBlock).findByTestId("region-monitor-jp-osaka");
+    expect(
+      await within(canvasElement as HTMLElement).findByText("VPS • 4C/8G（美国）"),
+    ).toBeVisible();
+    expect(within(canvasElement as HTMLElement).queryByText("加州")).not.toBeInTheDocument();
+    expect(within(canvasElement as HTMLElement).queryByText("大阪")).not.toBeInTheDocument();
+    expect(await within(canvasElement as HTMLElement).findByText("东京")).toBeVisible();
+
+    await userEvent.click(
+      within(canvasElement as HTMLElement).getByRole("button", { name: "仅看已监控" }),
+    );
+
+    const refreshedOsakaBlock = await findProductRegionBlock(canvasElement as HTMLElement, "大阪");
+
+    await userEvent.click(within(refreshedOsakaBlock).getByTestId("region-monitor-jp-osaka"));
+
+    const enabledToggle = await within(refreshedOsakaBlock).findByTestId("region-monitor-jp-osaka");
     expect(enabledToggle).toBeVisible();
     await userEvent.click(enabledToggle);
-    expect(await within(osakaBlock).findByTestId("region-monitor-jp-osaka")).toHaveTextContent(
-      "监控：关",
-    );
-    expect(within(osakaBlock).getAllByText("监控：关")).toHaveLength(3);
+    expect(
+      await within(refreshedOsakaBlock).findByTestId("region-monitor-jp-osaka"),
+    ).toHaveTextContent("监控：关");
+    expect(within(refreshedOsakaBlock).getAllByText("监控：关")).toHaveLength(3);
   },
 };
 

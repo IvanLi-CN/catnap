@@ -1949,7 +1949,9 @@ export function ProductsView({
           const partitionMonitored = enabledPartitionKeys.has(
             buildPartitionKey(cfg.countryId, cfg.regionId),
           );
-          const countryMonitored = enabledPartitionKeys.has(buildPartitionKey(cfg.countryId, null));
+          const countryMonitored =
+            cfg.regionId === null &&
+            enabledPartitionKeys.has(buildPartitionKey(cfg.countryId, null));
           if (!configMonitored && !partitionMonitored && !countryMonitored) {
             return false;
           }
@@ -3543,7 +3545,8 @@ export function SettingsViewPanel({
             {renderFieldError("partitionCatalogChangeEnabled")}
           </div>
           <div className="hint">
-            启用后：仅通知已在 products 中开启“可用区监控”的可用区，关注套餐新增与删除。
+            启用后：仅通知已在 products
+            中开启“国家监控”的国家直属套餐，以及已开启“可用区监控”的可用区套餐，关注套餐新增与删除。
           </div>
 
           <div>可用区变更</div>
