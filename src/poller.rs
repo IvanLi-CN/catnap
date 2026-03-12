@@ -652,7 +652,7 @@ async fn poll_once(
 
         let run = state
             .ops
-            .enqueue_and_wait(&fid, gid.as_deref(), "poller_due")
+            .enqueue_and_wait_for_poller(&fid, gid.as_deref(), user_id)
             .await?;
 
         for id in ids {

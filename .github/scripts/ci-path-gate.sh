@@ -53,6 +53,19 @@ PY
 ci_base_sha="${CI_BASE_SHA:-}"
 ci_head_sha="${CI_HEAD_SHA:-}"
 ci_assume_changed="${CI_ASSUME_CHANGED:-true}"
+ci_event_name="${GITHUB_EVENT_NAME:-}"
+
+if [[ "${ci_event_name}" == "merge_group" ]]; then
+  out="${GITHUB_OUTPUT:-/dev/stdout}"
+  {
+    echo "frontend_changed=true"
+    echo "backend_changed=true"
+    echo "docker_changed=true"
+    echo "reason=merge_group_full_sweep"
+  } >> "${out}"
+  log "frontend_changed=true backend_changed=true docker_changed=true reason=merge_group_full_sweep"
+  exit 0
+fi
 
 if [[ -z "${ci_base_sha}" ]]; then
   ci_base_sha="$(json_get pr.base.sha)"
