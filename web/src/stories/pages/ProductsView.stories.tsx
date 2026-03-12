@@ -291,6 +291,24 @@ export const TopologyOnlyScopes: Story = {
   },
 };
 
+export const SearchByCountryNameKeepsConfigs: Story = {
+  args: {
+    bootstrap: buildPartitionMonitoringBootstrap(),
+  },
+  play: async ({ canvasElement }) => {
+    const searchInput = within(canvasElement as HTMLElement).getByPlaceholderText(
+      "配置名 / 规格关键字…",
+    );
+
+    await userEvent.clear(searchInput);
+    await userEvent.type(searchInput, "日本");
+
+    const japanSection = await findPanelSection(canvasElement as HTMLElement, "日本");
+    expect(within(japanSection).getByText("VPS • 2C/4G")).toBeVisible();
+    expect(within(japanSection).queryByText("当前暂无套餐。")).not.toBeInTheDocument();
+  },
+};
+
 export const ResponsiveAllBreakpoints: Story = {
   render: () => (
     <ResponsivePageStory

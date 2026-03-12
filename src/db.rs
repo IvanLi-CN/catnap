@@ -1135,7 +1135,7 @@ WHERE country_id = ? AND id = ?
 UNION
 SELECT 1
 FROM catalog_configs
-WHERE country_id = ? AND region_id = ?
+WHERE country_id = ? AND region_id = ? AND lifecycle_state = 'active'
 LIMIT 1
 "#,
         )
@@ -1158,7 +1158,7 @@ WHERE country_id = ?
 UNION
 SELECT 1
 FROM catalog_configs
-WHERE country_id = ?
+WHERE country_id = ? AND region_id IS NULL AND lifecycle_state = 'active'
 LIMIT 1
 "#,
         )
@@ -2352,6 +2352,23 @@ mod tests {
             .unwrap();
         init_db(&db).await.unwrap();
 
+        replace_catalog_topology(
+            &db,
+            "https://example.invalid/cart",
+            &[crate::models::Country {
+                id: "7".to_string(),
+                name: "Japan".to_string(),
+            }],
+            &[crate::models::Region {
+                id: "40".to_string(),
+                country_id: "7".to_string(),
+                name: "Tokyo".to_string(),
+                location_name: Some("JP-East".to_string()),
+            }],
+        )
+        .await
+        .unwrap();
+
         upsert_catalog_configs(
             &db,
             &[crate::upstream::ConfigBase {
@@ -2386,5 +2403,70 @@ mod tests {
             .unwrap();
         assert_eq!(saved.country_id, "7");
         assert_eq!(saved.region_id, None);
+    }
+
+    #[tokio::test]
+    async fn partition_exists_rejects_removed_topology_even_with_history() {
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        init_db(&db).await.unwrap();
+
+        replace_catalog_topology(
+            &db,
+            "https://example.invalid/cart",
+            &[crate::models::Country {
+                id: "7".to_string(),
+                name: "Japan".to_string(),
+            }],
+            &[crate::models::Region {
+                id: "40".to_string(),
+                country_id: "7".to_string(),
+                name: "Tokyo".to_string(),
+                location_name: Some("JP-East".to_string()),
+            }],
+        )
+        .await
+        .unwrap();
+
+        upsert_catalog_configs(
+            &db,
+            &[crate::upstream::ConfigBase {
+                id: "cfg-1".to_string(),
+                country_id: "7".to_string(),
+                region_id: Some("40".to_string()),
+                name: "JP test".to_string(),
+                specs: Vec::new(),
+                price: crate::models::Money {
+                    amount: 39.0,
+                    currency: "CNY".to_string(),
+                    period: "month".to_string(),
+                },
+                inventory: crate::models::Inventory {
+                    status: "in_stock".to_string(),
+                    quantity: 1,
+                    checked_at: "2026-01-21T12:34:56Z".to_string(),
+                },
+                digest: "digest-1".to_string(),
+                monitor_supported: true,
+                source_pid: None,
+                source_fid: Some("7".to_string()),
+                source_gid: Some("40".to_string()),
+            }],
+        )
+        .await
+        .unwrap();
+
+        replace_catalog_topology(&db, "https://example.invalid/cart", &[], &[])
+            .await
+            .unwrap();
+        retire_catalog_targets(&db, &[("7".to_string(), Some("40".to_string()))])
+            .await
+            .unwrap();
+
+        assert!(!catalog_partition_exists(&db, "7", None).await.unwrap());
+        assert!(!catalog_partition_exists(&db, "7", Some("40")).await.unwrap());
     }
 }

@@ -93,6 +93,14 @@ async fn make_app_with_config(cfg: RuntimeConfig) -> TestApp {
         topology_message: None,
     };
 
+    catnap::db::replace_catalog_topology(
+        &db,
+        &cfg.upstream_cart_url,
+        &snapshot.countries,
+        &snapshot.regions,
+    )
+    .await
+    .unwrap();
     catnap::db::upsert_catalog_configs(&db, &configs)
         .await
         .unwrap();
@@ -899,6 +907,43 @@ async fn monitoring_partition_toggle_rejects_unknown_partition() {
     let bytes = serde_json::to_vec(&serde_json::json!({
         "countryId": "7",
         "regionId": "999",
+        "enabled": true
+    }))
+    .unwrap();
+
+    let res = t
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/api/monitoring/partitions")
+                .header("host", "example.com")
+                .header("x-user", "u_1")
+                .header("origin", "http://example.com")
+                .header("content-type", "application/json")
+                .body(Body::from(bytes))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+
+    let bytes = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(json["error"]["code"], "INVALID_ARGUMENT");
+}
+
+#[tokio::test]
+async fn monitoring_partition_toggle_rejects_removed_country_scope() {
+    let t = make_app().await;
+    catnap::db::replace_catalog_topology(&t.db, "https://lxc.lazycat.wiki/cart", &[], &[])
+        .await
+        .unwrap();
+
+    let bytes = serde_json::to_vec(&serde_json::json!({
+        "countryId": "7",
+        "regionId": null,
         "enabled": true
     }))
     .unwrap();

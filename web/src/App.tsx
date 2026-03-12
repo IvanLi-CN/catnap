@@ -1503,6 +1503,10 @@ function buildPartitionKey(countryId: string, regionId: string | null | undefine
   return `${countryId}::${regionId ?? ""}`;
 }
 
+function buildScopedRegionDomKey(countryId: string, regionId: string): string {
+  return regionId.startsWith(`${countryId}-`) ? regionId : `${countryId}-${regionId}`;
+}
+
 function groupKey(c: Config): string {
   return buildPartitionKey(c.countryId, c.regionId);
 }
@@ -1964,16 +1968,24 @@ export function ProductsView({
           .map((s) => `${s.key} ${s.value}`.trim())
           .join(" ")
           .toLowerCase();
-        return specText.includes(q);
+        if (specText.includes(q)) return true;
+        const countryName = countriesById.get(cfg.countryId)?.name?.toLowerCase() ?? "";
+        if (countryName.includes(q)) return true;
+        const region = cfg.regionId ? regionsById.get(cfg.regionId) : null;
+        const regionName = region?.name?.toLowerCase() ?? "";
+        const regionLocation = region?.locationName?.toLowerCase() ?? "";
+        return regionName.includes(q) || regionLocation.includes(q);
       },
     );
   }, [
     archiveFilterMode,
     bootstrap.catalog.configs,
+    countriesById,
     countryFilter,
     enabledPartitionKeys,
     onlyMonitored,
     regionFilter,
+    regionsById,
     search,
   ]);
 
@@ -2622,7 +2634,7 @@ ${countryCatalogLink}`}
               {country.groups.map((group, index) => (
                 <section
                   className={`product-region-block ${index === 0 ? "first" : ""}`}
-                  data-testid={`products-region-${group.regionId}`}
+                  data-testid={`products-region-${buildScopedRegionDomKey(country.countryId, group.regionId)}`}
                   key={group.key}
                 >
                   <div className="product-region-header">
@@ -2632,7 +2644,10 @@ ${countryCatalogLink}`}
                           <div className="product-region-title-row-main">
                             <div
                               className="product-region-title"
-                              id={`products-region-heading-${group.regionId}`}
+                              id={`products-region-heading-${buildScopedRegionDomKey(
+                                country.countryId,
+                                group.regionId,
+                              )}`}
                             >
                               {group.title}
                             </div>
@@ -2644,7 +2659,10 @@ ${countryCatalogLink}`}
                       </div>
                       <div className="panel-title-actions">
                         <MonitorToggle
-                          labelledBy={`products-region-heading-${group.regionId}`}
+                          labelledBy={`products-region-heading-${buildScopedRegionDomKey(
+                            country.countryId,
+                            group.regionId,
+                          )}`}
                           onClick={() =>
                             onTogglePartition(
                               country.countryId,
@@ -2653,7 +2671,10 @@ ${countryCatalogLink}`}
                             )
                           }
                           state={group.partitionEnabled ? "on" : "off"}
-                          testId={`region-monitor-${group.regionId}`}
+                          testId={`region-monitor-${buildScopedRegionDomKey(
+                            country.countryId,
+                            group.regionId,
+                          )}`}
                         />
                       </div>
                     </div>
