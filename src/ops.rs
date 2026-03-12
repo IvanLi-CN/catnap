@@ -1689,9 +1689,6 @@ VALUES (?, ?, ?, NULL, 0, 'fetch', NULL, ?, 0)
         if applied.listed_ids.is_empty() && applied.delisted_ids.is_empty() {
             return Ok(());
         }
-        if key.gid.is_none() {
-            return Ok(());
-        }
 
         let partition_key = crate::db::monitoring_partition_key(&key.fid, key.gid.as_deref());
         let partition_label =
@@ -2672,7 +2669,7 @@ WHERE user_id = ?
     }
 
     #[tokio::test]
-    async fn config_lifecycle_notifications_skip_country_scope_when_region_is_absent() {
+    async fn config_lifecycle_notifications_route_country_direct_packages_to_country_scope() {
         let (ops, db) = build_ops_manager("https://example.com/cart".to_string()).await;
 
         crate::db::replace_catalog_topology(
@@ -2757,7 +2754,7 @@ WHERE user_id = ?
         .fetch_one(&db)
         .await
         .unwrap();
-        assert_eq!(count, 0);
+        assert_eq!(count, 2);
     }
 
     #[tokio::test]

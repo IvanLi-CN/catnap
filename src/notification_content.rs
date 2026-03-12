@@ -205,7 +205,7 @@ pub fn build_config_lifecycle_notification(
 
     let mut telegram_lines = vec![format!("【{}】{name}", kind.label())];
     if let Some(partition_label) = normalized_partition_label {
-        telegram_lines.push(format!("可用区：{partition_label}"));
+        telegram_lines.push(format!("范围：{partition_label}"));
     }
     telegram_lines.push(summary.clone());
     if let Some(url) = products_url(site_base_url) {
@@ -476,7 +476,7 @@ mod tests {
         assert_eq!(
             notification.telegram_text,
             "【套餐新增】芬兰特惠年付 Mini
-可用区：德国 / 德国特惠
+范围：德国 / 德国特惠
 库存 5｜¥4.99 / 年
 查看全部产品：https://catnap.example/base/products"
         );
@@ -501,7 +501,7 @@ mod tests {
         assert_eq!(
             notification.telegram_text,
             "【套餐已删除】德国特惠年付 Mini
-可用区：德国 / 德国特惠
+范围：德国 / 德国特惠
 最近状态：库存 0｜¥9.99 / 年"
         );
     }

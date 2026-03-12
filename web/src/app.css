@@ -643,30 +643,163 @@ select {
   color: color-mix(in oklab, var(--accent) 72%, var(--text));
 }
 
+.product-country-section {
+  position: relative;
+}
+
+.product-country-header {
+  padding: 18px 20px;
+  border: 1px solid color-mix(in oklab, var(--line) 88%, var(--surface2));
+  border-radius: 16px;
+  background: linear-gradient(
+    135deg,
+    color-mix(in oklab, var(--accent) 10%, var(--surface)) 0%,
+    color-mix(in oklab, var(--surface2) 28%, var(--surface)) 48%,
+    var(--surface) 100%
+  );
+}
+
+.product-country-title-row {
+  align-items: center;
+  gap: 16px;
+}
+
+.product-country-heading {
+  min-width: 0;
+}
+
+.product-country-heading-copy {
+  min-width: 0;
+}
+
+.product-country-title {
+  font-size: 23px;
+  letter-spacing: -0.01em;
+}
+
+.product-country-meta {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.product-country-direct-grid {
+  margin-top: 22px;
+}
+
+.product-region-list {
+  margin-top: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.product-region-list.after-direct-configs {
+  margin-top: 20px;
+}
+
 .product-region-block {
-  margin-top: 18px;
-  padding-top: 18px;
-  border-top: 1px solid var(--line);
+  padding-left: 18px;
+  border-left: 2px solid color-mix(in oklab, var(--surface2) 56%, var(--line));
 }
 
 .product-region-block.first {
-  margin-top: 16px;
+  margin-top: 0;
 }
 
 .product-region-title-row {
   gap: 12px;
+  align-items: center;
+}
+
+.product-region-title-row .panel-title-actions {
+  gap: 8px;
+}
+
+.product-region-heading {
+  min-width: 0;
+}
+
+.product-region-heading-copy {
+  min-width: 0;
+}
+
+.product-region-title-row-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 10px;
 }
 
 .product-region-title {
-  font-size: 16px;
+  font-size: 17px;
   font-weight: 700;
-  letter-spacing: 0.01em;
+  letter-spacing: 0;
+}
+
+.product-region-subtitle {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in oklab, var(--line) 84%, var(--surface2));
+  background: color-mix(in oklab, var(--surface2) 88%, var(--surface));
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1;
+}
+
+.monitor-toggle {
+  gap: 8px;
+}
+
+.monitor-toggle-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  flex: 0 0 8px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--muted) 72%, var(--surface));
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--surface2) 78%, transparent);
+}
+
+.monitor-toggle.on .monitor-toggle-dot {
+  background: #f7fbff;
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent) 88%, transparent), 0 0 0 4px
+    color-mix(in oklab, var(--surface) 82%, transparent), 0 0 0 6px
+    color-mix(in oklab, var(--accent) 22%, transparent);
+}
+
+.product-region-content {
+  margin-top: 12px;
+}
+
+.product-region-divider {
+  margin-top: 14px;
 }
 
 .product-country-empty,
 .product-region-empty {
-  padding: 8px 0 2px;
+  padding: 10px 0 2px;
   color: var(--muted);
+}
+
+@media (max-width: 720px) {
+  .product-country-header {
+    padding: 16px 16px 18px;
+  }
+
+  .product-country-heading {
+    gap: 10px;
+  }
+
+  .product-region-list {
+    gap: 18px;
+  }
+
+  .product-region-block {
+    padding-left: 14px;
+  }
 }
 
 .muted {

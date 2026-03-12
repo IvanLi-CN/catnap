@@ -8,7 +8,7 @@
 
 ### 变化点（Change）
 
-- `monitoring.enabledPartitions` 继续返回 `{ countryId, regionId? }[]`，其中 `regionId = null` 表示地区监控。
+- `monitoring.enabledPartitions` 继续返回 `{ countryId, regionId? }[]`，其中 `regionId = null` 表示国家监控。
 - `settings.monitoringEvents` 改为：
   ```json
   {
@@ -35,7 +35,7 @@
     "enabled": true
   }
   ```
-- `regionId = null` 表示“地区监控”；`regionId = "40"` 表示“可用区监控”。
+- `regionId = null` 表示“国家监控”；`regionId = "40"` 表示“可用区监控”。
 
 ### 响应（Response）
 

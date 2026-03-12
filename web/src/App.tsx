@@ -30,6 +30,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { MonitorToggle, type MonitorToggleState } from "./ui/controls/MonitorToggle";
 import { SettingsFeedbackBubble } from "./ui/feedback/SettingsFeedbackBubble";
 import { AppShell } from "./ui/layout/AppShell";
 import { ThemeMenu } from "./ui/nav/ThemeMenu";
@@ -167,6 +168,26 @@ export type ArchiveDelistedResponse = {
 };
 
 export type ArchiveFilterMode = "active" | "all" | "archived";
+
+type ProductRegionGroup = {
+  key: string;
+  regionId: string;
+  title: string;
+  subtitle: string | null;
+  partitionEnabled: boolean;
+  notice: string | null;
+  configs: Config[];
+};
+
+type ProductCountryGroup = {
+  countryId: string;
+  countryName: string;
+  isCloud: boolean;
+  countryMonitorEnabled: boolean;
+  countryNotice: string | null;
+  directConfigs: Config[];
+  groups: ProductRegionGroup[];
+};
 
 export type InventoryHistoryPoint = { tsMinute: string; quantity: number };
 export type InventoryHistorySeries = {
@@ -1679,8 +1700,7 @@ export function ProductCard({
       : cfg.inventory.quantity > 10
         ? "10+"
         : String(cfg.inventory.quantity);
-  const monitorTone = isCloud ? "disabled" : cfg.monitorEnabled ? "on" : "";
-  const monitorText = isCloud ? "监控：禁用" : cfg.monitorEnabled ? "监控：开" : "监控：关";
+  const monitorState: MonitorToggleState = isCloud ? "disabled" : cfg.monitorEnabled ? "on" : "off";
   const foot = isCloud ? null : cfg.monitorEnabled ? "变化检测：补货 / 价格 / 配置" : null;
   const rawSpecCells = isCloud ? [] : buildSpecCells(cfg.specs, SPEC_CARD_MAX_CELLS);
   const specCells: SpecSlotCell[] = isCloud
@@ -1752,21 +1772,18 @@ export function ProductCard({
         {foot ? <div className="cfg-foot">{foot}</div> : null}
         <div className="cfg-pills">
           {!canOpenOrder ? <div className="cfg-order-hint">暂无下单链接</div> : null}
-          {cfg.monitorSupported ? (
-            <button
-              type="button"
-              className={`pill badge ${monitorTone}`}
-              onClick={(e) => {
-                e.stopPropagation();
-                onToggle(cfg.id, !cfg.monitorEnabled);
-              }}
-              onKeyDown={(e) => e.stopPropagation()}
-            >
-              {monitorText}
-            </button>
-          ) : (
-            <span className={`pill badge ${monitorTone}`}>{monitorText}</span>
-          )}
+          <MonitorToggle
+            onClick={
+              cfg.monitorSupported
+                ? (e) => {
+                    e.stopPropagation();
+                    onToggle(cfg.id, !cfg.monitorEnabled);
+                  }
+                : undefined
+            }
+            onKeyDown={cfg.monitorSupported ? (e) => e.stopPropagation() : undefined}
+            state={monitorState}
+          />
         </div>
       </div>
     </div>
@@ -1971,28 +1988,13 @@ export function ProductsView({
   );
 
   const countryGroups = useMemo(() => {
-    type RegionGroup = {
-      key: string;
-      regionId: string | null;
-      title: string;
-      partitionEnabled: boolean;
-      showPartitionToggle: boolean;
-      notice: string | null;
-      configs: Config[];
+    type MutableRegionGroup = ProductRegionGroup & {
       sortLabel: string;
     };
 
-    type CountryGroup = {
-      countryId: string;
-      countryName: string;
-      isCloud: boolean;
-      countryMonitorEnabled: boolean;
-      countryNotice: string | null;
-      groups: RegionGroup[];
-    };
-
-    type MutableCountryGroup = CountryGroup & {
-      groupsByKey: Map<string, RegionGroup>;
+    type MutableCountryGroup = Omit<ProductCountryGroup, "groups"> & {
+      groups: MutableRegionGroup[];
+      groupsByKey: Map<string, MutableRegionGroup>;
     };
 
     const byCountry = new Map<string, MutableCountryGroup>();
@@ -2018,6 +2020,7 @@ export function ProductsView({
         isCloud: countryName.includes("云服务器"),
         countryMonitorEnabled: enabledPartitionKeys.has(countryKey),
         countryNotice: groupNoticeByKey.get(countryKey) ?? null,
+        directConfigs: [],
         groups: [],
         groupsByKey: new Map(),
       };
@@ -2027,10 +2030,10 @@ export function ProductsView({
 
     const ensureRegionGroup = (
       country: MutableCountryGroup,
-      regionId: string | null,
+      regionId: string,
       title: string,
+      subtitle: string | null,
       sortLabel: string,
-      showPartitionToggle: boolean,
     ) => {
       const groupKey = buildPartitionKey(country.countryId, regionId);
       let regionGroup = country.groupsByKey.get(groupKey);
@@ -2042,8 +2045,8 @@ export function ProductsView({
         key: groupKey,
         regionId,
         title,
-        partitionEnabled: regionId ? enabledPartitionKeys.has(groupKey) : false,
-        showPartitionToggle,
+        subtitle,
+        partitionEnabled: enabledPartitionKeys.has(groupKey),
         notice: groupNoticeByKey.get(groupKey) ?? null,
         configs: [],
         sortLabel,
@@ -2055,14 +2058,19 @@ export function ProductsView({
 
     for (const cfg of filtered) {
       const country = ensureCountry(cfg.countryId);
-      const region = cfg.regionId ? regionsById.get(cfg.regionId) : null;
-      const regionLabel = cfg.regionId ? (region?.name ?? cfg.regionId) : "默认可用区";
+      if (!cfg.regionId) {
+        country.directConfigs.push(cfg);
+        continue;
+      }
+
+      const region = regionsById.get(cfg.regionId);
+      const regionLabel = region?.name ?? cfg.regionId;
       const regionGroup = ensureRegionGroup(
         country,
         cfg.regionId,
         regionLabel,
-        cfg.regionId ? `${regionLabel}::${region?.locationName ?? ""}` : "",
-        cfg.regionId !== null,
+        region?.locationName ?? null,
+        `${regionLabel}::${region?.locationName ?? ""}`,
       );
       regionGroup.configs.push(cfg);
     }
@@ -2132,16 +2140,14 @@ export function ProductsView({
           countryEntry,
           region.id,
           region.name,
+          region.locationName ?? null,
           `${region.name}::${region.locationName ?? ""}`,
-          true,
         );
       }
     }
 
     const out = Array.from(byCountry.values()).map((country) => {
       country.groups.sort((a, b) => {
-        if (!a.regionId && b.regionId) return -1;
-        if (a.regionId && !b.regionId) return 1;
         return a.sortLabel.localeCompare(b.sortLabel, "zh-Hans-CN");
       });
       return {
@@ -2150,8 +2156,9 @@ export function ProductsView({
         isCloud: country.isCloud,
         countryMonitorEnabled: country.countryMonitorEnabled,
         countryNotice: country.countryNotice,
+        directConfigs: country.directConfigs,
         groups: country.groups,
-      } satisfies CountryGroup;
+      } satisfies ProductCountryGroup;
     });
 
     out.sort((a, b) => {
@@ -2290,103 +2297,19 @@ export function ProductsView({
 
       {countryGroups.length === 0 ? <div className="empty">没有匹配的配置。</div> : null}
 
-      {countryGroups.map((country) => {
-        const countryCatalogLink = buildCountryCatalogLink(orderBaseUrl, country.countryId);
-        return (
-          <div className="panel-section" key={country.countryId}>
-            <div className="panel-title-row">
-              <div className="panel-title">{country.countryName}</div>
-              <div className="panel-title-actions">
-                <button
-                  type="button"
-                  className={`pill badge ${country.countryMonitorEnabled ? "on" : ""}`}
-                  onClick={() =>
-                    onTogglePartition(country.countryId, null, !country.countryMonitorEnabled)
-                  }
-                  title="只影响该地区下可用区的新增与删除提示，不影响卡片监控。"
-                >
-                  {`地区监控：${country.countryMonitorEnabled ? "开" : "关"}`}
-                </button>
-                {countryCatalogLink ? (
-                  <a
-                    className="panel-title-link"
-                    href={countryCatalogLink}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    aria-label={`打开上游分组页（新标签页）fid=${country.countryId}`}
-                    title={`打开上游分组页（新标签页）
-${countryCatalogLink}`}
-                  >
-                    <Icon
-                      className="panel-title-link-icon"
-                      icon="mdi:open-in-new"
-                      aria-hidden="true"
-                    />
-                  </a>
-                ) : null}
-              </div>
-            </div>
-            {country.countryNotice ? (
-              <div className="panel-subtitle group-notice">{country.countryNotice}</div>
-            ) : null}
-            {country.groups.length === 0 ? (
-              <div className="product-country-empty">当前暂无可用区与套餐。</div>
-            ) : null}
-
-            {country.groups.map((group, index) => (
-              <div
-                className={`product-region-block ${index === 0 ? "first" : ""}`}
-                data-testid={group.regionId ? `products-region-${group.regionId}` : undefined}
-                key={group.key}
-              >
-                <div className="panel-title-row product-region-title-row">
-                  <div className="product-region-title">{group.title}</div>
-                  {group.showPartitionToggle ? (
-                    <div className="panel-title-actions">
-                      <button
-                        type="button"
-                        className={`pill badge ${group.partitionEnabled ? "on" : ""}`}
-                        onClick={() =>
-                          onTogglePartition(
-                            country.countryId,
-                            group.regionId,
-                            !group.partitionEnabled,
-                          )
-                        }
-                        title="只影响该可用区下套餐的新增与删除提示，不影响卡片监控。"
-                      >
-                        {`可用区监控：${group.partitionEnabled ? "开" : "关"}`}
-                      </button>
-                    </div>
-                  ) : null}
-                </div>
-                {group.notice ? (
-                  <div className="panel-subtitle group-notice">{group.notice}</div>
-                ) : null}
-                <div className="divider-bleed" />
-                {group.configs.length === 0 ? (
-                  <div className="product-region-empty">当前暂无套餐。</div>
-                ) : (
-                  <div className="grid">
-                    {group.configs.map((cfg) => (
-                      <ProductCard
-                        cfg={cfg}
-                        countriesById={countriesById}
-                        key={cfg.id}
-                        orderLink={buildOrderLink(orderBaseUrl, cfg)}
-                        onOpenOrder={onOpenOrder}
-                        onToggle={onToggle}
-                        historyWindow={historyWindow}
-                        historyPoints={historyById.get(cfg.id)}
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        );
-      })}
+      {countryGroups.map((country) => (
+        <ProductCountrySection
+          country={country}
+          countriesById={countriesById}
+          historyById={historyById}
+          historyWindow={historyWindow}
+          key={country.countryId}
+          onOpenOrder={onOpenOrder}
+          onToggle={onToggle}
+          onTogglePartition={onTogglePartition}
+          orderBaseUrl={orderBaseUrl}
+        />
+      ))}
 
       {archiveDialogOpen ? (
         <div
@@ -2406,13 +2329,13 @@ ${countryCatalogLink}`}
                 <div className="archive-preview-grid">
                   {previewArchiveCandidates.map((cfg) => {
                     const country = countriesById.get(cfg.countryId)?.name ?? cfg.countryId;
-                    const region = cfg.regionId
+                    const scope = cfg.regionId
                       ? (regionsById.get(cfg.regionId)?.name ?? cfg.regionId)
-                      : "默认";
+                      : country;
                     return (
                       <div className="archive-preview-card" key={cfg.id}>
                         <div className="archive-preview-title">{cfg.name}</div>
-                        <div className="archive-preview-meta">{`${country} / ${region}`}</div>
+                        <div className="archive-preview-meta">{scope}</div>
                         <div className="archive-preview-meta">{formatMoney(cfg.price)}</div>
                       </div>
                     );
@@ -2547,9 +2470,11 @@ export function MonitoringView({
       {groups.map(([k, items]) => {
         const [countryId, regionId] = k.split("::");
         const countryName = countriesById.get(countryId)?.name;
-        const regionName = regionId ? (regionsById.get(regionId)?.name ?? "默认") : "默认";
-        const title =
-          countryName && regionName ? `${countryName} / ${regionName}` : "分组信息加载中…";
+        const title = countryName
+          ? regionId
+            ? `${countryName} / ${regionsById.get(regionId)?.name ?? regionId}`
+            : countryName
+          : "分组信息加载中…";
         return (
           <MonitoringSection
             key={k}
@@ -2569,10 +2494,198 @@ export function MonitoringView({
       <div className="panel-section">
         <div className="panel-title">提示</div>
         <div className="panel-subtitle">
-          在“全部产品”中开启监控后，配置会出现在对应可用区行的网格里。
+          在“全部产品”中开启监控后，配置会出现在对应国家或可用区下。
         </div>
         <div className="muted">轮询频率与抖动在“系统设置”中配置；日志可追溯每次变更与通知。</div>
       </div>
+    </div>
+  );
+}
+
+function ProductCountrySection({
+  country,
+  countriesById,
+  orderBaseUrl,
+  onTogglePartition,
+  onToggle,
+  onOpenOrder,
+  historyWindow = null,
+  historyById = EMPTY_HISTORY_BY_ID,
+}: {
+  country: ProductCountryGroup;
+  countriesById: Map<string, Country>;
+  orderBaseUrl: string;
+  onTogglePartition: (countryId: string, regionId: string | null, enabled: boolean) => void;
+  onToggle: (cfgId: string, enabled: boolean) => void;
+  onOpenOrder: (cfg: Config, orderLink: OrderLink) => void;
+  historyWindow?: InventoryHistoryResponse["window"] | null;
+  historyById?: Map<string, InventoryHistoryPoint[]>;
+}) {
+  const collapseKey = `catnap:products:country-collapse:${country.countryId}`;
+  const [collapsed, setCollapsed] = useState<boolean>(
+    () => localStorage.getItem(collapseKey) === "1",
+  );
+
+  const countryCatalogLink = buildCountryCatalogLink(orderBaseUrl, country.countryId);
+  const regionCount = country.groups.length;
+  const configCount =
+    country.directConfigs.length +
+    country.groups.reduce((sum, group) => sum + group.configs.length, 0);
+  const meta = [regionCount > 0 ? `${regionCount} 个可用区` : null, `${configCount} 个套餐`]
+    .filter(Boolean)
+    .join(" • ");
+
+  return (
+    <div className="panel-section product-country-section">
+      <div className="product-country-header">
+        <div className="panel-title-row product-country-title-row">
+          <div className="product-country-heading">
+            <div className="product-country-heading-copy">
+              <div
+                className="panel-title product-country-title"
+                id={`products-country-heading-${country.countryId}`}
+              >
+                {country.countryName}
+              </div>
+              <div className="product-country-meta">{meta}</div>
+            </div>
+          </div>
+          <div className="panel-title-actions">
+            <button
+              type="button"
+              className="pill center collapse-btn"
+              aria-label={collapsed ? `展开 ${country.countryName}` : `折叠 ${country.countryName}`}
+              onClick={() => {
+                const next = !collapsed;
+                setCollapsed(next);
+                localStorage.setItem(collapseKey, next ? "1" : "0");
+              }}
+            >
+              {collapsed ? "展开" : "折叠"}
+            </button>
+            <MonitorToggle
+              labelledBy={`products-country-heading-${country.countryId}`}
+              onClick={() =>
+                onTogglePartition(country.countryId, null, !country.countryMonitorEnabled)
+              }
+              state={country.countryMonitorEnabled ? "on" : "off"}
+              testId={`country-monitor-${country.countryId}`}
+            />
+            {countryCatalogLink ? (
+              <a
+                className="panel-title-link"
+                href={countryCatalogLink}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label={`打开上游分组页（新标签页）fid=${country.countryId}`}
+                title={`打开上游分组页（新标签页）
+${countryCatalogLink}`}
+              >
+                <Icon className="panel-title-link-icon" icon="mdi:open-in-new" aria-hidden="true" />
+              </a>
+            ) : null}
+          </div>
+        </div>
+      </div>
+      {collapsed ? null : (
+        <>
+          {country.countryNotice ? (
+            <div className="panel-subtitle group-notice">{country.countryNotice}</div>
+          ) : null}
+          {country.directConfigs.length === 0 && country.groups.length === 0 ? (
+            <div className="product-country-empty">当前暂无可用区与套餐。</div>
+          ) : null}
+
+          {country.directConfigs.length > 0 ? (
+            <div className="grid product-country-direct-grid">
+              {country.directConfigs.map((cfg) => (
+                <ProductCard
+                  cfg={cfg}
+                  countriesById={countriesById}
+                  key={cfg.id}
+                  orderLink={buildOrderLink(orderBaseUrl, cfg)}
+                  onOpenOrder={onOpenOrder}
+                  onToggle={onToggle}
+                  historyWindow={historyWindow}
+                  historyPoints={historyById.get(cfg.id)}
+                />
+              ))}
+            </div>
+          ) : null}
+
+          {country.groups.length > 0 ? (
+            <div
+              className={`product-region-list ${country.directConfigs.length > 0 ? "after-direct-configs" : ""}`}
+            >
+              {country.groups.map((group, index) => (
+                <section
+                  className={`product-region-block ${index === 0 ? "first" : ""}`}
+                  data-testid={`products-region-${group.regionId}`}
+                  key={group.key}
+                >
+                  <div className="product-region-header">
+                    <div className="panel-title-row product-region-title-row">
+                      <div className="product-region-heading">
+                        <div className="product-region-heading-copy">
+                          <div className="product-region-title-row-main">
+                            <div
+                              className="product-region-title"
+                              id={`products-region-heading-${group.regionId}`}
+                            >
+                              {group.title}
+                            </div>
+                            {group.subtitle ? (
+                              <div className="product-region-subtitle">{group.subtitle}</div>
+                            ) : null}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="panel-title-actions">
+                        <MonitorToggle
+                          labelledBy={`products-region-heading-${group.regionId}`}
+                          onClick={() =>
+                            onTogglePartition(
+                              country.countryId,
+                              group.regionId,
+                              !group.partitionEnabled,
+                            )
+                          }
+                          state={group.partitionEnabled ? "on" : "off"}
+                          testId={`region-monitor-${group.regionId}`}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                  <div className="product-region-content">
+                    {group.notice ? (
+                      <div className="panel-subtitle group-notice">{group.notice}</div>
+                    ) : null}
+                    <div className="divider-bleed product-region-divider" />
+                    {group.configs.length === 0 ? (
+                      <div className="product-region-empty">当前暂无套餐。</div>
+                    ) : (
+                      <div className="grid">
+                        {group.configs.map((cfg) => (
+                          <ProductCard
+                            cfg={cfg}
+                            countriesById={countriesById}
+                            key={cfg.id}
+                            orderLink={buildOrderLink(orderBaseUrl, cfg)}
+                            onOpenOrder={onOpenOrder}
+                            onToggle={onToggle}
+                            historyWindow={historyWindow}
+                            historyPoints={historyById.get(cfg.id)}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </section>
+              ))}
+            </div>
+          ) : null}
+        </>
+      )}
     </div>
   );
 }

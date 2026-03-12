@@ -8,14 +8,14 @@
 
 ### 语义（Semantics）
 
-- `region_id IS NULL`：地区监控 scope。
+- `region_id IS NULL`：国家监控 scope。
 - `region_id IS NOT NULL`：可用区监控 scope。
 - 运行时不得再把 `region_id IS NULL` 解释为“默认可用区监控”。
 
 ### Migration notes（迁移说明）
 
 - 不新增新表；继续复用 `monitoring_partitions`。
-- 历史 `region_id IS NULL` 记录在新语义下统一解释为地区监控。
+- 历史 `region_id IS NULL` 记录在新语义下统一解释为国家监控。
 
 ## Settings monitoring events
 
@@ -52,9 +52,10 @@
 
 ### 规则（Rules）
 
-- 新地区 / 新可用区：由 topology probe/refresh 的 snapshot diff 产出。
-- 地区删除 / 可用区删除：仅由正式 `topology_refresh` 的前后 diff 产出。
+- 新国家 / 新可用区：由 topology probe/refresh 的 snapshot diff 产出。
+- 国家删除 / 可用区删除：仅由正式 `topology_refresh` 的前后 diff 产出。
 - 收件人：
-  - 新地区 / 地区删除 -> `settings.site_region_change_enabled = 1`
+  - 新国家 / 国家删除 -> `settings.site_region_change_enabled = 1`
   - 新可用区 / 可用区删除 -> `monitoring_partitions(country_id, NULL)` + `settings.region_partition_change_enabled = 1`
-  - 套餐新增 / 套餐删除 -> `monitoring_partitions(country_id, region_id)` + `settings.partition_catalog_change_enabled = 1`
+  - 套餐新增 / 套餐删除（`region_id IS NULL`）-> `monitoring_partitions(country_id, NULL)` + `settings.partition_catalog_change_enabled = 1`
+  - 套餐新增 / 套餐删除（`region_id IS NOT NULL`）-> `monitoring_partitions(country_id, region_id)` + `settings.partition_catalog_change_enabled = 1`

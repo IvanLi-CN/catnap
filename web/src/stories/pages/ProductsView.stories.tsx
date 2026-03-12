@@ -31,7 +31,7 @@ function buildPartitionMonitoringBootstrap(): BootstrapResponse {
       ...baseUsConfig,
       id: "cfg-us-default",
       regionId: null,
-      name: "VPS • 4C/8G（国家默认）",
+      name: "VPS • 4C/8G（美国）",
       inventory: {
         ...baseUsConfig.inventory,
         quantity: 7,
@@ -222,22 +222,28 @@ export const PartitionMonitoringFocus: Story = {
     const usSection = await findPanelSection(canvasElement as HTMLElement, "美国");
     const tokyoBlock = await findProductRegionBlock(canvasElement as HTMLElement, "东京");
     const osakaBlock = await findProductRegionBlock(canvasElement as HTMLElement, "大阪");
+    const californiaBlock = await findProductRegionBlock(canvasElement as HTMLElement, "加州");
 
-    expect(within(japanSection).getByRole("button", { name: "地区监控：关" })).toBeVisible();
-    expect(within(usSection).getByRole("button", { name: "地区监控：开" })).toBeVisible();
-    expect(within(tokyoBlock).getByRole("button", { name: "可用区监控：开" })).toBeVisible();
-    expect(within(osakaBlock).getByRole("button", { name: "可用区监控：关" })).toBeVisible();
-    expect(within(tokyoBlock).getByText("监控：开")).toBeVisible();
+    expect(within(japanSection).getByTestId("country-monitor-jp")).toHaveTextContent("监控：关");
+    expect(within(usSection).getByTestId("country-monitor-us")).toHaveTextContent("监控：开");
+    expect(within(tokyoBlock).getByTestId("region-monitor-jp-tokyo")).toHaveTextContent("监控：开");
+    expect(within(osakaBlock).getByTestId("region-monitor-jp-osaka")).toHaveTextContent("监控：关");
+    expect(within(californiaBlock).getByTestId("region-monitor-us-ca")).toHaveTextContent(
+      "监控：关",
+    );
+    expect(within(usSection).queryByText("默认可用区")).not.toBeInTheDocument();
+    expect(within(usSection).getByText("VPS • 4C/8G（美国）")).toBeVisible();
+    expect(within(tokyoBlock).getAllByText("监控：开")).toHaveLength(2);
 
-    await userEvent.click(within(osakaBlock).getByRole("button", { name: "可用区监控：关" }));
+    await userEvent.click(within(osakaBlock).getByTestId("region-monitor-jp-osaka"));
 
-    const enabledToggle = await within(osakaBlock).findByRole("button", {
-      name: "可用区监控：开",
-    });
+    const enabledToggle = await within(osakaBlock).findByTestId("region-monitor-jp-osaka");
     expect(enabledToggle).toBeVisible();
     await userEvent.click(enabledToggle);
-    expect(await within(osakaBlock).findByRole("button", { name: "可用区监控：关" })).toBeVisible();
-    expect(within(osakaBlock).getAllByText("监控：关")).toHaveLength(2);
+    expect(await within(osakaBlock).findByTestId("region-monitor-jp-osaka")).toHaveTextContent(
+      "监控：关",
+    );
+    expect(within(osakaBlock).getAllByText("监控：关")).toHaveLength(3);
   },
 };
 
@@ -251,13 +257,19 @@ export const TopologyOnlyScopes: Story = {
     await userEvent.selectOptions(countrySelect, "nl");
     const netherlandsSection = await findPanelSection(canvasElement as HTMLElement, "荷兰");
     const amsterdamBlock = await findProductRegionBlock(canvasElement as HTMLElement, "阿姆斯特丹");
-    expect(within(netherlandsSection).getByRole("button", { name: "地区监控：关" })).toBeVisible();
-    expect(within(amsterdamBlock).getByRole("button", { name: "可用区监控：关" })).toBeVisible();
+    expect(within(netherlandsSection).getByTestId("country-monitor-nl")).toHaveTextContent(
+      "监控：关",
+    );
+    expect(within(amsterdamBlock).getByTestId("region-monitor-nl-ams")).toHaveTextContent(
+      "监控：关",
+    );
     expect(within(amsterdamBlock).getByText("当前暂无套餐。")).toBeVisible();
 
     await userEvent.selectOptions(countrySelect, "sg");
     const singaporeSection = await findPanelSection(canvasElement as HTMLElement, "新加坡");
-    expect(within(singaporeSection).getByRole("button", { name: "地区监控：关" })).toBeVisible();
+    expect(within(singaporeSection).getByTestId("country-monitor-sg")).toHaveTextContent(
+      "监控：关",
+    );
     expect(within(singaporeSection).getByText("当前暂无可用区与套餐。")).toBeVisible();
   },
 };

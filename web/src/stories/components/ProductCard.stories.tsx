@@ -143,7 +143,7 @@ export const CloudBadgeAreaOpensOrder: Story = {
     }) as typeof window.open;
 
     try {
-      expect(canvas.queryByRole("button", { name: "监控：禁用" })).toBeNull();
+      expect(await canvas.findByRole("button", { name: "监控：禁用" })).toBeDisabled();
       await userEvent.click(await canvas.findByRole("link", { name: "打开下单页（新标签页）" }));
       expect(openCalls.length).toBe(1);
       expect(openCalls[0]).toContain("pid=117");
