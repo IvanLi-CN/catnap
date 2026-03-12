@@ -550,7 +550,6 @@ VALUES (?, ?, ?, ?, ?, ?)
 
     let active_url_keys = countries
         .iter()
-        .filter(|country| !region_country_ids.contains(country.id.as_str()))
         .map(|country| format!("{}:0", country.id))
         .chain(
             regions
@@ -753,7 +752,6 @@ ORDER BY url_key ASC
 
     let active_url_keys = countries
         .iter()
-        .filter(|country| !regions.iter().any(|region| region.country_id == country.id))
         .map(|country| crate::upstream::catalog_region_key(&country.id, None))
         .chain(regions.iter().map(|region| {
             crate::upstream::catalog_region_key(&region.country_id, Some(region.id.as_str()))

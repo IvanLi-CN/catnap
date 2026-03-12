@@ -399,3 +399,61 @@ async fn load_catalog_snapshot_round_trips_topology_state() {
     assert_eq!(snapshot.regions.len(), 1);
     assert_eq!(snapshot.region_notices.len(), 1);
 }
+
+#[tokio::test]
+async fn country_root_notice_state_stays_active_when_country_has_regions() {
+    let cfg = test_config();
+    let db = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&cfg.db_url)
+        .await
+        .unwrap();
+
+    catnap::db::init_db(&db).await.unwrap();
+
+    let countries = vec![catnap::models::Country {
+        id: "2".to_string(),
+        name: "CN".to_string(),
+    }];
+    let regions = vec![catnap::models::Region {
+        id: "56".to_string(),
+        country_id: "2".to_string(),
+        name: "Hong Kong".to_string(),
+        location_name: Some("Hong Kong".to_string()),
+    }];
+
+    catnap::db::replace_catalog_topology(&db, "https://example.invalid/cart", &countries, &regions)
+        .await
+        .unwrap();
+    catnap::db::set_catalog_region_notice(&db, "2", None, Some("country root notice"))
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO catalog_url_cache (url_key, url, config_ids_json, last_success_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind("2:0")
+    .bind("https://example.invalid/cart?fid=2")
+    .bind("[]")
+    .bind("2026-01-01T00:00:00Z")
+    .bind("2026-01-01T00:00:00Z")
+    .execute(&db)
+    .await
+    .unwrap();
+
+    // Simulate topology persistence across restart/refresh.
+    catnap::db::replace_catalog_topology(&db, "https://example.invalid/cart", &countries, &regions)
+        .await
+        .unwrap();
+
+    let notice_row = sqlx::query("SELECT text FROM catalog_region_notices WHERE url_key = ?")
+        .bind("2:0")
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    assert_eq!(notice_row.get::<String, _>(0), "country root notice");
+
+    let snapshot = catnap::db::load_catalog_snapshot(&db, &cfg.upstream_cart_url)
+        .await
+        .unwrap();
+    assert!(snapshot.region_notice_initialized_keys.contains("2:0"));
+}
