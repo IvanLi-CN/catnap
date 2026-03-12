@@ -141,6 +141,17 @@ def validate_merge_group_helpers(module: Any, fixtures_dir: Path) -> None:
 
     try:
         module.resolve_merge_group_pull_numbers_from_data(
+            "gh-readonly-queue/main/pr-42-a1b2c3d4",
+            "refs/heads/main",
+            associated_payload,
+        )
+    except module.GateError as exc:
+        require("unexpected associated" in str(exc), f"metadata_gate: unexpected extra-associated error {exc}")
+    else:
+        raise ContractError("metadata_gate: missing extra-associated mismatch failure")
+
+    try:
+        module.resolve_merge_group_pull_numbers_from_data(
             "refs/heads/main",
             "refs/heads/main",
             associated_payload,

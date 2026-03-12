@@ -190,9 +190,15 @@ def resolve_merge_group_pull_numbers_from_data(
         raise GateError("Merge queue member set could not be proven from GitHub-disclosed data")
     associated_set = set(associated_numbers)
     missing = [number for number in anchors if number not in associated_set]
-    if missing:
-        raise GateError(f"Merge queue entry pull request mismatch: {', '.join(str(number) for number in missing)}")
-    return associated_numbers
+    unexpected = [number for number in associated_numbers if number not in set(anchors)]
+    if missing or unexpected:
+        details: list[str] = []
+        if missing:
+            details.append(f"missing anchors={','.join(str(number) for number in missing)}")
+        if unexpected:
+            details.append(f"unexpected associated={','.join(str(number) for number in unexpected)}")
+        raise GateError(f"Merge queue entry pull request mismatch: {'; '.join(details)}")
+    return anchors
 
 
 def build_context(args: argparse.Namespace) -> GateContext:

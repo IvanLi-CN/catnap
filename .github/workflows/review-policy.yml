@@ -105,10 +105,18 @@ jobs:
                 }
                 const associatedSet = new Set(associatedNumbers);
                 const missing = anchors.filter((value) => !associatedSet.has(value));
-                if (missing.length > 0) {
-                  throw new Error(`Merge queue entry pull request mismatch: ${missing.join(', ')}`);
+                const unexpected = associatedNumbers.filter((value) => !anchors.includes(value));
+                if (missing.length > 0 || unexpected.length > 0) {
+                  const details = [];
+                  if (missing.length > 0) {
+                    details.push(`missing anchors=${missing.join(',')}`);
+                  }
+                  if (unexpected.length > 0) {
+                    details.push(`unexpected associated=${unexpected.join(',')}`);
+                  }
+                  throw new Error(`Merge queue entry pull request mismatch: ${details.join('; ')}`);
                 }
-                return associatedNumbers;
+                return anchors;
               }
 
               const payloadPullNumber = context.payload.pull_request?.number;
