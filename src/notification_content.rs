@@ -67,8 +67,8 @@ pub enum TopologyNotificationKind {
 impl TopologyNotificationKind {
     fn label(self) -> &'static str {
         match self {
-            Self::RegionAdded => "新地区",
-            Self::RegionRemoved => "地区已删除",
+            Self::RegionAdded => "新国家",
+            Self::RegionRemoved => "国家已删除",
             Self::PartitionAdded => "新可用区",
             Self::PartitionRemoved => "可用区已删除",
         }
@@ -76,7 +76,7 @@ impl TopologyNotificationKind {
 
     fn target_label(self) -> &'static str {
         match self {
-            Self::RegionAdded | Self::RegionRemoved => "地区",
+            Self::RegionAdded | Self::RegionRemoved => "国家",
             Self::PartitionAdded | Self::PartitionRemoved => "可用区",
         }
     }
@@ -545,13 +545,13 @@ mod tests {
             Some("https://catnap.example/base"),
         );
 
-        assert_eq!(notification.web_push_title, "Catnap · 新地区");
+        assert_eq!(notification.web_push_title, "Catnap · 新国家");
         assert_eq!(notification.web_push_body, "德国｜3 个套餐，已展开前 2 个");
         assert_eq!(notification.web_push_url, "/products");
         assert_eq!(
             notification.telegram_text,
-            "【新地区】德国
-地区：德国
+            "【新国家】德国
+国家：德国
 当前套餐：
 1. 德国特惠年付 Mini｜¥9.99 / 年
 2. 德国特惠月付 Pro｜¥19.99 / 月

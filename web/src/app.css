@@ -753,6 +753,10 @@ select {
   gap: 8px;
 }
 
+.monitor-toggle.disabled {
+  pointer-events: none;
+}
+
 .monitor-toggle-dot {
   display: inline-block;
   width: 8px;
