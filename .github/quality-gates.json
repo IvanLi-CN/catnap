@@ -8,7 +8,8 @@
         "main"
       ],
       "require_pull_request": true,
-      "disallow_direct_pushes": true
+      "disallow_direct_pushes": true,
+      "require_merge_queue": false
     },
     "review_policy": {
       "mode": "conditional-required",
@@ -44,10 +45,15 @@
       "workflow": "CI Pipeline",
       "jobs": [
         "Path Gate",
-        "PR Label Gate",
         "Lint & Checks",
         "Backend Tests",
         "Release Chain Smoke (PR)"
+      ]
+    },
+    {
+      "workflow": "PR Label Gate",
+      "jobs": [
+        "PR Label Gate"
       ]
     },
     {

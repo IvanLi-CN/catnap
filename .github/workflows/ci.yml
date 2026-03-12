@@ -7,6 +7,9 @@ on:
       - "*"
   pull_request:
     branches: [main]
+  merge_group:
+    types:
+      - checks_requested
   workflow_dispatch:
     inputs:
       bump_level:
@@ -20,8 +23,8 @@ on:
 
 concurrency:
   group: ci-${{ github.ref }}
-  # Cancel stale PR runs, but never cancel main/tag releases mid-flight.
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # Cancel stale PR and merge queue runs, but never cancel main/tag releases mid-flight.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
 
 permissions:
   contents: read
@@ -65,31 +68,6 @@ jobs:
             echo "- docker_changed: ${{ steps.gate.outputs.docker_changed }}"
           } >> "${GITHUB_STEP_SUMMARY}"
 
-  label-gate:
-    name: PR Label Gate
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
-    timeout-minutes: 5
-    permissions:
-      contents: read
-      pull-requests: read
-      issues: read
-    outputs:
-      intent_label: ${{ steps.gate.outputs.intent_label }}
-      should_release: ${{ steps.gate.outputs.should_release }}
-      bump_level: ${{ steps.gate.outputs.bump_level }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Validate PR intent label
-        id: gate
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: |
-          bash ./.github/scripts/label-gate.sh
 
   lint:
     name: Lint & Checks
@@ -160,6 +138,25 @@ jobs:
         run: |
           set -euo pipefail
           bash ./.github/scripts/test-prepare-docker-binaries.sh
+
+      - name: Quality gates contract tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash ./.github/scripts/test-quality-gates-contract.sh
+          bash ./.github/scripts/test-live-quality-gates.sh
+
+      - name: Quality gates live rules check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          QUALITY_GATES_LIVE_RULES_MODE: require
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 ./.github/scripts/check_live_quality_gates.py \
+            --repo "${GITHUB_REPOSITORY}" \
+            --declaration ./.github/quality-gates.json \
+            --branch main
 
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@v1
@@ -242,13 +239,13 @@ jobs:
 
   pr-release-check:
     name: Release Chain Smoke (PR)
-    runs-on: ubuntu-latest
-    needs: [path-gate, lint, unit-tests]
     if: |
-      github.event_name == 'pull_request' &&
+      (github.event_name == 'pull_request' || github.event_name == 'merge_group') &&
       (needs.path-gate.outputs.frontend_changed == 'true' ||
        needs.path-gate.outputs.backend_changed == 'true' ||
        needs.path-gate.outputs.docker_changed == 'true')
+    runs-on: ubuntu-latest
+    needs: [path-gate, lint, unit-tests]
     timeout-minutes: 45
     steps:
       - name: Checkout (full history)
@@ -501,8 +498,8 @@ jobs:
 
   release-intent:
     name: Release Intent (gate)
-    runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
@@ -528,8 +525,8 @@ jobs:
 
   release:
     name: Release (tag/assets/image)
-    runs-on: ubuntu-latest
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && needs.release-intent.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
     needs: [lint, unit-tests, release-intent]
     timeout-minutes: 180
     permissions:
