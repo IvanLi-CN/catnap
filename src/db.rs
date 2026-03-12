@@ -2467,6 +2467,8 @@ mod tests {
             .unwrap();
 
         assert!(!catalog_partition_exists(&db, "7", None).await.unwrap());
-        assert!(!catalog_partition_exists(&db, "7", Some("40")).await.unwrap());
+        assert!(!catalog_partition_exists(&db, "7", Some("40"))
+            .await
+            .unwrap());
     }
 }
