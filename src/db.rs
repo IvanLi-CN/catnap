@@ -2,8 +2,16 @@ use crate::config::RuntimeConfig;
 use crate::defaults::FIXED_CATALOG_TOPOLOGY_REFRESH_INTERVAL_HOURS;
 use crate::models::*;
 use sqlx::{Row, SqlitePool};
-use time::{format_description::well_known::Rfc3339, OffsetDateTime, UtcOffset};
+use time::{
+    format_description::{well_known::Rfc3339, FormatItem},
+    macros::format_description,
+    OffsetDateTime, UtcOffset,
+};
 use uuid::Uuid;
+
+const CANONICAL_RFC3339: &[FormatItem<'static>] =
+    format_description!("[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:9]Z");
+const NOTIFICATION_RECORD_CURSOR_MAX_TS: &str = "9999-12-31T23:59:59.999999999Z";
 
 #[derive(Debug, Clone)]
 pub struct SettingsRow {
@@ -802,11 +810,15 @@ async fn add_column_if_missing(
 }
 
 fn now_rfc3339() -> String {
-    OffsetDateTime::now_utc()
-        .format(&Rfc3339)
+    format_canonical_rfc3339(OffsetDateTime::now_utc())
+}
+
+fn format_canonical_rfc3339(ts: OffsetDateTime) -> String {
+    ts.to_offset(UtcOffset::UTC)
+        .format(CANONICAL_RFC3339)
         .unwrap_or_else(|_| {
             // Should not happen; keep response stable.
-            "1970-01-01T00:00:00Z".to_string()
+            "1970-01-01T00:00:00.000000000Z".to_string()
         })
 }
 
@@ -2434,11 +2446,15 @@ pub async fn list_notification_records(
     let (cursor_ts, cursor_id) = cursor
         .and_then(|c| {
             let mut parts = c.rsplitn(2, ':');
-            let id = parts.next()?.to_string();
-            let ts = parts.next()?.to_string();
-            Some((ts, id))
+            let id = parts.next()?.trim().to_string();
+            let ts = parts.next()?.trim();
+            let parsed = OffsetDateTime::parse(ts, &Rfc3339).ok()?;
+            Some((format_canonical_rfc3339(parsed), id))
         })
-        .unwrap_or(("9999-12-31T23:59:59Z".to_string(), "zzzz".to_string()));
+        .unwrap_or((
+            NOTIFICATION_RECORD_CURSOR_MAX_TS.to_string(),
+            "zzzz".to_string(),
+        ));
 
     let rows = sqlx::query(
         r#"
@@ -2523,12 +2539,9 @@ pub async fn cleanup_notification_records(
     let mut tx = db.begin().await?;
 
     if retention_days > 0 {
-        let cutoff = OffsetDateTime::now_utc()
-            .saturating_sub(time::Duration::days(retention_days))
-            .format(&Rfc3339)
-            .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string());
+        let cutoff = OffsetDateTime::now_utc().saturating_sub(time::Duration::days(retention_days));
         sqlx::query("DELETE FROM notification_records WHERE created_at < ?")
-            .bind(cutoff)
+            .bind(format_canonical_rfc3339(cutoff))
             .execute(&mut *tx)
             .await?;
     }
@@ -2537,9 +2550,17 @@ pub async fn cleanup_notification_records(
             r#"
 DELETE FROM notification_records
 WHERE id IN (
-  SELECT id FROM notification_records
-  ORDER BY created_at DESC, id DESC
-  LIMIT -1 OFFSET ?
+  SELECT id
+  FROM (
+    SELECT
+      id,
+      ROW_NUMBER() OVER (
+        PARTITION BY user_id
+        ORDER BY created_at DESC, id DESC
+      ) AS row_num
+    FROM notification_records
+  ) ranked
+  WHERE row_num > ?
 )"#,
         )
         .bind(max_rows)

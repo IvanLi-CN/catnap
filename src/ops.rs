@@ -1897,6 +1897,7 @@ WHERE m.config_id IN ({placeholders})
                         "lifecycleFallback": true,
                     }),
                     &notification,
+                    std::slice::from_ref(item),
                 )
                 .await?;
             }
@@ -1911,7 +1912,52 @@ WHERE m.config_id IN ({placeholders})
             msg: &str,
             meta: serde_json::Value,
             notification: &notification_content::MonitoringChangeNotification,
+            items: &[crate::models::NotificationRecordItemView],
         ) -> anyhow::Result<()> {
+            let partition_label = items.first().and_then(|item| {
+                item.partition_label.clone().or_else(|| {
+                    item.region_name
+                        .as_ref()
+                        .map(|region_name| format!("{} / {}", item.country_name, region_name))
+                        .or_else(|| Some(item.country_name.clone()))
+                })
+            });
+            let record_id = crate::db::insert_notification_record(
+                &manager.inner.db,
+                &target.user_id,
+                &crate::models::NotificationRecordDraft {
+                    kind: format!(
+                        "monitoring.{}",
+                        notification
+                            .events
+                            .iter()
+                            .map(|event| event.as_str())
+                            .collect::<Vec<_>>()
+                            .join("+")
+                    ),
+                    title: notification.title.clone(),
+                    summary: notification.summary.clone(),
+                    partition_label,
+                    telegram_status: if target.tg_enabled {
+                        "pending".to_string()
+                    } else {
+                        "skipped".to_string()
+                    },
+                    web_push_status: if target.wp_enabled {
+                        "pending".to_string()
+                    } else {
+                        "skipped".to_string()
+                    },
+                    items: items.to_vec(),
+                },
+            )
+            .await?;
+            let telegram_text = notification_content::append_notification_record_link(
+                &notification.telegram_text,
+                target.site_base_url.as_deref(),
+                &record_id,
+            );
+
             let _ = crate::db::insert_log(
                 &manager.inner.db,
                 Some(&target.user_id),
@@ -1930,6 +1976,7 @@ WHERE m.config_id IN ({placeholders})
                         "runId": run_id,
                         "userId": target.user_id,
                         "meta": meta,
+                        "notificationRecordId": record_id,
                     })),
                 )
                 .await;
@@ -1940,17 +1987,31 @@ WHERE m.config_id IN ({placeholders})
                         &manager.inner.cfg.telegram_api_base_url,
                         token,
                         target_chat,
-                        &notification.telegram_text,
+                        &telegram_text,
                     )
                     .await
                     {
                         Ok(_) => {
+                            crate::db::update_notification_record_channel_status(
+                                &manager.inner.db,
+                                &record_id,
+                                "telegram",
+                                "success",
+                            )
+                            .await?;
                             let _ = manager
                                 .record_notify(run_id, "telegram", "success", None)
                                 .await;
                         }
                         Err(err) => {
                             let err_msg = err.to_string();
+                            crate::db::update_notification_record_channel_status(
+                                &manager.inner.db,
+                                &record_id,
+                                "telegram",
+                                "error",
+                            )
+                            .await?;
                             let _ = manager
                                 .record_notify(run_id, "telegram", "error", Some(&err_msg))
                                 .await;
@@ -1966,6 +2027,13 @@ WHERE m.config_id IN ({placeholders})
                         }
                     },
                     _ => {
+                        crate::db::update_notification_record_channel_status(
+                            &manager.inner.db,
+                            &record_id,
+                            "telegram",
+                            "skipped",
+                        )
+                        .await?;
                         let _ = manager
                             .record_notify(
                                 run_id,
@@ -1995,18 +2063,39 @@ WHERE m.config_id IN ({placeholders})
                     .await
                     {
                         Ok(_) => {
+                            crate::db::update_notification_record_channel_status(
+                                &manager.inner.db,
+                                &record_id,
+                                "webPush",
+                                "success",
+                            )
+                            .await?;
                             let _ = manager
                                 .record_notify(run_id, "webPush", "success", None)
                                 .await;
                         }
                         Err(err) => {
                             let err_msg = err.to_string();
+                            crate::db::update_notification_record_channel_status(
+                                &manager.inner.db,
+                                &record_id,
+                                "webPush",
+                                "error",
+                            )
+                            .await?;
                             let _ = manager
                                 .record_notify(run_id, "webPush", "error", Some(&err_msg))
                                 .await;
                         }
                     },
                     Ok(None) => {
+                        crate::db::update_notification_record_channel_status(
+                            &manager.inner.db,
+                            &record_id,
+                            "webPush",
+                            "skipped",
+                        )
+                        .await?;
                         let _ = manager
                             .record_notify(
                                 run_id,
@@ -2018,6 +2107,13 @@ WHERE m.config_id IN ({placeholders})
                     }
                     Err(err) => {
                         let err_msg = err.to_string();
+                        crate::db::update_notification_record_channel_status(
+                            &manager.inner.db,
+                            &record_id,
+                            "webPush",
+                            "error",
+                        )
+                        .await?;
                         let _ = manager
                             .record_notify(run_id, "webPush", "error", Some(&err_msg))
                             .await;
@@ -3613,6 +3709,17 @@ WHERE user_id = ?
                 .await
                 .unwrap();
         assert_eq!(listed_logs.get::<i64, _>(0), 0);
+
+        let record = sqlx::query(
+            "SELECT kind, telegram_status, web_push_status FROM notification_records WHERE user_id = ?",
+        )
+        .bind("u_1")
+        .fetch_one(&db)
+        .await
+        .unwrap();
+        assert_eq!(record.get::<String, _>(0), "monitoring.restock");
+        assert_eq!(record.get::<String, _>(1), "success");
+        assert_eq!(record.get::<String, _>(2), "skipped");
     }
 
     #[tokio::test]
@@ -3820,6 +3927,17 @@ WHERE user_id = ?
                 .await
                 .unwrap();
         assert_eq!(push_notify_rows.get::<i64, _>(0), 1);
+
+        let record = sqlx::query(
+            "SELECT kind, telegram_status, web_push_status FROM notification_records WHERE user_id = ?",
+        )
+        .bind("u_web_push")
+        .fetch_one(&db)
+        .await
+        .unwrap();
+        assert_eq!(record.get::<String, _>(0), "monitoring.restock");
+        assert_eq!(record.get::<String, _>(1), "skipped");
+        assert_eq!(record.get::<String, _>(2), "success");
     }
 
     #[tokio::test]

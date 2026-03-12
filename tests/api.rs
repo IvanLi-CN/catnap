@@ -1804,13 +1804,13 @@ async fn notification_records_api_lists_and_fetches_detail() {
     .unwrap();
 
     sqlx::query("UPDATE notification_records SET created_at = ? WHERE id = ?")
-        .bind("2026-03-11T10:00:00Z")
+        .bind("2026-03-11T10:05:00.000000000Z")
         .bind(&older_id)
         .execute(&t.db)
         .await
         .unwrap();
     sqlx::query("UPDATE notification_records SET created_at = ? WHERE id = ?")
-        .bind("2026-03-11T10:05:00Z")
+        .bind("2026-03-11T10:05:00.100000000Z")
         .bind(&newer_id)
         .execute(&t.db)
         .await
@@ -1843,16 +1843,17 @@ async fn notification_records_api_lists_and_fetches_detail() {
         Some(config_id.as_str())
     );
     assert!(items[0]["items"][0]["partitionLabel"].as_str().is_some());
-    let cursor = json["nextCursor"].as_str().unwrap().to_string();
+    assert_eq!(
+        json["nextCursor"].as_str(),
+        Some(format!("2026-03-11T10:05:00.100000000Z:{newer_id}").as_str())
+    );
 
     let res = t
         .app
         .clone()
         .oneshot(
             Request::builder()
-                .uri(format!(
-                    "/api/notifications/records?limit=1&cursor={cursor}"
-                ))
+                .uri(format!("/api/notifications/records?limit=1&cursor=2026-03-11T10:05:00.1%2B00:00:{newer_id}"))
                 .header("host", "example.com")
                 .header("x-user", "u_1")
                 .header("origin", "http://example.com")

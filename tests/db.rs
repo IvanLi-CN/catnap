@@ -463,27 +463,48 @@ async fn cleanup_notification_records_applies_day_and_row_limits() {
             partition_label: item.partition_label.clone(),
             telegram_status: "success".to_string(),
             web_push_status: "skipped".to_string(),
-            items: vec![item],
+            items: vec![item.clone()],
+        },
+    )
+    .await
+    .unwrap();
+    let other_user_id = catnap::db::insert_notification_record(
+        &db,
+        "u_2",
+        &catnap::models::NotificationRecordDraft {
+            kind: "monitoring.config".to_string(),
+            title: "other".to_string(),
+            summary: "other".to_string(),
+            partition_label: item.partition_label.clone(),
+            telegram_status: "success".to_string(),
+            web_push_status: "skipped".to_string(),
+            items: vec![item.clone()],
         },
     )
     .await
     .unwrap();
 
     sqlx::query("UPDATE notification_records SET created_at = ? WHERE id = ?")
-        .bind("2020-01-01T00:00:00Z")
+        .bind("2020-01-01T00:00:00.000000000Z")
         .bind(&old_id)
         .execute(&db)
         .await
         .unwrap();
     sqlx::query("UPDATE notification_records SET created_at = ? WHERE id = ?")
-        .bind("2026-03-10T00:00:00Z")
+        .bind("2026-03-10T00:00:00.000000000Z")
         .bind(&mid_id)
         .execute(&db)
         .await
         .unwrap();
     sqlx::query("UPDATE notification_records SET created_at = ? WHERE id = ?")
-        .bind("2026-03-11T00:00:00Z")
+        .bind("2026-03-11T00:00:00.000000000Z")
         .bind(&new_id)
+        .execute(&db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE notification_records SET created_at = ? WHERE id = ?")
+        .bind("2026-03-09T00:00:00.000000000Z")
+        .bind(&other_user_id)
         .execute(&db)
         .await
         .unwrap();
@@ -492,22 +513,30 @@ async fn cleanup_notification_records_applies_day_and_row_limits() {
         .await
         .unwrap();
 
-    let rows = sqlx::query("SELECT id FROM notification_records ORDER BY created_at DESC, id DESC")
+    let rows = sqlx::query(
+        "SELECT user_id, id FROM notification_records ORDER BY user_id ASC, created_at DESC, id DESC",
+    )
         .fetch_all(&db)
         .await
         .unwrap();
     let ids = rows
         .into_iter()
-        .map(|row| row.get::<String, _>(0))
+        .map(|row| (row.get::<String, _>(0), row.get::<String, _>(1)))
         .collect::<Vec<_>>();
-    assert_eq!(ids, vec![new_id]);
+    assert_eq!(
+        ids,
+        vec![
+            ("u_1".to_string(), new_id),
+            ("u_2".to_string(), other_user_id),
+        ]
+    );
 
     let orphan_count = sqlx::query("SELECT COUNT(*) FROM notification_record_items")
         .fetch_one(&db)
         .await
         .unwrap()
         .get::<i64, _>(0);
-    assert_eq!(orphan_count, 1);
+    assert_eq!(orphan_count, 2);
 }
 
 #[tokio::test]
