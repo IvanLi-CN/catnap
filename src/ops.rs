@@ -1,4 +1,5 @@
 use crate::config::RuntimeConfig;
+use crate::models::{Money, NotificationRecordItemView};
 use crate::notification_content::{self, LifecycleNotificationKind};
 use crate::notifications;
 use crate::upstream::{CatalogSnapshot, UpstreamClient};
@@ -1832,7 +1833,7 @@ WHERE m.config_id IN ({placeholders})
         }
 
         struct MonitoredFallbackContext<'a> {
-            listed: &'a [(String, String, Money, i64)],
+            listed: &'a [NotificationRecordItemView],
             key: &'a TaskKey,
             poller_waiter_user_ids: &'a HashSet<String>,
             listed_id_set: &'a HashSet<String>,
@@ -1845,7 +1846,10 @@ WHERE m.config_id IN ({placeholders})
             monitored_ids: &HashSet<String>,
             ctx: &MonitoredFallbackContext<'_>,
         ) -> anyhow::Result<()> {
-            for (id, name, price, qty) in ctx.listed.iter() {
+            for item in ctx.listed.iter() {
+                let Some(id) = item.config_id.as_deref() else {
+                    continue;
+                };
                 if !monitored_ids.contains(id) {
                     continue;
                 }
@@ -1857,6 +1861,9 @@ WHERE m.config_id IN ({placeholders})
                 if !allow_for_target {
                     continue;
                 }
+                let name = &item.name;
+                let price = &item.price;
+                let qty = item.inventory.quantity;
                 let notification = notification_content::build_monitoring_change_notification(
                     name,
                     &notification_content::MonitoringSnapshot {
@@ -1865,7 +1872,7 @@ WHERE m.config_id IN ({placeholders})
                         digest: "lifecycle-listed-pending",
                     },
                     &notification_content::MonitoringSnapshot {
-                        inventory_quantity: *qty,
+                        inventory_quantity: qty,
                         price,
                         digest: "lifecycle-listed-pending",
                     },
@@ -2035,8 +2042,15 @@ WHERE m.config_id IN ({placeholders})
             listed_id_set: &listed_id_set,
         };
 
-        for (id, name, price, qty) in listed_pending.iter() {
-            let msg = format_pending_stock_message(name, id, *qty, price, None);
+        for item in listed_pending.iter() {
+            let id = item.config_id.as_deref().unwrap_or("");
+            let msg = format_pending_stock_message(
+                &item.name,
+                id,
+                item.inventory.quantity,
+                &item.price,
+                None,
+            );
             let _ = self
                 .log(
                     "info",
@@ -2068,12 +2082,13 @@ WHERE m.config_id IN ({placeholders})
             partition_target_user_ids.insert(target.user_id.clone());
             listed_target_user_ids.insert(target.user_id.clone());
 
-            for (id, name, price, qty) in listed_pending.iter() {
+            for item in listed_pending.iter() {
+                let id = item.config_id.as_deref().unwrap_or("");
                 let msg = format_pending_stock_message(
-                    name,
+                    &item.name,
                     id,
-                    *qty,
-                    price,
+                    item.inventory.quantity,
+                    &item.price,
                     target.site_base_url.as_deref(),
                 );
                 let _ = crate::db::insert_log(
@@ -2159,12 +2174,13 @@ WHERE m.config_id IN ({placeholders})
             }
             listed_target_user_ids.insert(target.user_id.clone());
 
-            for (id, name, price, qty) in listed_pending.iter() {
+            for item in listed_pending.iter() {
+                let id = item.config_id.as_deref().unwrap_or("");
                 let msg = format_pending_stock_message(
-                    name,
+                    &item.name,
                     id,
-                    *qty,
-                    price,
+                    item.inventory.quantity,
+                    &item.price,
                     target.site_base_url.as_deref(),
                 );
                 let _ = crate::db::insert_log(
