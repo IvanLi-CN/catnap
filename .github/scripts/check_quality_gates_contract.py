@@ -128,6 +128,16 @@ def validate_merge_group_helpers(module: Any, fixtures_dir: Path) -> None:
     anchors = module.parse_pull_numbers_from_text("gh-readonly-queue/main/pr-42-a1b2c3d4/pr-57-ffeeddcc")
     require(anchors == [42, 57], f"metadata_gate: anchor parsing drifted: {anchors}")
 
+    documented_single_anchor = module.resolve_merge_group_pull_numbers_from_data(
+        "gh-readonly-queue/main/pr-57-ffeeddcc",
+        "refs/heads/main",
+        associated_payload,
+    )
+    require(
+        documented_single_anchor == [42, 57],
+        f"metadata_gate: single-anchor merge queue set drifted: {documented_single_anchor}",
+    )
+
     try:
         module.resolve_merge_group_pull_numbers_from_data(
             "gh-readonly-queue/main/pr-999-deadbeef",
@@ -138,17 +148,6 @@ def validate_merge_group_helpers(module: Any, fixtures_dir: Path) -> None:
         require("mismatch" in str(exc), f"metadata_gate: unexpected mismatch error {exc}")
     else:
         raise ContractError("metadata_gate: missing merge queue mismatch failure")
-
-    try:
-        module.resolve_merge_group_pull_numbers_from_data(
-            "gh-readonly-queue/main/pr-42-a1b2c3d4",
-            "refs/heads/main",
-            associated_payload,
-        )
-    except module.GateError as exc:
-        require("unexpected associated" in str(exc), f"metadata_gate: unexpected extra-associated error {exc}")
-    else:
-        raise ContractError("metadata_gate: missing extra-associated mismatch failure")
 
     try:
         module.resolve_merge_group_pull_numbers_from_data(
