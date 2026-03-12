@@ -146,6 +146,18 @@ jobs:
           bash ./.github/scripts/test-quality-gates-contract.sh
           bash ./.github/scripts/test-live-quality-gates.sh
 
+      - name: Quality gates live rules check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          QUALITY_GATES_LIVE_RULES_MODE: require
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 ./.github/scripts/check_live_quality_gates.py \
+            --repo "${GITHUB_REPOSITORY}" \
+            --declaration ./.github/quality-gates.json \
+            --branch main
+
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@v1
         with:
