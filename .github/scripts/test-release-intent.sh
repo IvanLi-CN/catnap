@@ -201,4 +201,17 @@ run_case \
   manual:minor \
   none
 
+run_case \
+  manual_branch_dispatch_skip \
+  workflow_dispatch \
+  refs/heads/th/test-branch \
+  th/test-branch \
+  pulls-empty.json \
+  issue-pr-60-minor.json \
+  "ignored" \
+  false \
+  none \
+  none \
+  none
+
 echo "test-release-intent: all cases passed"
