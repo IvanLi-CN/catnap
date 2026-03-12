@@ -94,6 +94,7 @@ CREATE TABLE IF NOT EXISTS catalog_configs (
   lifecycle_listed_at TEXT NOT NULL DEFAULT '1970-01-01T00:00:00Z',
   lifecycle_delisted_at TEXT NULL,
   lifecycle_last_seen_at TEXT NOT NULL DEFAULT '1970-01-01T00:00:00Z',
+  lifecycle_listed_event_at TEXT NULL,
   source_pid TEXT NULL,
   source_fid TEXT NULL,
   source_gid TEXT NULL
@@ -312,6 +313,13 @@ CREATE INDEX IF NOT EXISTS idx_ops_notify_runs_channel_ts ON ops_notify_runs (ch
         "TEXT NOT NULL DEFAULT '1970-01-01T00:00:00Z'",
     )
     .await?;
+    let lifecycle_listed_event_at_added = add_column_if_missing(
+        db,
+        "catalog_configs",
+        "lifecycle_listed_event_at",
+        "TEXT NULL",
+    )
+    .await?;
     add_column_if_missing(db, "catalog_configs", "source_pid", "TEXT NULL").await?;
     add_column_if_missing(db, "catalog_configs", "source_fid", "TEXT NULL").await?;
     add_column_if_missing(db, "catalog_configs", "source_gid", "TEXT NULL").await?;
@@ -457,6 +465,22 @@ SET
     )
     .execute(db)
     .await?;
+
+    if lifecycle_listed_event_at_added {
+        sqlx::query(
+            r#"
+UPDATE catalog_configs
+SET lifecycle_listed_event_at = CASE
+  WHEN lifecycle_listed_at IS NULL OR lifecycle_listed_at = '1970-01-01T00:00:00Z' THEN checked_at
+  ELSE lifecycle_listed_at
+END
+WHERE COALESCE(NULLIF(lifecycle_state, ''), 'active') = 'active'
+  AND (lifecycle_listed_event_at IS NULL OR TRIM(lifecycle_listed_event_at) = '')
+"#,
+        )
+        .execute(db)
+        .await?;
+    }
     Ok(())
 }
 
@@ -803,15 +827,15 @@ async fn add_column_if_missing(
     table: &str,
     column: &str,
     column_def: &str,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<bool> {
     let sql = format!("ALTER TABLE {table} ADD COLUMN {column} {column_def}");
     match sqlx::query(&sql).execute(db).await {
-        Ok(_) => Ok(()),
+        Ok(_) => Ok(true),
         Err(err) => {
             // SQLite emits: "duplicate column name: <col>"
             let msg = err.to_string();
             if msg.to_lowercase().contains("duplicate column name") {
-                Ok(())
+                Ok(false)
             } else {
                 Err(err.into())
             }
@@ -1566,6 +1590,8 @@ WHERE url_key = ?
 #[derive(Debug, Clone)]
 pub struct ApplyCatalogUrlResult {
     pub listed_ids: Vec<String>,
+    pub listed_event_ids: Vec<String>,
+    pub listed_pending_zero_stock_ids: Vec<String>,
     pub delisted_ids: Vec<String>,
     pub fetched_at: String,
 }
@@ -1680,14 +1706,73 @@ WHERE source_fid = ?
 
     let fetched_ids: std::collections::HashSet<String> =
         configs.iter().map(|c| c.id.clone()).collect();
+
+    let existing_by_id: std::collections::HashMap<String, (String, Option<String>)> =
+        if fetched_ids.is_empty() {
+            std::collections::HashMap::new()
+        } else {
+            let placeholders = std::iter::repeat_n("?", fetched_ids.len())
+                .collect::<Vec<_>>()
+                .join(",");
+            let sql = format!(
+                r#"
+SELECT id, lifecycle_state, lifecycle_listed_event_at
+FROM catalog_configs
+WHERE id IN ({placeholders})
+"#
+            );
+            let mut q = sqlx::query(&sql);
+            for id in &fetched_ids {
+                q = q.bind(id);
+            }
+            q.fetch_all(&mut *tx)
+                .await?
+                .into_iter()
+                .map(|row| {
+                    (
+                        row.get::<String, _>(0),
+                        (
+                            row.get::<String, _>(1),
+                            row.get::<Option<String>, _>(2)
+                                .filter(|v| !v.trim().is_empty()),
+                        ),
+                    )
+                })
+                .collect()
+        };
+
     let listed_ids = fetched_ids
         .difference(&prev_ids)
         .cloned()
         .collect::<Vec<_>>();
+    let listed_id_set = listed_ids
+        .iter()
+        .cloned()
+        .collect::<std::collections::HashSet<_>>();
     let delisted_ids = prev_ids
         .difference(&fetched_ids)
         .cloned()
         .collect::<Vec<_>>();
+
+    let mut listed_event_ids = Vec::new();
+    let mut listed_pending_zero_stock_ids = Vec::new();
+    for c in &configs {
+        let is_new_lifecycle = listed_id_set.contains(&c.id);
+        let existing = existing_by_id.get(&c.id);
+        let should_emit_listed_event = c.inventory.quantity > 0
+            && (is_new_lifecycle
+                || existing.is_some_and(|(state, listed_event_at)| {
+                    state == "active" && listed_event_at.is_none()
+                }));
+
+        if should_emit_listed_event {
+            listed_event_ids.push(c.id.clone());
+        }
+
+        if is_new_lifecycle && c.inventory.quantity == 0 {
+            listed_pending_zero_stock_ids.push(c.id.clone());
+        }
+    }
 
     if !configs.is_empty() {
         // Upsert all fetched configs and mark as active.
@@ -1700,8 +1785,9 @@ INSERT INTO catalog_configs (
   inventory_status, inventory_quantity, checked_at,
   config_digest,
   lifecycle_state, lifecycle_listed_at, lifecycle_delisted_at, lifecycle_last_seen_at,
+  lifecycle_listed_event_at,
   source_pid, source_fid, source_gid
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, NULL, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, NULL, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
   country_id = excluded.country_id,
   region_id = excluded.region_id,
@@ -1722,6 +1808,11 @@ ON CONFLICT(id) DO UPDATE SET
     WHEN catalog_configs.lifecycle_listed_at IS NULL OR catalog_configs.lifecycle_listed_at = '1970-01-01T00:00:00Z' THEN excluded.lifecycle_listed_at
     ELSE catalog_configs.lifecycle_listed_at
   END,
+  lifecycle_listed_event_at = CASE
+    WHEN catalog_configs.lifecycle_state = 'delisted' THEN excluded.lifecycle_listed_event_at
+    WHEN catalog_configs.lifecycle_listed_event_at IS NULL AND excluded.inventory_quantity > 0 THEN excluded.lifecycle_listed_event_at
+    ELSE catalog_configs.lifecycle_listed_event_at
+  END,
   source_pid = COALESCE(excluded.source_pid, catalog_configs.source_pid),
   source_fid = excluded.source_fid,
   source_gid = excluded.source_gid
@@ -1741,6 +1832,11 @@ ON CONFLICT(id) DO UPDATE SET
             .bind(&c.digest)
             .bind(&fetched_at)
             .bind(&fetched_at)
+            .bind(if c.inventory.quantity > 0 {
+                Some(fetched_at.as_str())
+            } else {
+                None
+            })
             .bind(c.source_pid.as_deref())
             .bind(c.source_fid.as_deref())
             .bind(c.source_gid.as_deref())
@@ -1787,7 +1883,8 @@ ON CONFLICT(config_id, ts_minute) DO UPDATE SET
             r#"
 UPDATE catalog_configs
 SET lifecycle_state = 'delisted',
-    lifecycle_delisted_at = ?
+    lifecycle_delisted_at = ?,
+    lifecycle_listed_event_at = NULL
 WHERE id IN ({placeholders})
   AND lifecycle_state != 'delisted'
 "#
@@ -1853,6 +1950,8 @@ ON CONFLICT(url_key) DO UPDATE SET
 
     Ok(ApplyCatalogUrlResult {
         listed_ids,
+        listed_event_ids,
+        listed_pending_zero_stock_ids,
         delisted_ids,
         fetched_at,
     })
@@ -1874,8 +1973,9 @@ INSERT INTO catalog_configs (
   inventory_status, inventory_quantity, checked_at,
   config_digest,
   lifecycle_state, lifecycle_listed_at, lifecycle_delisted_at, lifecycle_last_seen_at,
+  lifecycle_listed_event_at,
   source_pid, source_fid, source_gid
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, NULL, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, NULL, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
   country_id = excluded.country_id,
   region_id = excluded.region_id,
@@ -1896,6 +1996,10 @@ ON CONFLICT(id) DO UPDATE SET
     WHEN catalog_configs.lifecycle_listed_at IS NULL OR catalog_configs.lifecycle_listed_at = '1970-01-01T00:00:00Z' THEN excluded.checked_at
     ELSE catalog_configs.lifecycle_listed_at
   END,
+  lifecycle_listed_event_at = CASE
+    WHEN catalog_configs.lifecycle_state = 'delisted' THEN excluded.lifecycle_listed_event_at
+    ELSE COALESCE(catalog_configs.lifecycle_listed_event_at, excluded.lifecycle_listed_event_at)
+  END,
   source_pid = COALESCE(excluded.source_pid, catalog_configs.source_pid),
   source_fid = excluded.source_fid,
   source_gid = excluded.source_gid
@@ -1913,6 +2017,7 @@ ON CONFLICT(id) DO UPDATE SET
         .bind(c.inventory.quantity)
         .bind(&c.inventory.checked_at)
         .bind(&c.digest)
+        .bind(&c.inventory.checked_at)
         .bind(&c.inventory.checked_at)
         .bind(&c.inventory.checked_at)
         .bind(c.source_pid.as_deref())
