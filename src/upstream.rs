@@ -92,6 +92,34 @@ impl CatalogSnapshot {
     }
 }
 
+fn config_dedupe_key(config: &ConfigBase) -> String {
+    if let Some(pid) = config
+        .source_pid
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        return format!("pid:{}", pid.trim());
+    }
+    format!("digest:{}", config.digest)
+}
+
+pub(crate) fn retain_country_direct_configs(
+    direct_configs: Vec<ConfigBase>,
+    region_configs: &[ConfigBase],
+) -> Vec<ConfigBase> {
+    if direct_configs.is_empty() || region_configs.is_empty() {
+        return direct_configs;
+    }
+    let region_keys = region_configs
+        .iter()
+        .map(config_dedupe_key)
+        .collect::<HashSet<_>>();
+    direct_configs
+        .into_iter()
+        .filter(|config| !region_keys.contains(&config_dedupe_key(config)))
+        .collect()
+}
+
 fn upstream_request_gate() -> &'static Mutex<()> {
     static GATE: OnceLock<Mutex<()>> = OnceLock::new();
     GATE.get_or_init(|| Mutex::new(()))
@@ -119,6 +147,7 @@ pub struct RegionFetchDetailed {
     pub parse_elapsed_ms: i64,
     pub configs: Vec<ConfigBase>,
     pub region_notice: Option<String>,
+    pub empty_result_authoritative: bool,
 }
 
 impl UpstreamClient {
@@ -152,16 +181,16 @@ impl UpstreamClient {
             let fid_url = format!("{}?fid={fid}", self.cart_url);
             let fid_html = self.fetch_html(&fid_url).await?;
             request_count += 1;
+            region_notice_initialized_keys.insert(catalog_region_key(fid, None));
+            if let Some(text) = parse_region_notice(&fid_html) {
+                upsert_region_notice(&mut region_notices, fid, None, &text);
+            }
 
             let mut fid_regions = parse_regions(fid, &fid_html);
             if fid_regions.is_empty() {
                 if parse_configs(fid, None, &fid_html).is_empty() {
                     ambiguous_country_ids.insert(fid.clone());
                     continue;
-                }
-                region_notice_initialized_keys.insert(catalog_region_key(fid, None));
-                if let Some(text) = parse_region_notice(&fid_html) {
-                    upsert_region_notice(&mut region_notices, fid, None, &text);
                 }
             } else {
                 regions.append(&mut fid_regions);
@@ -201,29 +230,33 @@ impl UpstreamClient {
             let fid_url = format!("{}?fid={fid}", self.cart_url);
             let fid_html = self.fetch_html(&fid_url).await?;
             let mut fid_regions = parse_regions(fid, &fid_html);
-            if fid_regions.is_empty() {
-                region_notice_initialized_keys.insert(catalog_region_key(fid, None));
-                // Some pages may not have a region selector.
-                if let Some(text) = parse_region_notice(&fid_html) {
-                    upsert_region_notice(&mut region_notices, fid, None, &text);
-                }
-                let parsed = parse_configs(fid, None, &fid_html);
-                configs.extend(parsed);
-            } else {
-                regions.append(&mut fid_regions);
+            region_notice_initialized_keys.insert(catalog_region_key(fid, None));
+            if let Some(text) = parse_region_notice(&fid_html) {
+                upsert_region_notice(&mut region_notices, fid, None, &text);
             }
 
-            // If we did get regions, fetch each region's configs.
-            for r in regions.iter().filter(|r| &r.country_id == fid) {
-                let gid = &r.id;
-                let gid_url = format!("{}?fid={fid}&gid={gid}", self.cart_url);
-                let gid_html = self.fetch_html(&gid_url).await?;
-                region_notice_initialized_keys.insert(catalog_region_key(fid, Some(gid)));
-                if let Some(text) = parse_region_notice(&gid_html) {
-                    upsert_region_notice(&mut region_notices, fid, Some(gid), &text);
+            let direct_configs = parse_configs(fid, None, &fid_html);
+            if fid_regions.is_empty() {
+                // Some pages may not have a region selector.
+                configs.extend(direct_configs);
+            } else {
+                let mut region_configs = Vec::new();
+                for r in &fid_regions {
+                    let gid = &r.id;
+                    let gid_url = format!("{}?fid={fid}&gid={gid}", self.cart_url);
+                    let gid_html = self.fetch_html(&gid_url).await?;
+                    region_notice_initialized_keys.insert(catalog_region_key(fid, Some(gid)));
+                    if let Some(text) = parse_region_notice(&gid_html) {
+                        upsert_region_notice(&mut region_notices, fid, Some(gid), &text);
+                    }
+                    region_configs.extend(parse_configs(fid, Some(gid), &gid_html));
                 }
-                let parsed = parse_configs(fid, Some(gid), &gid_html);
-                configs.extend(parsed);
+                configs.extend(retain_country_direct_configs(
+                    direct_configs,
+                    &region_configs,
+                ));
+                configs.extend(region_configs);
+                regions.append(&mut fid_regions);
             }
         }
 
@@ -283,28 +316,59 @@ impl UpstreamClient {
         };
 
         let start = Instant::now();
-        let gate = upstream_request_gate();
-        let _guard = gate.lock().await;
-        let res = self.client.get(&url).send().await?;
-        let status = res.status();
-        let http_status = status.as_u16();
-        if !status.is_success() {
-            anyhow::bail!("upstream http {status} for {url}");
-        }
-        let html = res.text().await?;
-        let elapsed_ms = start.elapsed().as_millis() as i64;
-        let bytes = html.len() as i64;
-        tokio::time::sleep(std::time::Duration::from_millis(
-            UPSTREAM_REQUEST_COOLDOWN_MS,
-        ))
-        .await;
+        let (html, http_status, elapsed_ms, bytes) = {
+            let gate = upstream_request_gate();
+            let _guard = gate.lock().await;
+            let res = self.client.get(&url).send().await?;
+            let status = res.status();
+            let http_status = status.as_u16();
+            if !status.is_success() {
+                anyhow::bail!("upstream http {status} for {url}");
+            }
+            let html = res.text().await?;
+            let elapsed_ms = start.elapsed().as_millis() as i64;
+            let bytes = html.len() as i64;
+            tokio::time::sleep(std::time::Duration::from_millis(
+                UPSTREAM_REQUEST_COOLDOWN_MS,
+            ))
+            .await;
+            (html, http_status, elapsed_ms, bytes)
+        };
 
         let parse_start = Instant::now();
-        let configs = parse_configs(fid, gid, &html);
-        let parse_elapsed_ms = parse_start.elapsed().as_millis() as i64;
+        let parsed_regions = parse_regions(fid, &html);
         let region_notice = parse_region_notice(&html);
+        let (configs, empty_result_authoritative) = if let Some(gid) = gid {
+            (
+                parse_configs(fid, Some(gid), &html),
+                !parsed_regions.is_empty(),
+            )
+        } else {
+            let direct_configs = parse_configs(fid, None, &html);
+            if parsed_regions.is_empty() {
+                (direct_configs, false)
+            } else if direct_configs.is_empty() {
+                (direct_configs, true)
+            } else {
+                let mut region_configs = Vec::new();
+                for region in &parsed_regions {
+                    let region_url = format!("{}?fid={fid}&gid={}", self.cart_url, region.id);
+                    let region_html = self.fetch_html(&region_url).await?;
+                    region_configs.extend(parse_configs(
+                        fid,
+                        Some(region.id.as_str()),
+                        &region_html,
+                    ));
+                }
+                (
+                    retain_country_direct_configs(direct_configs, &region_configs),
+                    true,
+                )
+            }
+        };
+        let parse_elapsed_ms = parse_start.elapsed().as_millis() as i64;
 
-        if configs.is_empty() {
+        if configs.is_empty() && !empty_result_authoritative {
             anyhow::bail!("upstream parse produced 0 configs for {url}");
         }
 
@@ -316,6 +380,7 @@ impl UpstreamClient {
             parse_elapsed_ms,
             configs,
             region_notice,
+            empty_result_authoritative,
         })
     }
 
@@ -843,6 +908,7 @@ fn known_pid_fallback(name: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::Router;
 
     #[test]
     fn parses_countries() {
@@ -1138,6 +1204,194 @@ mod tests {
         assert!(!configs.is_empty());
         assert!(!configs[0].monitor_supported);
         assert_eq!(configs[0].inventory.quantity, 1);
+    }
+
+    #[test]
+    fn retain_country_direct_configs_drops_region_mirrors() {
+        let direct = vec![
+            ConfigBase {
+                id: "lc:2:0:117".to_string(),
+                country_id: "2".to_string(),
+                region_id: None,
+                name: "HKG-Premium Basic".to_string(),
+                specs: vec![],
+                price: Money {
+                    amount: 24.9,
+                    currency: "CNY".to_string(),
+                    period: "month".to_string(),
+                },
+                inventory: Inventory {
+                    status: "available".to_string(),
+                    quantity: 1,
+                    checked_at: "2026-03-12T00:00:00Z".to_string(),
+                },
+                digest: "digest-basic".to_string(),
+                monitor_supported: true,
+                source_pid: Some("117".to_string()),
+                source_fid: Some("2".to_string()),
+                source_gid: None,
+            },
+            ConfigBase {
+                id: "lc:2:0:256".to_string(),
+                country_id: "2".to_string(),
+                region_id: None,
+                name: "CN Direct Premium".to_string(),
+                specs: vec![],
+                price: Money {
+                    amount: 66.0,
+                    currency: "CNY".to_string(),
+                    period: "month".to_string(),
+                },
+                inventory: Inventory {
+                    status: "available".to_string(),
+                    quantity: 3,
+                    checked_at: "2026-03-12T00:00:00Z".to_string(),
+                },
+                digest: "digest-direct".to_string(),
+                monitor_supported: true,
+                source_pid: Some("256".to_string()),
+                source_fid: Some("2".to_string()),
+                source_gid: None,
+            },
+        ];
+        let region = vec![ConfigBase {
+            id: "lc:2:56:117".to_string(),
+            country_id: "2".to_string(),
+            region_id: Some("56".to_string()),
+            name: "HKG-Premium Basic".to_string(),
+            specs: vec![],
+            price: Money {
+                amount: 24.9,
+                currency: "CNY".to_string(),
+                period: "month".to_string(),
+            },
+            inventory: Inventory {
+                status: "available".to_string(),
+                quantity: 1,
+                checked_at: "2026-03-12T00:00:00Z".to_string(),
+            },
+            digest: "digest-basic".to_string(),
+            monitor_supported: true,
+            source_pid: Some("117".to_string()),
+            source_fid: Some("2".to_string()),
+            source_gid: Some("56".to_string()),
+        }];
+
+        let retained = retain_country_direct_configs(direct, &region);
+        assert_eq!(retained.len(), 1);
+        assert_eq!(retained[0].source_pid.as_deref(), Some("256"));
+    }
+
+    async fn spawn_stub_server(app: Router) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        format!("http://{}", addr)
+    }
+
+    #[tokio::test]
+    async fn fetch_region_configs_detailed_drops_region_mirrors_from_country_root() {
+        let fid_html = r#"
+<!doctype html>
+<html lang="zh-CN">
+  <body>
+    <div class="firstgroup_box_group">
+      <div class="secondgroup_item pointer active" onclick="window.location.href='/cart?fid=2&gid=56'">
+        <a class="yy-bth-text-a">HKG Premium</a>
+        <a class="yy-bth-text-b">湾仔</a>
+      </div>
+    </div>
+    <div class="card cartitem shadow w-100">
+      <div class="card-body">
+        <h4>HKG-Premium Basic</h4>
+      </div>
+      <div class="text-right">
+        ¥ <a class="cart-num DINCondensed-Bold">24.90</a> 元 / 月
+      </div>
+      <div class="card-footer">
+        <a href="/cart?action=configureproduct&pid=117">立即购买</a>
+      </div>
+    </div>
+  </body>
+</html>
+"#;
+        let gid_56_html = include_str!("../tests/fixtures/cart-fid-2-gid-56.html");
+
+        #[derive(serde::Deserialize)]
+        struct CartQuery {
+            fid: Option<String>,
+            gid: Option<String>,
+        }
+
+        let upstream = Router::new().route(
+            "/cart",
+            axum::routing::get(
+                move |axum::extract::Query(q): axum::extract::Query<CartQuery>| async move {
+                    match (q.fid.as_deref(), q.gid.as_deref()) {
+                        (Some("2"), None) => fid_html.to_string(),
+                        (Some("2"), Some("56")) => gid_56_html.to_string(),
+                        _ => "not found".to_string(),
+                    }
+                },
+            ),
+        );
+        let base = spawn_stub_server(upstream).await;
+        let client = UpstreamClient::new(format!("{base}/cart")).unwrap();
+
+        let result = client
+            .fetch_region_configs_detailed("2", None)
+            .await
+            .unwrap();
+
+        assert!(result.empty_result_authoritative);
+        assert_eq!(result.configs.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn fetch_region_configs_detailed_accepts_empty_region_when_selector_exists() {
+        let gid_56_empty_html = r#"
+<!doctype html>
+<html lang="zh-CN">
+  <body>
+    <div class="firstgroup_box_group">
+      <div class="secondgroup_item pointer active" onclick="window.location.href='/cart?fid=2&gid=56'">
+        <a class="yy-bth-text-a">HKG Premium</a>
+        <a class="yy-bth-text-b">湾仔</a>
+      </div>
+    </div>
+  </body>
+</html>
+"#;
+
+        #[derive(serde::Deserialize)]
+        struct CartQuery {
+            fid: Option<String>,
+            gid: Option<String>,
+        }
+
+        let upstream = Router::new().route(
+            "/cart",
+            axum::routing::get(
+                move |axum::extract::Query(q): axum::extract::Query<CartQuery>| async move {
+                    match (q.fid.as_deref(), q.gid.as_deref()) {
+                        (Some("2"), Some("56")) => gid_56_empty_html.to_string(),
+                        _ => "not found".to_string(),
+                    }
+                },
+            ),
+        );
+        let base = spawn_stub_server(upstream).await;
+        let client = UpstreamClient::new(format!("{base}/cart")).unwrap();
+
+        let result = client
+            .fetch_region_configs_detailed("2", Some("56"))
+            .await
+            .unwrap();
+
+        assert!(result.empty_result_authoritative);
+        assert_eq!(result.configs.len(), 0);
     }
 
     #[test]

@@ -53,7 +53,7 @@ pub struct Spec {
     pub value: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Money {
     pub amount: f64,
@@ -161,9 +161,9 @@ pub struct SettingsCatalogRefreshView {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsMonitoringEventsView {
-    pub partition_listed_enabled: bool,
-    pub site_listed_enabled: bool,
-    pub delisted_enabled: bool,
+    pub partition_catalog_change_enabled: bool,
+    pub region_partition_change_enabled: bool,
+    pub site_region_change_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -282,9 +282,9 @@ pub struct SettingsCatalogRefreshUpdate {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsMonitoringEventsUpdate {
-    pub partition_listed_enabled: bool,
-    pub site_listed_enabled: bool,
-    pub delisted_enabled: bool,
+    pub partition_catalog_change_enabled: bool,
+    pub region_partition_change_enabled: bool,
+    pub site_region_change_enabled: bool,
 }
 
 #[derive(Debug, Deserialize)]

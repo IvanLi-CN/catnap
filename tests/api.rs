@@ -95,6 +95,14 @@ async fn make_app_with_config(cfg: RuntimeConfig) -> TestApp {
         topology_message: None,
     };
 
+    catnap::db::replace_catalog_topology(
+        &db,
+        &cfg.upstream_cart_url,
+        &snapshot.countries,
+        &snapshot.regions,
+    )
+    .await
+    .unwrap();
     catnap::db::upsert_catalog_configs(&db, &configs)
         .await
         .unwrap();
@@ -343,9 +351,9 @@ async fn put_settings_ignores_catalog_refresh_overrides() {
         "siteBaseUrl": null,
         "catalogRefresh": { "autoIntervalHours": 1 },
         "monitoringEvents": {
-            "partitionListedEnabled": false,
-            "siteListedEnabled": false,
-            "delistedEnabled": false
+            "partitionCatalogChangeEnabled": false,
+            "regionPartitionChangeEnabled": false,
+            "siteRegionChangeEnabled": false
         },
         "notifications": {
             "telegram": { "enabled": false, "botToken": null, "target": null },
@@ -947,7 +955,85 @@ async fn monitoring_partition_toggle_rejects_unknown_partition() {
 }
 
 #[tokio::test]
-async fn settings_migrates_legacy_listed_flag_into_site_listed_enabled() {
+async fn monitoring_partition_toggle_rejects_removed_country_scope() {
+    let t = make_app().await;
+    catnap::db::replace_catalog_topology(&t.db, "https://lxc.lazycat.wiki/cart", &[], &[])
+        .await
+        .unwrap();
+
+    let bytes = serde_json::to_vec(&serde_json::json!({
+        "countryId": "7",
+        "regionId": null,
+        "enabled": true
+    }))
+    .unwrap();
+
+    let res = t
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/api/monitoring/partitions")
+                .header("host", "example.com")
+                .header("x-user", "u_1")
+                .header("origin", "http://example.com")
+                .header("content-type", "application/json")
+                .body(Body::from(bytes))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+
+    let bytes = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(json["error"]["code"], "INVALID_ARGUMENT");
+}
+
+#[tokio::test]
+async fn monitoring_partition_toggle_accepts_country_scope_with_null_region() {
+    let t = make_app().await;
+    let bytes = serde_json::to_vec(&serde_json::json!({
+        "countryId": "7",
+        "regionId": null,
+        "enabled": true
+    }))
+    .unwrap();
+
+    let res = t
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/api/monitoring/partitions")
+                .header("host", "example.com")
+                .header("x-user", "u_1")
+                .header("origin", "http://example.com")
+                .header("content-type", "application/json")
+                .body(Body::from(bytes))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let row = sqlx::query(
+        "SELECT country_id, region_id, enabled FROM monitoring_partitions WHERE user_id = ? AND partition_key = ?",
+    )
+    .bind("u_1")
+    .bind("7::")
+    .fetch_one(&t.db)
+    .await
+    .unwrap();
+    assert_eq!(row.get::<String, _>(0), "7");
+    assert_eq!(row.get::<Option<String>, _>(1), None);
+    assert_eq!(row.get::<i64, _>(2), 1);
+}
+
+#[tokio::test]
+async fn settings_migrates_legacy_monitoring_flags_into_new_hierarchy() {
     let cfg = test_config();
     let db = SqlitePoolOptions::new()
         .max_connections(1)
@@ -1015,15 +1101,16 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     catnap::db::init_db(&db).await.unwrap();
 
     let migrated = sqlx::query(
-        "SELECT monitoring_events_partition_listed_enabled, monitoring_events_site_listed_enabled, monitoring_events_delisted_enabled FROM settings WHERE user_id = ?",
+        "SELECT monitoring_events_partition_catalog_change_enabled, monitoring_events_region_partition_change_enabled, monitoring_events_site_region_change_enabled, monitoring_events_delisted_enabled FROM settings WHERE user_id = ?",
     )
     .bind("u_legacy")
     .fetch_one(&db)
     .await
     .unwrap();
     assert_eq!(migrated.get::<i64, _>(0), 0);
-    assert_eq!(migrated.get::<i64, _>(1), 1);
+    assert_eq!(migrated.get::<i64, _>(1), 0);
     assert_eq!(migrated.get::<i64, _>(2), 1);
+    assert_eq!(migrated.get::<i64, _>(3), 1);
 
     let catalog = std::sync::Arc::new(tokio::sync::RwLock::new(
         catnap::upstream::CatalogSnapshot::empty(cfg.upstream_cart_url.clone()),
@@ -1057,17 +1144,102 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     let bytes = to_bytes(res.into_body(), usize::MAX).await.unwrap();
     let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(
-        json["monitoringEvents"]["partitionListedEnabled"].as_bool(),
+        json["monitoringEvents"]["partitionCatalogChangeEnabled"].as_bool(),
         Some(false)
     );
     assert_eq!(
-        json["monitoringEvents"]["siteListedEnabled"].as_bool(),
-        Some(true)
+        json["monitoringEvents"]["regionPartitionChangeEnabled"].as_bool(),
+        Some(false)
     );
     assert_eq!(
-        json["monitoringEvents"]["delistedEnabled"].as_bool(),
+        json["monitoringEvents"]["siteRegionChangeEnabled"].as_bool(),
         Some(true)
     );
+    assert!(json["monitoringEvents"].get("delistedEnabled").is_none());
+}
+
+#[tokio::test]
+async fn settings_migration_does_not_fall_back_to_older_listed_flag_when_site_flag_is_off() {
+    let cfg = test_config();
+    let db = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&cfg.db_url)
+        .await
+        .unwrap();
+
+    sqlx::query(
+        r#"
+CREATE TABLE settings (
+  user_id TEXT PRIMARY KEY,
+  poll_interval_minutes INTEGER NOT NULL,
+  poll_jitter_pct REAL NOT NULL,
+  site_base_url TEXT NULL,
+  monitoring_events_listed_enabled INTEGER NOT NULL DEFAULT 0,
+  monitoring_events_partition_listed_enabled INTEGER NOT NULL DEFAULT 0,
+  monitoring_events_site_listed_enabled INTEGER NOT NULL DEFAULT 0,
+  monitoring_events_delisted_enabled INTEGER NOT NULL DEFAULT 0,
+  telegram_enabled INTEGER NOT NULL,
+  telegram_bot_token TEXT NULL,
+  telegram_target TEXT NULL,
+  web_push_enabled INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+)
+"#,
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        r#"
+INSERT INTO settings (
+  user_id,
+  poll_interval_minutes,
+  poll_jitter_pct,
+  site_base_url,
+  monitoring_events_listed_enabled,
+  monitoring_events_partition_listed_enabled,
+  monitoring_events_site_listed_enabled,
+  monitoring_events_delisted_enabled,
+  telegram_enabled,
+  telegram_bot_token,
+  telegram_target,
+  web_push_enabled,
+  created_at,
+  updated_at
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+"#,
+    )
+    .bind("u_legacy_site_off")
+    .bind(5_i64)
+    .bind(0.2_f64)
+    .bind(Option::<String>::None)
+    .bind(1_i64)
+    .bind(0_i64)
+    .bind(0_i64)
+    .bind(0_i64)
+    .bind(0_i64)
+    .bind(Option::<String>::None)
+    .bind(Option::<String>::None)
+    .bind(0_i64)
+    .bind("2026-03-10T00:00:00Z")
+    .bind("2026-03-10T00:00:00Z")
+    .execute(&db)
+    .await
+    .unwrap();
+
+    catnap::db::init_db(&db).await.unwrap();
+
+    let migrated = sqlx::query(
+        "SELECT monitoring_events_site_region_change_enabled FROM settings WHERE user_id = ?",
+    )
+    .bind("u_legacy_site_off")
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    assert_eq!(migrated.get::<i64, _>(0), 0);
 }
 
 #[tokio::test]

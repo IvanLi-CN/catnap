@@ -159,11 +159,7 @@ if [[ "${event_name}" == "workflow_dispatch" ]]; then
     intent_label="manual:tag"
     pr_number="none"
     log "manual publish ref=tag tag=${tag} should_release=${should_release} bump_level=${bump_level}"
-  else
-    if [[ "${ref}" != "refs/heads/main" ]]; then
-      fail "unsupported ref for manual publish: ${ref}"
-    fi
-
+  elif [[ "${ref}" == "refs/heads/main" ]]; then
     bump_level="${BUMP_LEVEL:-}"
     if [[ -z "${bump_level}" ]]; then
       fail "workflow_dispatch ref=main requires input bump_level (major|minor|patch)"
@@ -177,6 +173,12 @@ if [[ "${event_name}" == "workflow_dispatch" ]]; then
     intent_label="manual:${bump_level}"
     pr_number="none"
     log "manual publish ref=main should_release=${should_release} bump_level=${bump_level}"
+  else
+    warn "manual dispatch on non-release ref ${ref}; defaulting to should_release=false"
+    should_release="false"
+    bump_level="none"
+    intent_label="none"
+    pr_number="none"
   fi
 
   write_output "should_release" "${should_release}"

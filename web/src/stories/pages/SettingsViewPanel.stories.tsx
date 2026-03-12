@@ -48,9 +48,9 @@ function cloneBootstrap(bootstrap: BootstrapResponse = demoBootstrap): Bootstrap
 function buildMonitoringEventsBootstrap(): BootstrapResponse {
   const bootstrap = cloneBootstrap();
   bootstrap.settings.monitoringEvents = {
-    partitionListedEnabled: true,
-    siteListedEnabled: false,
-    delistedEnabled: true,
+    partitionCatalogChangeEnabled: true,
+    regionPartitionChangeEnabled: false,
+    siteRegionChangeEnabled: true,
   };
   return bootstrap;
 }
@@ -235,31 +235,36 @@ export const MonitoringEventModes: Story = {
       canvasElement as HTMLElement,
       "目录拓扑复扫（Catalog topology refresh）",
     );
-    const partitionAction = getSettingsActionWrap(monitoringSection, "分区上新机");
-    const siteAction = getSettingsActionWrap(monitoringSection, "全站上新机");
-    const delistedAction = getSettingsActionWrap(monitoringSection, "下架监控");
+    const packageAction = getSettingsActionWrap(monitoringSection, "套餐变更");
+    const partitionAction = getSettingsActionWrap(monitoringSection, "可用区变更");
+    const regionAction = getSettingsActionWrap(monitoringSection, "国家变更");
 
-    expect(within(partitionAction).getByRole("button", { name: "启用" })).toBeVisible();
-    expect(within(siteAction).getByRole("button", { name: "关闭" })).toBeVisible();
-    expect(within(delistedAction).getByRole("button", { name: "启用" })).toBeVisible();
+    expect(within(packageAction).getByRole("button", { name: "启用" })).toBeVisible();
+    expect(within(partitionAction).getByRole("button", { name: "关闭" })).toBeVisible();
+    expect(within(regionAction).getByRole("button", { name: "启用" })).toBeVisible();
     expect(
       within(monitoringSection).getByText(
-        "启用后：仅通知已在 products 分组头部开启分区上新的分区；上架/重新上架会在首次有库存后触发。",
+        "启用后：仅通知已在 products 中开启“国家监控”的国家直属套餐，以及已开启“可用区监控”的可用区套餐，关注套餐新增与删除。",
       ),
     ).toBeVisible();
     expect(
       within(monitoringSection).getByText(
-        "启用后：任意分区上架 / 重新上架都会在首次有库存后通知，不受分区开关限制。",
+        "启用后：仅通知已在 products 中开启“国家监控”的国家，关注可用区新增与删除。",
       ),
     ).toBeVisible();
+    expect(
+      within(monitoringSection).getByText("启用后：全站范围关注国家新增与删除。"),
+    ).toBeVisible();
 
-    await userEvent.click(within(siteAction).getByRole("button", { name: "关闭" }));
+    await userEvent.click(within(partitionAction).getByRole("button", { name: "关闭" }));
 
-    const enabledSiteButton = await within(siteAction).findByRole("button", { name: "启用" });
-    expect(enabledSiteButton).toBeVisible();
-    await userEvent.click(enabledSiteButton);
-    expect(await within(siteAction).findByRole("button", { name: "关闭" })).toBeVisible();
-    expect(within(partitionAction).getByRole("button", { name: "启用" })).toBeVisible();
+    const enabledPartitionButton = await within(partitionAction).findByRole("button", {
+      name: "启用",
+    });
+    expect(enabledPartitionButton).toBeVisible();
+    await userEvent.click(enabledPartitionButton);
+    expect(await within(partitionAction).findByRole("button", { name: "关闭" })).toBeVisible();
+    expect(within(packageAction).getByRole("button", { name: "启用" })).toBeVisible();
   },
 };
 

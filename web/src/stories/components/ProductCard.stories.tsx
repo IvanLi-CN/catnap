@@ -143,8 +143,21 @@ export const CloudBadgeAreaOpensOrder: Story = {
     }) as typeof window.open;
 
     try {
-      expect(canvas.queryByRole("button", { name: "监控：禁用" })).toBeNull();
-      await userEvent.click(await canvas.findByRole("link", { name: "打开下单页（新标签页）" }));
+      const toggle = await canvas.findByRole("button", { name: "监控：禁用" });
+      expect(toggle).toBeDisabled();
+      expect(window.getComputedStyle(toggle).pointerEvents).toBe("none");
+
+      const rect = toggle.getBoundingClientRect();
+      const target = document.elementFromPoint(
+        rect.left + rect.width / 2,
+        rect.top + rect.height / 2,
+      ) as HTMLElement | null;
+      expect(target).toBeTruthy();
+      if (!target) {
+        throw new Error("disabled monitor area did not resolve to a clickable target");
+      }
+
+      await userEvent.click(target);
       expect(openCalls.length).toBe(1);
       expect(openCalls[0]).toContain("pid=117");
     } finally {

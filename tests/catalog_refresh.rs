@@ -170,7 +170,7 @@ async fn catalog_refresh_job_runs_and_persists_url_cache() {
 
     async fn wait_refresh_done(app: axum::Router) -> String {
         let mut state = "idle".to_string();
-        for _ in 0..80 {
+        for _ in 0..240 {
             let res = app
                 .clone()
                 .oneshot(
@@ -225,6 +225,7 @@ async fn catalog_refresh_job_runs_and_persists_url_cache() {
         .into_iter()
         .map(|r| r.get::<String, _>(0))
         .collect::<Vec<_>>();
+    assert!(keys.contains(&"2:0".to_string()));
     assert!(keys.contains(&"2:56".to_string()));
 
     // Fetched configs are marked as active.
@@ -282,7 +283,10 @@ async fn lifecycle_marks_delisted_and_relisted() {
         "7:40",
         "http://example.invalid/cart?fid=7&gid=40",
         only_first,
-        None,
+        catnap::db::CatalogUrlFetchHints {
+            region_notice: None,
+            empty_result_authoritative: false,
+        },
     )
     .await
     .unwrap();
@@ -317,7 +321,10 @@ async fn lifecycle_marks_delisted_and_relisted() {
         "7:40",
         "http://example.invalid/cart?fid=7&gid=40",
         both,
-        None,
+        catnap::db::CatalogUrlFetchHints {
+            region_notice: None,
+            empty_result_authoritative: false,
+        },
     )
     .await
     .unwrap();

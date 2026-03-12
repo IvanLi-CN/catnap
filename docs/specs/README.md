@@ -27,6 +27,7 @@
 | ID   | Title | Status | Spec | Last | Notes |
 |-----:|-------|--------|------|------|-------|
 | xm4p2 | 通知记录页与 Telegram 深链 | 已完成 | `xm4p2-notification-records-telegram-deeplink/SPEC.md` | 2026-03-11 | PR #66：通知记录持久化、独立页面、TG 深链、无限滚动与 review-loop 收口完成 |
+| 34tgn | 父级监控子级变更与拓扑告警 | 已完成 | `34tgn-parent-scope-monitoring-topology-alerts/SPEC.md` | 2026-03-11 | spec-sync：review 修复已并入；本地质量门与 Storybook 校验通过；PR #65 |
 | 32dfj | 分区级监控与双上新通知 | 已完成 | `32dfj-partition-monitoring-new-machine-alerts/SPEC.md` | 2026-03-10 | PR #63：checks 全绿；review-loop 无阻塞项 |
 | z7myy | CI/CD：补齐漏发版本并修复 squash merge 自动发版识别 | 部分完成（5/6） | `z7myy-release-intent-squash-fallback-backfill/SPEC.md` | 2026-03-09 | `v0.6.0` 已由 run `22850192479` 补发；PR #62 待 checks 通过并合并 |
 | fswrs | 上架通知改为“有库存再发” | 部分完成（3/4） | `fswrs-listed-stock-gate/SPEC.md` | 2026-03-11 | review-fix 已同步：fanout 派发前会回读最新 waiter/reason，上架待库存日志改为用户可读文案；待 PR/checks/review-loop 收口 |
