@@ -196,6 +196,30 @@
 - 2026-03-11: 完成三级监控链路、topology 新增/删除通知、products/settings 重构，并通过 cargo/bun/Storybook 本地质量门。
 - 2026-03-12: 明确 `regionId = null` 表示国家监控与国家直属套餐，不再渲染“默认可用区”，且 country-scope 接收国家直属套餐生命周期通知。
 
+## Visual Evidence (PR)
+
+- source_type: storybook_canvas
+  target_program: mock-only
+  capture_scope: browser-viewport
+  sensitive_exclusion: N/A
+  submission_gate: approved
+  story_id_or_title: Pages/SettingsViewPanel/MonitoringEventModes
+  state: monitoring-event-modes
+  evidence_note: 验证设置页已收口为套餐变更、可用区变更、国家变更三组监控开关与对应说明。
+  image:
+  ![设置界面（1440px）](./assets/settings-1440.png)
+
+- source_type: storybook_canvas
+  target_program: mock-only
+  capture_scope: browser-viewport
+  sensitive_exclusion: N/A
+  submission_gate: approved
+  story_id_or_title: Pages/ProductsView/PartitionMonitoringFocus
+  state: country-scope-with-direct-configs
+  evidence_note: 验证全部产品页按国家标题、国家直属套餐、可用区分组展示，并保留国家监控与可用区监控开关。
+  image:
+  ![全部产品界面（1440px）](./assets/products-1440.png)
+
 ## 参考（References）
 
 - `docs/specs/32dfj-partition-monitoring-new-machine-alerts/SPEC.md`
