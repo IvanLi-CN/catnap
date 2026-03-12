@@ -82,6 +82,12 @@ function buildTopologyOnlyBootstrap(): BootstrapResponse {
   return bootstrap;
 }
 
+function buildRegionFilterMonitorBootstrap(): BootstrapResponse {
+  const bootstrap = buildTopologyOnlyBootstrap();
+  bootstrap.monitoring.enabledPartitions = [{ countryId: "sg", regionId: null }];
+  return bootstrap;
+}
+
 async function findPanelSection(canvasElement: HTMLElement, title: string) {
   await within(canvasElement).findByTestId("page-products");
   const heading = Array.from(canvasElement.querySelectorAll(".panel-section .panel-title")).find(
@@ -292,6 +298,33 @@ export const TopologyOnlyScopes: Story = {
       "监控：关",
     );
     expect(within(singaporeSection).getByText("当前暂无可用区与套餐。")).toBeVisible();
+  },
+};
+
+export const RegionFilterHidesUnrelatedCountryMonitorScopes: Story = {
+  args: {
+    bootstrap: buildRegionFilterMonitorBootstrap(),
+  },
+  play: async ({ canvasElement }) => {
+    const [countrySelect, regionSelect] = within(canvasElement as HTMLElement).getAllByRole(
+      "combobox",
+    );
+
+    await userEvent.selectOptions(countrySelect, "all");
+    await userEvent.selectOptions(regionSelect, "nl-ams");
+
+    const netherlandsSection = await findPanelSection(canvasElement as HTMLElement, "荷兰");
+    const amsterdamBlock = await findProductRegionBlock(canvasElement as HTMLElement, "阿姆斯特丹");
+    expect(within(netherlandsSection).getByTestId("country-monitor-nl")).toBeVisible();
+    expect(within(amsterdamBlock).getByTestId("region-monitor-nl-ams")).toBeVisible();
+    expect(
+      within(canvasElement as HTMLElement).queryByTestId("country-monitor-sg"),
+    ).not.toBeInTheDocument();
+    expect(
+      Array.from(
+        (canvasElement as HTMLElement).querySelectorAll(".panel-section .panel-title"),
+      ).some((node) => node.textContent?.trim() === "新加坡"),
+    ).toBe(false);
   },
 };
 

@@ -527,6 +527,99 @@ async fn probe_catalog_topology_prefetches_country_root_configs_for_new_country(
 }
 
 #[tokio::test]
+async fn probe_catalog_topology_skips_country_root_configs_when_root_page_only_mirrors_region() {
+    let root_html = r#"
+<!doctype html>
+<div class="firstgroup_item" onclick="window.location.href='/cart?fid=2'">
+  <span class="yy-bth-text-a">CN</span>
+</div>
+"#;
+    let fid_html = r#"
+<!doctype html>
+<html lang="zh-CN">
+  <body>
+    <div class="firstgroup_box_group">
+      <div class="secondgroup_item pointer active" onclick="window.location.href='/cart?fid=2&gid=56'">
+        <a class="yy-bth-text-a">HKG Premium</a>
+        <a class="yy-bth-text-b">湾仔</a>
+      </div>
+    </div>
+    <div class="card cartitem shadow w-100">
+      <div class="card-body">
+        <h4>HKG-Premium Basic</h4>
+        <div class="card-text mb-4 mt-3">
+          <li>CPU：<b>2核</b></li>
+          <li>内存：<b>4G</b></li>
+        </div>
+      </div>
+      <div class="text-right">
+        ¥ <a class="cart-num DINCondensed-Bold">24.90</a> 元 / 月
+      </div>
+      <div class="card-footer">
+        <a href="/cart?action=configureproduct&pid=117">立即购买</a>
+      </div>
+    </div>
+  </body>
+</html>
+"#;
+    let gid_56_html = include_str!("fixtures/cart-fid-2-gid-56.html");
+
+    #[derive(serde::Deserialize)]
+    struct CartQuery {
+        fid: Option<String>,
+        gid: Option<String>,
+    }
+
+    let upstream = Router::new().route(
+        "/cart",
+        axum::routing::get(
+            move |axum::extract::Query(q): axum::extract::Query<CartQuery>| async move {
+                match (q.fid.as_deref(), q.gid.as_deref()) {
+                    (None, None) => root_html.to_string(),
+                    (Some("2"), None) => fid_html.to_string(),
+                    (Some("2"), Some("56")) => gid_56_html.to_string(),
+                    _ => "not found".to_string(),
+                }
+            },
+        ),
+    );
+    let base = spawn_stub_server(upstream).await;
+
+    let mut cfg = test_config();
+    cfg.upstream_cart_url = format!("{base}/cart");
+
+    let db = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&cfg.db_url)
+        .await
+        .unwrap();
+    catnap::db::init_db(&db).await.unwrap();
+
+    let state = build_state(cfg.clone(), db.clone()).await;
+    catnap::poller::probe_catalog_topology(&state, "test")
+        .await
+        .unwrap();
+
+    let targets = catnap::db::list_catalog_task_keys(&db).await.unwrap();
+    assert_eq!(
+        targets,
+        vec![
+            ("2".to_string(), None),
+            ("2".to_string(), Some("56".to_string())),
+        ]
+    );
+
+    let direct_count = sqlx::query(
+        "SELECT COUNT(*) FROM catalog_configs WHERE source_fid = '2' AND source_gid IS NULL",
+    )
+    .fetch_one(&db)
+    .await
+    .unwrap()
+    .get::<i64, _>(0);
+    assert_eq!(direct_count, 0);
+}
+
+#[tokio::test]
 async fn refresh_catalog_topology_preserves_regions_when_country_page_is_ambiguous() {
     let root_html = r#"
 <!doctype html>
@@ -576,6 +669,9 @@ async fn refresh_catalog_topology_preserves_regions_when_country_page_is_ambiguo
         location_name: Some("湾仔".to_string()),
     }];
     catnap::db::replace_catalog_topology(&db, &cfg.upstream_cart_url, &countries, &regions)
+        .await
+        .unwrap();
+    catnap::db::set_catalog_region_notice(&db, "2", None, Some("country root notice"))
         .await
         .unwrap();
 
@@ -645,6 +741,12 @@ WHERE user_id = ?
         .await
         .unwrap();
     assert_eq!(row.get::<i64, _>(0), 1);
+
+    let root_notice = sqlx::query("SELECT text FROM catalog_region_notices WHERE url_key = '2:0'")
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    assert_eq!(root_notice.get::<String, _>(0), "country root notice");
 
     let rows = sqlx::query("SELECT COUNT(*) FROM event_logs WHERE scope LIKE 'catalog.%'")
         .fetch_one(&db)

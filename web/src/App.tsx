@@ -2268,13 +2268,13 @@ export function ProductsView({
         });
 
         const hasVisibleTopologyScopes = visibleTopologyRegions.length > 0;
+        const countryScopeAllowedByRegionFilter =
+          regionFilter === "all" || matchesRegionFilter(null);
         const shouldIncludeCountry =
           byCountry.has(country.id) ||
-          countryMonitorEnabled ||
-          monitoredTopologyRegionIds.length > 0 ||
-          ((regionFilter === "all" || matchesRegionFilter(null)) &&
-            !q &&
-            topologyRegions.length === 0) ||
+          (countryScopeAllowedByRegionFilter && countryMonitorEnabled) ||
+          (countryScopeAllowedByRegionFilter && monitoredTopologyRegionIds.length > 0) ||
+          (countryScopeAllowedByRegionFilter && !q && topologyRegions.length === 0) ||
           hasVisibleTopologyScopes ||
           countryMatchesSearch;
 

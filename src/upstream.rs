@@ -92,6 +92,34 @@ impl CatalogSnapshot {
     }
 }
 
+fn config_dedupe_key(config: &ConfigBase) -> String {
+    if let Some(pid) = config
+        .source_pid
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        return format!("pid:{}", pid.trim());
+    }
+    format!("digest:{}", config.digest)
+}
+
+pub(crate) fn retain_country_direct_configs(
+    direct_configs: Vec<ConfigBase>,
+    region_configs: &[ConfigBase],
+) -> Vec<ConfigBase> {
+    if direct_configs.is_empty() || region_configs.is_empty() {
+        return direct_configs;
+    }
+    let region_keys = region_configs
+        .iter()
+        .map(config_dedupe_key)
+        .collect::<HashSet<_>>();
+    direct_configs
+        .into_iter()
+        .filter(|config| !region_keys.contains(&config_dedupe_key(config)))
+        .collect()
+}
+
 fn upstream_request_gate() -> &'static Mutex<()> {
     static GATE: OnceLock<Mutex<()>> = OnceLock::new();
     GATE.get_or_init(|| Mutex::new(()))
@@ -212,23 +240,23 @@ impl UpstreamClient {
                 // Some pages may not have a region selector.
                 configs.extend(direct_configs);
             } else {
-                if !direct_configs.is_empty() {
-                    configs.extend(direct_configs);
+                let mut region_configs = Vec::new();
+                for r in &fid_regions {
+                    let gid = &r.id;
+                    let gid_url = format!("{}?fid={fid}&gid={gid}", self.cart_url);
+                    let gid_html = self.fetch_html(&gid_url).await?;
+                    region_notice_initialized_keys.insert(catalog_region_key(fid, Some(gid)));
+                    if let Some(text) = parse_region_notice(&gid_html) {
+                        upsert_region_notice(&mut region_notices, fid, Some(gid), &text);
+                    }
+                    region_configs.extend(parse_configs(fid, Some(gid), &gid_html));
                 }
+                configs.extend(retain_country_direct_configs(
+                    direct_configs,
+                    &region_configs,
+                ));
+                configs.extend(region_configs);
                 regions.append(&mut fid_regions);
-            }
-
-            // If we did get regions, fetch each region's configs.
-            for r in regions.iter().filter(|r| &r.country_id == fid) {
-                let gid = &r.id;
-                let gid_url = format!("{}?fid={fid}&gid={gid}", self.cart_url);
-                let gid_html = self.fetch_html(&gid_url).await?;
-                region_notice_initialized_keys.insert(catalog_region_key(fid, Some(gid)));
-                if let Some(text) = parse_region_notice(&gid_html) {
-                    upsert_region_notice(&mut region_notices, fid, Some(gid), &text);
-                }
-                let parsed = parse_configs(fid, Some(gid), &gid_html);
-                configs.extend(parsed);
             }
         }
 
@@ -1145,6 +1173,82 @@ mod tests {
         assert!(!configs.is_empty());
         assert!(!configs[0].monitor_supported);
         assert_eq!(configs[0].inventory.quantity, 1);
+    }
+
+    #[test]
+    fn retain_country_direct_configs_drops_region_mirrors() {
+        let direct = vec![
+            ConfigBase {
+                id: "lc:2:0:117".to_string(),
+                country_id: "2".to_string(),
+                region_id: None,
+                name: "HKG-Premium Basic".to_string(),
+                specs: vec![],
+                price: Money {
+                    amount: 24.9,
+                    currency: "CNY".to_string(),
+                    period: "month".to_string(),
+                },
+                inventory: Inventory {
+                    status: "available".to_string(),
+                    quantity: 1,
+                    checked_at: "2026-03-12T00:00:00Z".to_string(),
+                },
+                digest: "digest-basic".to_string(),
+                monitor_supported: true,
+                source_pid: Some("117".to_string()),
+                source_fid: Some("2".to_string()),
+                source_gid: None,
+            },
+            ConfigBase {
+                id: "lc:2:0:256".to_string(),
+                country_id: "2".to_string(),
+                region_id: None,
+                name: "CN Direct Premium".to_string(),
+                specs: vec![],
+                price: Money {
+                    amount: 66.0,
+                    currency: "CNY".to_string(),
+                    period: "month".to_string(),
+                },
+                inventory: Inventory {
+                    status: "available".to_string(),
+                    quantity: 3,
+                    checked_at: "2026-03-12T00:00:00Z".to_string(),
+                },
+                digest: "digest-direct".to_string(),
+                monitor_supported: true,
+                source_pid: Some("256".to_string()),
+                source_fid: Some("2".to_string()),
+                source_gid: None,
+            },
+        ];
+        let region = vec![ConfigBase {
+            id: "lc:2:56:117".to_string(),
+            country_id: "2".to_string(),
+            region_id: Some("56".to_string()),
+            name: "HKG-Premium Basic".to_string(),
+            specs: vec![],
+            price: Money {
+                amount: 24.9,
+                currency: "CNY".to_string(),
+                period: "month".to_string(),
+            },
+            inventory: Inventory {
+                status: "available".to_string(),
+                quantity: 1,
+                checked_at: "2026-03-12T00:00:00Z".to_string(),
+            },
+            digest: "digest-basic".to_string(),
+            monitor_supported: true,
+            source_pid: Some("117".to_string()),
+            source_fid: Some("2".to_string()),
+            source_gid: Some("56".to_string()),
+        }];
+
+        let retained = retain_country_direct_configs(direct, &region);
+        assert_eq!(retained.len(), 1);
+        assert_eq!(retained[0].source_pid.as_deref(), Some("256"));
     }
 
     #[test]

@@ -2,8 +2,8 @@ use crate::defaults::{
     FIXED_CATALOG_TOPOLOGY_PROBE_INTERVAL_MINUTES, FIXED_CATALOG_TOPOLOGY_REFRESH_INTERVAL_HOURS,
 };
 use crate::upstream::{
-    catalog_region_key, parse_configs, parse_region_notice, parse_regions, CatalogSnapshot,
-    UpstreamClient,
+    catalog_region_key, parse_configs, parse_region_notice, parse_regions,
+    retain_country_direct_configs, CatalogSnapshot, UpstreamClient,
 };
 use crate::{app::AppState, db};
 use crate::{models::Money, notification_content};
@@ -323,30 +323,121 @@ async fn prefetch_added_target_catalogs(
     added_regions: &[crate::ops::RegionTopologyChange],
 ) -> HashSet<String> {
     let mut failed_target_keys = HashSet::new();
-    for (fid, gid) in build_added_topology_targets(added_countries, added_regions) {
-        let url = if let Some(gid) = gid.as_deref() {
-            format!("{}?fid={fid}&gid={gid}", state.config.upstream_cart_url)
-        } else {
-            format!("{}?fid={fid}", state.config.upstream_cart_url)
+    let added_country_ids = added_countries
+        .iter()
+        .map(|country| country.id.clone())
+        .collect::<HashSet<_>>();
+
+    for country in added_countries {
+        let fid = country.id.clone();
+        let root_url = format!("{}?fid={fid}", state.config.upstream_cart_url);
+        let root_key = catalog_region_key(&fid, None);
+
+        let root_html = match upstream.fetch_html_raw(&root_url).await {
+            Ok(html) => Some(html),
+            Err(err) => {
+                warn!(error = %err, fid, gid = ?Option::<String>::None, "prefetch added target catalog failed");
+                failed_target_keys.insert(root_key.clone());
+                None
+            }
         };
-        let url_key = catalog_region_key(&fid, gid.as_deref());
+
+        let mut region_configs = Vec::new();
+        let mut all_region_fetches_succeeded = true;
+        for region in added_regions
+            .iter()
+            .filter(|region| region.country_id == fid)
+        {
+            let gid = region.region_id.clone();
+            let region_url = format!("{}?fid={fid}&gid={gid}", state.config.upstream_cart_url);
+            let region_key = catalog_region_key(&fid, Some(gid.as_str()));
+
+            let fetch = async {
+                let html = upstream.fetch_html_raw(&region_url).await?;
+                let configs = parse_configs(&fid, Some(gid.as_str()), &html);
+                let region_notice = parse_region_notice(&html);
+                let apply_result = db::apply_catalog_url_fetch_success(
+                    &state.db,
+                    &fid,
+                    Some(gid.as_str()),
+                    &region_key,
+                    &region_url,
+                    configs.clone(),
+                    db::CatalogUrlFetchHints {
+                        region_notice: region_notice.as_deref(),
+                        empty_result_authoritative: false,
+                    },
+                )
+                .await;
+                apply_result.map(|_| configs)
+            }
+            .await;
+
+            match fetch {
+                Ok(configs) => region_configs.extend(configs),
+                Err(err) => {
+                    warn!(error = %err, fid, gid = ?Some(gid.clone()), "prefetch added target catalog failed");
+                    failed_target_keys.insert(region_key);
+                    all_region_fetches_succeeded = false;
+                }
+            }
+        }
+
+        let Some(root_html) = root_html else {
+            continue;
+        };
+        let root_regions = parse_regions(&fid, &root_html);
+        let direct_configs = parse_configs(&fid, None, &root_html);
+        let root_configs = if root_regions.is_empty() {
+            direct_configs
+        } else if all_region_fetches_succeeded {
+            retain_country_direct_configs(direct_configs, &region_configs)
+        } else {
+            Vec::new()
+        };
+        let region_notice = parse_region_notice(&root_html);
+        if let Err(err) = db::apply_catalog_url_fetch_success(
+            &state.db,
+            &fid,
+            None,
+            &root_key,
+            &root_url,
+            root_configs,
+            db::CatalogUrlFetchHints {
+                region_notice: region_notice.as_deref(),
+                empty_result_authoritative: !root_regions.is_empty(),
+            },
+        )
+        .await
+        {
+            warn!(error = %err, fid, gid = ?Option::<String>::None, "prefetch added target catalog failed");
+            failed_target_keys.insert(root_key);
+        }
+    }
+
+    for (fid, gid) in build_added_topology_targets(added_countries, added_regions) {
+        if gid.is_none() || added_country_ids.contains(&fid) {
+            continue;
+        }
+
+        let gid = gid.expect("guarded by continue");
+        let url = format!("{}?fid={fid}&gid={gid}", state.config.upstream_cart_url);
+        let url_key = catalog_region_key(&fid, Some(gid.as_str()));
 
         let fetch = async {
             let html = upstream.fetch_html_raw(&url).await?;
-            let configs = parse_configs(&fid, gid.as_deref(), &html);
+            let configs = parse_configs(&fid, Some(gid.as_str()), &html);
             let region_notice = parse_region_notice(&html);
-            let empty_result_authoritative =
-                gid.is_none() && !parse_regions(&fid, &html).is_empty();
             db::apply_catalog_url_fetch_success(
                 &state.db,
                 &fid,
-                gid.as_deref(),
+                Some(gid.as_str()),
                 &url_key,
                 &url,
                 configs,
                 db::CatalogUrlFetchHints {
                     region_notice: region_notice.as_deref(),
-                    empty_result_authoritative,
+                    empty_result_authoritative: false,
                 },
             )
             .await
@@ -354,7 +445,7 @@ async fn prefetch_added_target_catalogs(
         .await;
 
         if let Err(err) = fetch {
-            warn!(error = %err, fid, gid = ?gid, "prefetch added target catalog failed");
+            warn!(error = %err, fid, gid = ?Some(gid.clone()), "prefetch added target catalog failed");
             failed_target_keys.insert(url_key);
         }
     }
@@ -738,7 +829,7 @@ fn preserve_ambiguous_country_regions(
             .filter(|region| region.country_id == *country_id)
             .map(|region| region.id.clone())
             .collect::<HashSet<_>>();
-        let mut preserved_url_keys = HashSet::new();
+        let mut preserved_url_keys = HashSet::from([catalog_region_key(country_id.as_str(), None)]);
 
         for region in previous_regions {
             let url_key = catalog_region_key(&region.country_id, Some(region.id.as_str()));
