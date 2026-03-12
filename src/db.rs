@@ -810,10 +810,20 @@ async fn add_column_if_missing(
 }
 
 fn now_rfc3339() -> String {
-    format_canonical_rfc3339(OffsetDateTime::now_utc())
+    format_rfc3339(OffsetDateTime::now_utc())
 }
 
-fn format_canonical_rfc3339(ts: OffsetDateTime) -> String {
+fn notification_record_now_rfc3339() -> String {
+    format_notification_record_rfc3339(OffsetDateTime::now_utc())
+}
+
+fn format_rfc3339(ts: OffsetDateTime) -> String {
+    ts.to_offset(UtcOffset::UTC)
+        .format(&Rfc3339)
+        .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string())
+}
+
+fn format_notification_record_rfc3339(ts: OffsetDateTime) -> String {
     ts.to_offset(UtcOffset::UTC)
         .format(CANONICAL_RFC3339)
         .unwrap_or_else(|_| {
@@ -2335,7 +2345,7 @@ pub async fn insert_notification_record(
     draft: &NotificationRecordDraft,
 ) -> anyhow::Result<String> {
     let id = Uuid::new_v4().to_string();
-    let created_at = now_rfc3339();
+    let created_at = notification_record_now_rfc3339();
     let mut tx = db.begin().await?;
 
     sqlx::query(
@@ -2449,7 +2459,7 @@ pub async fn list_notification_records(
             let id = parts.next()?.trim().to_string();
             let ts = parts.next()?.trim();
             let parsed = OffsetDateTime::parse(ts, &Rfc3339).ok()?;
-            Some((format_canonical_rfc3339(parsed), id))
+            Some((format_notification_record_rfc3339(parsed), id))
         })
         .unwrap_or((
             NOTIFICATION_RECORD_CURSOR_MAX_TS.to_string(),
@@ -2541,7 +2551,7 @@ pub async fn cleanup_notification_records(
     if retention_days > 0 {
         let cutoff = OffsetDateTime::now_utc().saturating_sub(time::Duration::days(retention_days));
         sqlx::query("DELETE FROM notification_records WHERE created_at < ?")
-            .bind(format_canonical_rfc3339(cutoff))
+            .bind(format_notification_record_rfc3339(cutoff))
             .execute(&mut *tx)
             .await?;
     }
@@ -2727,5 +2737,20 @@ mod tests {
         let ts = "2026-01-21T12:34:56Z";
         let floored = floor_rfc3339_to_minute_utc(ts).unwrap();
         assert_eq!(floored, "2026-01-21T12:34:00Z");
+    }
+
+    #[test]
+    fn notification_record_timestamps_use_fixed_width_utc() {
+        let ts = OffsetDateTime::from_unix_timestamp_nanos(1_763_223_500_812_610_000).unwrap();
+        assert_eq!(
+            format_notification_record_rfc3339(ts),
+            "2025-11-15T16:18:20.812610000Z"
+        );
+    }
+
+    #[test]
+    fn shared_timestamps_keep_legacy_rfc3339_format() {
+        let ts = OffsetDateTime::from_unix_timestamp_nanos(1_763_223_500_812_610_000).unwrap();
+        assert_eq!(format_rfc3339(ts), "2025-11-15T16:18:20.81261Z");
     }
 }

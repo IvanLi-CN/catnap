@@ -551,9 +551,8 @@ function mergeNotificationRecordLists(
   for (const item of current) byId.set(item.id, item);
   for (const item of incoming) byId.set(item.id, item);
   return Array.from(byId.values()).sort((a, b) => {
-    const ta = Date.parse(a.createdAt);
-    const tb = Date.parse(b.createdAt);
-    if (Number.isFinite(tb - ta) && tb !== ta) return tb - ta;
+    const order = b.createdAt.localeCompare(a.createdAt);
+    if (order !== 0) return order;
     return b.id.localeCompare(a.id);
   });
 }
