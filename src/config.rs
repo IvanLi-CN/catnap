@@ -32,6 +32,8 @@ pub struct RuntimeConfig {
 
     pub log_retention_days: i64,
     pub log_retention_max_rows: i64,
+    pub notification_retention_days: i64,
+    pub notification_retention_max_rows: i64,
 
     // Ops / observability
     pub ops_worker_concurrency: usize,
@@ -134,6 +136,18 @@ impl RuntimeConfig {
             .filter(|v| *v >= 0)
             .unwrap_or(10_000);
 
+        let notification_retention_days = env::var("CATNAP_NOTIFICATION_RETENTION_DAYS")
+            .ok()
+            .and_then(|v| v.trim().parse::<i64>().ok())
+            .filter(|v| *v >= 0)
+            .unwrap_or(30);
+
+        let notification_retention_max_rows = env::var("CATNAP_NOTIFICATION_RETENTION_MAX_ROWS")
+            .ok()
+            .and_then(|v| v.trim().parse::<i64>().ok())
+            .filter(|v| *v >= 0)
+            .unwrap_or(50_000);
+
         let ops_worker_concurrency = env::var("CATNAP_OPS_WORKER_CONCURRENCY")
             .ok()
             .and_then(|v| v.trim().parse::<i64>().ok())
@@ -182,6 +196,8 @@ impl RuntimeConfig {
             default_poll_jitter_pct,
             log_retention_days,
             log_retention_max_rows,
+            notification_retention_days,
+            notification_retention_max_rows,
             ops_worker_concurrency,
             ops_sse_replay_window_seconds,
             ops_log_retention_days,

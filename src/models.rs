@@ -428,6 +428,56 @@ pub struct LogsResponse {
     pub next_cursor: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotificationRecordItemView {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config_id: Option<String>,
+    pub country_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub region_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub partition_label: Option<String>,
+    pub name: String,
+    pub specs: Vec<Spec>,
+    pub price: Money,
+    pub inventory: Inventory,
+    pub lifecycle: ConfigLifecycleView,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotificationRecordView {
+    pub id: String,
+    pub created_at: String,
+    pub kind: String,
+    pub title: String,
+    pub summary: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub partition_label: Option<String>,
+    pub telegram_status: String,
+    pub web_push_status: String,
+    pub items: Vec<NotificationRecordItemView>,
+}
+
+#[derive(Debug, Clone)]
+pub struct NotificationRecordDraft {
+    pub kind: String,
+    pub title: String,
+    pub summary: String,
+    pub partition_label: Option<String>,
+    pub telegram_status: String,
+    pub web_push_status: String,
+    pub items: Vec<NotificationRecordItemView>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotificationRecordsResponse {
+    pub items: Vec<NotificationRecordView>,
+    pub next_cursor: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WebPushSubscribeRequest {

@@ -3,11 +3,12 @@ import { expect, userEvent, waitFor, within } from "storybook/test";
 import { AppShell } from "../../ui/layout/AppShell";
 import { RESPONSIVE_BREAKPOINTS, type ResponsiveBreakpoint } from "../breakpoints";
 
-type RouteKey = "monitoring" | "products" | "settings" | "logs" | "ops";
+type RouteKey = "monitoring" | "products" | "notifications" | "settings" | "logs" | "ops";
 
 const ROUTE_LABELS: Array<{ key: RouteKey; label: string }> = [
   { key: "monitoring", label: "库存监控" },
   { key: "products", label: "全部产品" },
+  { key: "notifications", label: "通知记录" },
   { key: "settings", label: "系统设置" },
   { key: "logs", label: "日志" },
   { key: "ops", label: "采集观测台" },

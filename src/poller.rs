@@ -397,6 +397,12 @@ async fn run(state: AppState) -> anyhow::Result<()> {
                 state.config.log_retention_max_rows,
             )
             .await;
+            let _ = db::cleanup_notification_records(
+                &state.db,
+                state.config.notification_retention_days,
+                state.config.notification_retention_max_rows,
+            )
+            .await;
             let _ = db::cleanup_ops(&state.db, state.config.ops_log_retention_days).await;
             let _ =
                 db::cleanup_inventory_samples_1m(&state.db, INVENTORY_HISTORY_RETENTION_DAYS).await;
@@ -712,6 +718,50 @@ async fn poll_once(
                 );
                 db::insert_log(&state.db, Some(user_id), "info", "poll", &msg, None).await?;
 
+                let item = db::load_notification_record_item_snapshot(&state.db, &id)
+                    .await?
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("missing notification snapshot for config {id}")
+                    })?;
+                let partition_label = item.region_name.as_ref().map_or_else(
+                    || Some(item.country_name.clone()),
+                    |region_name| Some(format!("{} / {}", item.country_name, region_name)),
+                );
+                let record_id = db::insert_notification_record(
+                    &state.db,
+                    user_id,
+                    &crate::models::NotificationRecordDraft {
+                        kind: format!("monitoring.{}", events.join("+")),
+                        title: notification
+                            .as_ref()
+                            .expect("notification exists when events exist")
+                            .title
+                            .clone(),
+                        summary: notification
+                            .as_ref()
+                            .expect("notification exists when events exist")
+                            .summary
+                            .clone(),
+                        partition_label,
+                        telegram_status: if settings.telegram_enabled {
+                            "pending".to_string()
+                        } else {
+                            "skipped".to_string()
+                        },
+                        web_push_status: "skipped".to_string(),
+                        items: vec![item],
+                    },
+                )
+                .await?;
+                let telegram_text = notification_content::append_notification_record_link(
+                    &notification
+                        .as_ref()
+                        .expect("notification exists when events exist")
+                        .telegram_text,
+                    settings.site_base_url.as_deref(),
+                    &record_id,
+                );
+
                 if settings.telegram_enabled {
                     match (
                         settings.telegram_bot_token.as_deref(),
@@ -722,14 +772,15 @@ async fn poll_once(
                                 &state.config.telegram_api_base_url,
                                 token,
                                 target,
-                                &notification
-                                    .as_ref()
-                                    .expect("notification exists when events exist")
-                                    .telegram_text,
+                                &telegram_text,
                             )
                             .await
                             {
                                 Ok(_) => {
+                                    db::update_notification_record_channel_status(
+                                        &state.db, &record_id, "telegram", "success",
+                                    )
+                                    .await?;
                                     let _ = state
                                         .ops
                                         .record_notify(run.run_id, "telegram", "success", None)
@@ -738,6 +789,10 @@ async fn poll_once(
                                 Err(err) => {
                                     warn!(user_id, error = %err, "telegram send failed");
                                     let err_msg = err.to_string();
+                                    db::update_notification_record_channel_status(
+                                        &state.db, &record_id, "telegram", "error",
+                                    )
+                                    .await?;
                                     let _ = state
                                         .ops
                                         .record_notify(
@@ -760,6 +815,10 @@ async fn poll_once(
                             }
                         }
                         _ => {
+                            db::update_notification_record_channel_status(
+                                &state.db, &record_id, "telegram", "skipped",
+                            )
+                            .await?;
                             let _ = state
                                 .ops
                                 .record_notify(
@@ -784,6 +843,7 @@ async fn poll_once(
                             "userId": user_id,
                             "configId": id,
                             "events": events,
+                            "notificationRecordId": record_id,
                         })),
                     )
                     .await;

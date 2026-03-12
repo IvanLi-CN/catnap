@@ -1,5 +1,5 @@
 use crate::config::RuntimeConfig;
-use crate::models::Money;
+use crate::models::{Money, NotificationRecordItemView};
 use crate::notification_content::{self, LifecycleNotificationKind};
 use crate::notifications;
 use crate::upstream::{CatalogSnapshot, UpstreamClient};
@@ -1499,40 +1499,8 @@ WHERE monitoring_events_delisted_enabled = 1
         async fn load_configs(
             db: &SqlitePool,
             ids: &[String],
-        ) -> anyhow::Result<Vec<(String, String, Money, i64)>> {
-            if ids.is_empty() {
-                return Ok(Vec::new());
-            }
-            let placeholders = std::iter::repeat_n("?", ids.len())
-                .collect::<Vec<_>>()
-                .join(",");
-            let sql = format!(
-                r#"
-SELECT id, name, price_amount, price_currency, price_period, inventory_quantity
-FROM catalog_configs
-WHERE id IN ({placeholders})
-"#
-            );
-            let mut q = sqlx::query(&sql);
-            for id in ids {
-                q = q.bind(id);
-            }
-            let rows = q.fetch_all(db).await?;
-            Ok(rows
-                .into_iter()
-                .map(|r| {
-                    (
-                        r.get::<String, _>(0),
-                        r.get::<String, _>(1),
-                        Money {
-                            amount: r.get::<f64, _>(2),
-                            currency: r.get::<String, _>(3),
-                            period: r.get::<String, _>(4),
-                        },
-                        r.get::<i64, _>(5),
-                    )
-                })
-                .collect())
+        ) -> anyhow::Result<Vec<crate::models::NotificationRecordItemView>> {
+            crate::db::load_notification_record_item_snapshots(db, ids).await
         }
 
         async fn load_partition_label(
@@ -1655,33 +1623,68 @@ WHERE m.config_id IN ({placeholders})
             }
         }
 
+        struct LifecycleDeliveryPayload<'a> {
+            scope: &'a str,
+            msg: &'a str,
+            meta: serde_json::Value,
+            record_kind: &'a str,
+            notification: &'a notification_content::OutboundNotification,
+            items: &'a [crate::models::NotificationRecordItemView],
+        }
+
         async fn deliver_lifecycle_notification(
             manager: &OpsManager,
             run_id: i64,
             target: &LifecycleDeliveryTarget,
-            scope: &str,
-            msg: &str,
-            meta: serde_json::Value,
-            notification: &notification_content::OutboundNotification,
+            payload: LifecycleDeliveryPayload<'_>,
         ) -> anyhow::Result<()> {
+            let record_id = crate::db::insert_notification_record(
+                &manager.inner.db,
+                &target.user_id,
+                &crate::models::NotificationRecordDraft {
+                    kind: payload.record_kind.to_string(),
+                    title: payload.notification.title.clone(),
+                    summary: payload.notification.summary.clone(),
+                    partition_label: payload.notification.partition_label.clone(),
+                    telegram_status: if target.tg_enabled {
+                        "pending".to_string()
+                    } else {
+                        "skipped".to_string()
+                    },
+                    web_push_status: if target.wp_enabled {
+                        "pending".to_string()
+                    } else {
+                        "skipped".to_string()
+                    },
+                    items: payload.items.to_vec(),
+                },
+            )
+            .await?;
+            let telegram_text = notification_content::append_notification_record_link(
+                &payload.notification.telegram_text,
+                target.site_base_url.as_deref(),
+                &record_id,
+            );
+
             let _ = crate::db::insert_log(
                 &manager.inner.db,
                 Some(&target.user_id),
                 "info",
-                scope,
-                msg,
-                Some(meta.clone()),
+                payload.scope,
+                payload.msg,
+                Some(payload.meta.clone()),
             )
             .await;
             let _ = manager
                 .log(
                     "info",
-                    scope,
-                    msg,
+                    payload.scope,
+                    payload.msg,
                     Some(serde_json::json!({
                         "runId": run_id,
                         "userId": target.user_id,
-                        "meta": meta,
+                        "meta": payload.meta,
+                        "notificationRecordId": record_id,
                     })),
                 )
                 .await;
@@ -1692,17 +1695,31 @@ WHERE m.config_id IN ({placeholders})
                         &manager.inner.cfg.telegram_api_base_url,
                         token,
                         target_chat,
-                        &notification.telegram_text,
+                        &telegram_text,
                     )
                     .await
                     {
                         Ok(_) => {
+                            crate::db::update_notification_record_channel_status(
+                                &manager.inner.db,
+                                &record_id,
+                                "telegram",
+                                "success",
+                            )
+                            .await?;
                             let _ = manager
                                 .record_notify(run_id, "telegram", "success", None)
                                 .await;
                         }
                         Err(err) => {
                             let err_msg = err.to_string();
+                            crate::db::update_notification_record_channel_status(
+                                &manager.inner.db,
+                                &record_id,
+                                "telegram",
+                                "error",
+                            )
+                            .await?;
                             let _ = manager
                                 .record_notify(run_id, "telegram", "error", Some(&err_msg))
                                 .await;
@@ -1718,6 +1735,13 @@ WHERE m.config_id IN ({placeholders})
                         }
                     },
                     _ => {
+                        crate::db::update_notification_record_channel_status(
+                            &manager.inner.db,
+                            &record_id,
+                            "telegram",
+                            "skipped",
+                        )
+                        .await?;
                         let _ = manager
                             .record_notify(
                                 run_id,
@@ -1740,25 +1764,46 @@ WHERE m.config_id IN ({placeholders})
                     Ok(Some(sub)) => match notifications::send_web_push(
                         &manager.inner.cfg,
                         &sub,
-                        &notification.web_push_title,
-                        &notification.web_push_body,
-                        &notification.web_push_url,
+                        &payload.notification.web_push_title,
+                        &payload.notification.web_push_body,
+                        &payload.notification.web_push_url,
                     )
                     .await
                     {
                         Ok(_) => {
+                            crate::db::update_notification_record_channel_status(
+                                &manager.inner.db,
+                                &record_id,
+                                "webPush",
+                                "success",
+                            )
+                            .await?;
                             let _ = manager
                                 .record_notify(run_id, "webPush", "success", None)
                                 .await;
                         }
                         Err(err) => {
                             let err_msg = err.to_string();
+                            crate::db::update_notification_record_channel_status(
+                                &manager.inner.db,
+                                &record_id,
+                                "webPush",
+                                "error",
+                            )
+                            .await?;
                             let _ = manager
                                 .record_notify(run_id, "webPush", "error", Some(&err_msg))
                                 .await;
                         }
                     },
                     Ok(None) => {
+                        crate::db::update_notification_record_channel_status(
+                            &manager.inner.db,
+                            &record_id,
+                            "webPush",
+                            "skipped",
+                        )
+                        .await?;
                         let _ = manager
                             .record_notify(
                                 run_id,
@@ -1770,6 +1815,13 @@ WHERE m.config_id IN ({placeholders})
                     }
                     Err(err) => {
                         let err_msg = err.to_string();
+                        crate::db::update_notification_record_channel_status(
+                            &manager.inner.db,
+                            &record_id,
+                            "webPush",
+                            "error",
+                        )
+                        .await?;
                         let _ = manager
                             .record_notify(run_id, "webPush", "error", Some(&err_msg))
                             .await;
@@ -1781,7 +1833,7 @@ WHERE m.config_id IN ({placeholders})
         }
 
         struct MonitoredFallbackContext<'a> {
-            listed: &'a [(String, String, Money, i64)],
+            listed: &'a [NotificationRecordItemView],
             key: &'a TaskKey,
             poller_waiter_user_ids: &'a HashSet<String>,
             listed_id_set: &'a HashSet<String>,
@@ -1794,7 +1846,10 @@ WHERE m.config_id IN ({placeholders})
             monitored_ids: &HashSet<String>,
             ctx: &MonitoredFallbackContext<'_>,
         ) -> anyhow::Result<()> {
-            for (id, name, price, qty) in ctx.listed.iter() {
+            for item in ctx.listed.iter() {
+                let Some(id) = item.config_id.as_deref() else {
+                    continue;
+                };
                 if !monitored_ids.contains(id) {
                     continue;
                 }
@@ -1806,6 +1861,9 @@ WHERE m.config_id IN ({placeholders})
                 if !allow_for_target {
                     continue;
                 }
+                let name = &item.name;
+                let price = &item.price;
+                let qty = item.inventory.quantity;
                 let notification = notification_content::build_monitoring_change_notification(
                     name,
                     &notification_content::MonitoringSnapshot {
@@ -1814,7 +1872,7 @@ WHERE m.config_id IN ({placeholders})
                         digest: "lifecycle-listed-pending",
                     },
                     &notification_content::MonitoringSnapshot {
-                        inventory_quantity: *qty,
+                        inventory_quantity: qty,
                         price,
                         digest: "lifecycle-listed-pending",
                     },
@@ -1839,6 +1897,7 @@ WHERE m.config_id IN ({placeholders})
                         "lifecycleFallback": true,
                     }),
                     &notification,
+                    std::slice::from_ref(item),
                 )
                 .await?;
             }
@@ -1853,7 +1912,52 @@ WHERE m.config_id IN ({placeholders})
             msg: &str,
             meta: serde_json::Value,
             notification: &notification_content::MonitoringChangeNotification,
+            items: &[crate::models::NotificationRecordItemView],
         ) -> anyhow::Result<()> {
+            let partition_label = items.first().and_then(|item| {
+                item.partition_label.clone().or_else(|| {
+                    item.region_name
+                        .as_ref()
+                        .map(|region_name| format!("{} / {}", item.country_name, region_name))
+                        .or_else(|| Some(item.country_name.clone()))
+                })
+            });
+            let record_id = crate::db::insert_notification_record(
+                &manager.inner.db,
+                &target.user_id,
+                &crate::models::NotificationRecordDraft {
+                    kind: format!(
+                        "monitoring.{}",
+                        notification
+                            .events
+                            .iter()
+                            .map(|event| event.as_str())
+                            .collect::<Vec<_>>()
+                            .join("+")
+                    ),
+                    title: notification.title.clone(),
+                    summary: notification.summary.clone(),
+                    partition_label,
+                    telegram_status: if target.tg_enabled {
+                        "pending".to_string()
+                    } else {
+                        "skipped".to_string()
+                    },
+                    web_push_status: if target.wp_enabled {
+                        "pending".to_string()
+                    } else {
+                        "skipped".to_string()
+                    },
+                    items: items.to_vec(),
+                },
+            )
+            .await?;
+            let telegram_text = notification_content::append_notification_record_link(
+                &notification.telegram_text,
+                target.site_base_url.as_deref(),
+                &record_id,
+            );
+
             let _ = crate::db::insert_log(
                 &manager.inner.db,
                 Some(&target.user_id),
@@ -1872,6 +1976,7 @@ WHERE m.config_id IN ({placeholders})
                         "runId": run_id,
                         "userId": target.user_id,
                         "meta": meta,
+                        "notificationRecordId": record_id,
                     })),
                 )
                 .await;
@@ -1882,17 +1987,31 @@ WHERE m.config_id IN ({placeholders})
                         &manager.inner.cfg.telegram_api_base_url,
                         token,
                         target_chat,
-                        &notification.telegram_text,
+                        &telegram_text,
                     )
                     .await
                     {
                         Ok(_) => {
+                            crate::db::update_notification_record_channel_status(
+                                &manager.inner.db,
+                                &record_id,
+                                "telegram",
+                                "success",
+                            )
+                            .await?;
                             let _ = manager
                                 .record_notify(run_id, "telegram", "success", None)
                                 .await;
                         }
                         Err(err) => {
                             let err_msg = err.to_string();
+                            crate::db::update_notification_record_channel_status(
+                                &manager.inner.db,
+                                &record_id,
+                                "telegram",
+                                "error",
+                            )
+                            .await?;
                             let _ = manager
                                 .record_notify(run_id, "telegram", "error", Some(&err_msg))
                                 .await;
@@ -1908,6 +2027,13 @@ WHERE m.config_id IN ({placeholders})
                         }
                     },
                     _ => {
+                        crate::db::update_notification_record_channel_status(
+                            &manager.inner.db,
+                            &record_id,
+                            "telegram",
+                            "skipped",
+                        )
+                        .await?;
                         let _ = manager
                             .record_notify(
                                 run_id,
@@ -1937,18 +2063,39 @@ WHERE m.config_id IN ({placeholders})
                     .await
                     {
                         Ok(_) => {
+                            crate::db::update_notification_record_channel_status(
+                                &manager.inner.db,
+                                &record_id,
+                                "webPush",
+                                "success",
+                            )
+                            .await?;
                             let _ = manager
                                 .record_notify(run_id, "webPush", "success", None)
                                 .await;
                         }
                         Err(err) => {
                             let err_msg = err.to_string();
+                            crate::db::update_notification_record_channel_status(
+                                &manager.inner.db,
+                                &record_id,
+                                "webPush",
+                                "error",
+                            )
+                            .await?;
                             let _ = manager
                                 .record_notify(run_id, "webPush", "error", Some(&err_msg))
                                 .await;
                         }
                     },
                     Ok(None) => {
+                        crate::db::update_notification_record_channel_status(
+                            &manager.inner.db,
+                            &record_id,
+                            "webPush",
+                            "skipped",
+                        )
+                        .await?;
                         let _ = manager
                             .record_notify(
                                 run_id,
@@ -1960,6 +2107,13 @@ WHERE m.config_id IN ({placeholders})
                     }
                     Err(err) => {
                         let err_msg = err.to_string();
+                        crate::db::update_notification_record_channel_status(
+                            &manager.inner.db,
+                            &record_id,
+                            "webPush",
+                            "error",
+                        )
+                        .await?;
                         let _ = manager
                             .record_notify(run_id, "webPush", "error", Some(&err_msg))
                             .await;
@@ -1984,8 +2138,15 @@ WHERE m.config_id IN ({placeholders})
             listed_id_set: &listed_id_set,
         };
 
-        for (id, name, price, qty) in listed_pending.iter() {
-            let msg = format_pending_stock_message(name, id, *qty, price, None);
+        for item in listed_pending.iter() {
+            let id = item.config_id.as_deref().unwrap_or("");
+            let msg = format_pending_stock_message(
+                &item.name,
+                id,
+                item.inventory.quantity,
+                &item.price,
+                None,
+            );
             let _ = self
                 .log(
                     "info",
@@ -2017,12 +2178,13 @@ WHERE m.config_id IN ({placeholders})
             partition_target_user_ids.insert(target.user_id.clone());
             listed_target_user_ids.insert(target.user_id.clone());
 
-            for (id, name, price, qty) in listed_pending.iter() {
+            for item in listed_pending.iter() {
+                let id = item.config_id.as_deref().unwrap_or("");
                 let msg = format_pending_stock_message(
-                    name,
+                    &item.name,
                     id,
-                    *qty,
-                    price,
+                    item.inventory.quantity,
+                    &item.price,
                     target.site_base_url.as_deref(),
                 );
                 let _ = crate::db::insert_log(
@@ -2056,11 +2218,13 @@ WHERE m.config_id IN ({placeholders})
             )
             .await?;
 
-            for (id, name, price, qty) in listed.iter() {
+            for item in listed.iter() {
+                let id = item.config_id.as_deref().unwrap_or("");
                 if monitored_ids.contains(id) {
                     continue;
                 }
-
+                let name = &item.name;
+                let qty = item.inventory.quantity;
                 let url = target
                     .site_base_url
                     .as_deref()
@@ -2068,28 +2232,32 @@ WHERE m.config_id IN ({placeholders})
                     .trim_end_matches('/');
                 let msg = format!(
                     "[partition_listed] {name} ({id}) qty={qty} price={} {url}/monitoring",
-                    price.amount
+                    item.price.amount
                 );
                 let notification = notification_content::build_lifecycle_notification(
                     LifecycleNotificationKind::PartitionListed,
                     name,
                     partition_label.as_deref(),
-                    *qty,
-                    price,
+                    qty,
+                    &item.price,
                     target.site_base_url.as_deref(),
                 );
                 deliver_lifecycle_notification(
                     self,
                     run_id,
                     &target,
-                    "catalog.listed",
-                    &msg,
-                    serde_json::json!({
-                        "fid": key.fid.clone(),
-                        "gid": key.gid.clone(),
-                        "listedKind": "partition",
-                    }),
-                    &notification,
+                    LifecycleDeliveryPayload {
+                        scope: "catalog.listed",
+                        msg: &msg,
+                        meta: serde_json::json!({
+                            "fid": key.fid.clone(),
+                            "gid": key.gid.clone(),
+                            "listedKind": "partition",
+                        }),
+                        record_kind: "catalog.partition_listed",
+                        notification: &notification,
+                        items: std::slice::from_ref(item),
+                    },
                 )
                 .await?;
             }
@@ -2102,12 +2270,13 @@ WHERE m.config_id IN ({placeholders})
             }
             listed_target_user_ids.insert(target.user_id.clone());
 
-            for (id, name, price, qty) in listed_pending.iter() {
+            for item in listed_pending.iter() {
+                let id = item.config_id.as_deref().unwrap_or("");
                 let msg = format_pending_stock_message(
-                    name,
+                    &item.name,
                     id,
-                    *qty,
-                    price,
+                    item.inventory.quantity,
+                    &item.price,
                     target.site_base_url.as_deref(),
                 );
                 let _ = crate::db::insert_log(
@@ -2141,11 +2310,13 @@ WHERE m.config_id IN ({placeholders})
             )
             .await?;
 
-            for (id, name, price, qty) in listed.iter() {
+            for item in listed.iter() {
+                let id = item.config_id.as_deref().unwrap_or("");
                 if monitored_ids.contains(id) {
                     continue;
                 }
-
+                let name = &item.name;
+                let qty = item.inventory.quantity;
                 let url = target
                     .site_base_url
                     .as_deref()
@@ -2153,28 +2324,32 @@ WHERE m.config_id IN ({placeholders})
                     .trim_end_matches('/');
                 let msg = format!(
                     "[site_listed] {name} ({id}) qty={qty} price={} {url}/monitoring",
-                    price.amount
+                    item.price.amount
                 );
                 let notification = notification_content::build_lifecycle_notification(
                     LifecycleNotificationKind::SiteListed,
                     name,
                     partition_label.as_deref(),
-                    *qty,
-                    price,
+                    qty,
+                    &item.price,
                     target.site_base_url.as_deref(),
                 );
                 deliver_lifecycle_notification(
                     self,
                     run_id,
                     &target,
-                    "catalog.listed",
-                    &msg,
-                    serde_json::json!({
-                        "fid": key.fid.clone(),
-                        "gid": key.gid.clone(),
-                        "listedKind": "site",
-                    }),
-                    &notification,
+                    LifecycleDeliveryPayload {
+                        scope: "catalog.listed",
+                        msg: &msg,
+                        meta: serde_json::json!({
+                            "fid": key.fid.clone(),
+                            "gid": key.gid.clone(),
+                            "listedKind": "site",
+                        }),
+                        record_kind: "catalog.site_listed",
+                        notification: &notification,
+                        items: std::slice::from_ref(item),
+                    },
                 )
                 .await?;
             }
@@ -2206,7 +2381,10 @@ WHERE m.config_id IN ({placeholders})
         for row in targets_delisted {
             let target = LifecycleDeliveryTarget::from_row(row);
 
-            for (id, name, price, qty) in delisted.iter() {
+            for item in delisted.iter() {
+                let id = item.config_id.as_deref().unwrap_or("");
+                let name = &item.name;
+                let qty = item.inventory.quantity;
                 let url = target
                     .site_base_url
                     .as_deref()
@@ -2214,24 +2392,28 @@ WHERE m.config_id IN ({placeholders})
                     .trim_end_matches('/');
                 let msg = format!(
                     "[delisted] {name} ({id}) qty={qty} price={} {url}/monitoring",
-                    price.amount
+                    item.price.amount
                 );
                 let notification = notification_content::build_lifecycle_notification(
                     LifecycleNotificationKind::Delisted,
                     name,
                     None,
-                    *qty,
-                    price,
+                    qty,
+                    &item.price,
                     target.site_base_url.as_deref(),
                 );
                 deliver_lifecycle_notification(
                     self,
                     run_id,
                     &target,
-                    "catalog.delisted",
-                    &msg,
-                    serde_json::json!({ "fid": key.fid.clone(), "gid": key.gid.clone() }),
-                    &notification,
+                    LifecycleDeliveryPayload {
+                        scope: "catalog.delisted",
+                        msg: &msg,
+                        meta: serde_json::json!({ "fid": key.fid.clone(), "gid": key.gid.clone() }),
+                        record_kind: "catalog.delisted",
+                        notification: &notification,
+                        items: std::slice::from_ref(item),
+                    },
                 )
                 .await?;
             }
@@ -2618,6 +2800,8 @@ mod tests {
             default_poll_jitter_pct: 0.1,
             log_retention_days: 7,
             log_retention_max_rows: 10_000,
+            notification_retention_days: 30,
+            notification_retention_max_rows: 50_000,
             ops_worker_concurrency: 1,
             ops_sse_replay_window_seconds: 3600,
             ops_log_retention_days: 7,
@@ -3160,6 +3344,26 @@ WHERE user_id = ?
             assert_eq!(meta["listedKind"].as_str(), Some(listed_kind));
             assert!(message.starts_with(message_prefix));
         }
+
+        let rows = sqlx::query(
+            "SELECT user_id, kind, telegram_status, web_push_status FROM notification_records ORDER BY user_id ASC",
+        )
+        .fetch_all(&db)
+        .await
+        .unwrap();
+        assert_eq!(rows.len(), 3);
+        let expected = std::collections::HashMap::from([
+            ("u_both", "catalog.partition_listed"),
+            ("u_partition_only", "catalog.partition_listed"),
+            ("u_site_only", "catalog.site_listed"),
+        ]);
+        for row in rows {
+            let user_id = row.get::<String, _>(0);
+            let kind = row.get::<String, _>(1);
+            assert_eq!(expected.get(user_id.as_str()).copied(), Some(kind.as_str()));
+            assert_eq!(row.get::<String, _>(2), "skipped");
+            assert_eq!(row.get::<String, _>(3), "skipped");
+        }
     }
 
     #[tokio::test]
@@ -3505,6 +3709,17 @@ WHERE user_id = ?
                 .await
                 .unwrap();
         assert_eq!(listed_logs.get::<i64, _>(0), 0);
+
+        let record = sqlx::query(
+            "SELECT kind, telegram_status, web_push_status FROM notification_records WHERE user_id = ?",
+        )
+        .bind("u_1")
+        .fetch_one(&db)
+        .await
+        .unwrap();
+        assert_eq!(record.get::<String, _>(0), "monitoring.restock");
+        assert_eq!(record.get::<String, _>(1), "success");
+        assert_eq!(record.get::<String, _>(2), "skipped");
     }
 
     #[tokio::test]
@@ -3712,6 +3927,17 @@ WHERE user_id = ?
                 .await
                 .unwrap();
         assert_eq!(push_notify_rows.get::<i64, _>(0), 1);
+
+        let record = sqlx::query(
+            "SELECT kind, telegram_status, web_push_status FROM notification_records WHERE user_id = ?",
+        )
+        .bind("u_web_push")
+        .fetch_one(&db)
+        .await
+        .unwrap();
+        assert_eq!(record.get::<String, _>(0), "monitoring.restock");
+        assert_eq!(record.get::<String, _>(1), "skipped");
+        assert_eq!(record.get::<String, _>(2), "success");
     }
 
     #[tokio::test]
