@@ -1,5 +1,5 @@
 use crate::config::RuntimeConfig;
-use crate::models::Money;
+use crate::models::{Money, NotificationRecordItemView};
 use crate::notification_content::{
     self, ConfigLifecycleNotificationKind, TopologyNotificationKind,
 };
@@ -304,6 +304,17 @@ WHERE id IN ({placeholders})
         .collect())
 }
 
+async fn load_notification_record_item_map(
+    db: &SqlitePool,
+    ids: &[String],
+) -> anyhow::Result<HashMap<String, NotificationRecordItemView>> {
+    Ok(crate::db::load_notification_record_item_snapshots(db, ids)
+        .await?
+        .into_iter()
+        .filter_map(|item| item.config_id.clone().map(|id| (id, item)))
+        .collect())
+}
+
 async fn load_country_catalog_summary(
     db: &SqlitePool,
     country_id: &str,
@@ -349,6 +360,30 @@ LIMIT 10
         .collect();
 
     Ok((items, total_count))
+}
+
+async fn load_country_catalog_notification_items(
+    db: &SqlitePool,
+    country_id: &str,
+) -> anyhow::Result<Vec<NotificationRecordItemView>> {
+    let rows = sqlx::query(
+        r#"
+SELECT id
+FROM catalog_configs
+WHERE country_id = ?
+  AND lifecycle_state = 'active'
+ORDER BY price_amount ASC, id ASC
+LIMIT 10
+"#,
+    )
+    .bind(country_id)
+    .fetch_all(db)
+    .await?;
+    let ids = rows
+        .into_iter()
+        .map(|row| row.get::<String, _>(0))
+        .collect::<Vec<_>>();
+    crate::db::load_notification_record_item_snapshots(db, &ids).await
 }
 
 async fn load_region_catalog_summary(
@@ -403,34 +438,101 @@ LIMIT 10
     Ok((items, total_count))
 }
 
+async fn load_region_catalog_notification_items(
+    db: &SqlitePool,
+    country_id: &str,
+    region_id: &str,
+) -> anyhow::Result<Vec<NotificationRecordItemView>> {
+    let rows = sqlx::query(
+        r#"
+SELECT id
+FROM catalog_configs
+WHERE country_id = ?
+  AND region_id = ?
+  AND lifecycle_state = 'active'
+ORDER BY price_amount ASC, id ASC
+LIMIT 10
+"#,
+    )
+    .bind(country_id)
+    .bind(region_id)
+    .fetch_all(db)
+    .await?;
+    let ids = rows
+        .into_iter()
+        .map(|row| row.get::<String, _>(0))
+        .collect::<Vec<_>>();
+    crate::db::load_notification_record_item_snapshots(db, &ids).await
+}
+
+fn notification_partition_label_from_items(items: &[NotificationRecordItemView]) -> Option<String> {
+    items.first().and_then(|item| {
+        item.partition_label.clone().or_else(|| {
+            item.region_name
+                .as_ref()
+                .map(|region_name| format!("{} / {}", item.country_name, region_name))
+                .or_else(|| Some(item.country_name.clone()))
+        })
+    })
+}
+
 async fn deliver_outbound_notification(
     manager: &OpsManager,
     run_id: Option<i64>,
     target: &NotificationDeliveryTarget,
-    scope: &str,
-    msg: &str,
-    meta: serde_json::Value,
-    notification: &notification_content::OutboundNotification,
+    payload: OutboundDeliveryPayload<'_>,
 ) -> anyhow::Result<()> {
     let notify_run_id = run_id.unwrap_or(0);
+    let record_id = crate::db::insert_notification_record(
+        &manager.inner.db,
+        &target.user_id,
+        &crate::models::NotificationRecordDraft {
+            kind: payload.record_kind.to_string(),
+            title: payload.notification.title.clone(),
+            summary: payload.notification.summary.clone(),
+            partition_label: payload
+                .notification
+                .partition_label
+                .clone()
+                .or_else(|| notification_partition_label_from_items(payload.items)),
+            telegram_status: if target.tg_enabled {
+                "pending".to_string()
+            } else {
+                "skipped".to_string()
+            },
+            web_push_status: if target.wp_enabled {
+                "pending".to_string()
+            } else {
+                "skipped".to_string()
+            },
+            items: payload.items.to_vec(),
+        },
+    )
+    .await?;
+    let telegram_text = notification_content::append_notification_record_link(
+        &payload.notification.telegram_text,
+        target.site_base_url.as_deref(),
+        &record_id,
+    );
     let _ = crate::db::insert_log(
         &manager.inner.db,
         Some(&target.user_id),
         "info",
-        scope,
-        msg,
-        Some(meta.clone()),
+        payload.scope,
+        payload.msg,
+        Some(payload.meta.clone()),
     )
     .await;
     let _ = manager
         .log(
             "info",
-            scope,
-            msg,
+            payload.scope,
+            payload.msg,
             Some(serde_json::json!({
                 "runId": run_id,
                 "userId": target.user_id,
-                "meta": meta,
+                "meta": payload.meta,
+                "notificationRecordId": record_id,
             })),
         )
         .await;
@@ -441,17 +543,31 @@ async fn deliver_outbound_notification(
                 &manager.inner.cfg.telegram_api_base_url,
                 token,
                 target_chat,
-                &notification.telegram_text,
+                &telegram_text,
             )
             .await
             {
                 Ok(_) => {
+                    crate::db::update_notification_record_channel_status(
+                        &manager.inner.db,
+                        &record_id,
+                        "telegram",
+                        "success",
+                    )
+                    .await?;
                     let _ = manager
                         .record_notify(notify_run_id, "telegram", "success", None)
                         .await;
                 }
                 Err(err) => {
                     let err_msg = err.to_string();
+                    crate::db::update_notification_record_channel_status(
+                        &manager.inner.db,
+                        &record_id,
+                        "telegram",
+                        "error",
+                    )
+                    .await?;
                     let _ = manager
                         .record_notify(notify_run_id, "telegram", "error", Some(&err_msg))
                         .await;
@@ -475,6 +591,13 @@ async fn deliver_outbound_notification(
                         Some("missing telegram config"),
                     )
                     .await;
+                crate::db::update_notification_record_channel_status(
+                    &manager.inner.db,
+                    &record_id,
+                    "telegram",
+                    "skipped",
+                )
+                .await?;
             }
         }
     }
@@ -485,25 +608,46 @@ async fn deliver_outbound_notification(
             Ok(Some(sub)) => match notifications::send_web_push(
                 &manager.inner.cfg,
                 &sub,
-                &notification.web_push_title,
-                &notification.web_push_body,
-                &notification.web_push_url,
+                &payload.notification.web_push_title,
+                &payload.notification.web_push_body,
+                &payload.notification.web_push_url,
             )
             .await
             {
                 Ok(_) => {
+                    crate::db::update_notification_record_channel_status(
+                        &manager.inner.db,
+                        &record_id,
+                        "webPush",
+                        "success",
+                    )
+                    .await?;
                     let _ = manager
                         .record_notify(notify_run_id, "webPush", "success", None)
                         .await;
                 }
                 Err(err) => {
                     let err_msg = err.to_string();
+                    crate::db::update_notification_record_channel_status(
+                        &manager.inner.db,
+                        &record_id,
+                        "webPush",
+                        "error",
+                    )
+                    .await?;
                     let _ = manager
                         .record_notify(notify_run_id, "webPush", "error", Some(&err_msg))
                         .await;
                 }
             },
             Ok(None) => {
+                crate::db::update_notification_record_channel_status(
+                    &manager.inner.db,
+                    &record_id,
+                    "webPush",
+                    "skipped",
+                )
+                .await?;
                 let _ = manager
                     .record_notify(
                         notify_run_id,
@@ -515,6 +659,13 @@ async fn deliver_outbound_notification(
             }
             Err(err) => {
                 let err_msg = err.to_string();
+                crate::db::update_notification_record_channel_status(
+                    &manager.inner.db,
+                    &record_id,
+                    "webPush",
+                    "error",
+                )
+                .await?;
                 let _ = manager
                     .record_notify(notify_run_id, "webPush", "error", Some(&err_msg))
                     .await;
@@ -523,6 +674,15 @@ async fn deliver_outbound_notification(
     }
 
     Ok(())
+}
+
+struct OutboundDeliveryPayload<'a> {
+    scope: &'a str,
+    msg: &'a str,
+    meta: serde_json::Value,
+    record_kind: &'a str,
+    notification: &'a notification_content::OutboundNotification,
+    items: &'a [NotificationRecordItemView],
 }
 
 async fn load_enabled_monitoring_ids(
@@ -600,7 +760,43 @@ async fn deliver_monitoring_change_notification(
     msg: &str,
     meta: serde_json::Value,
     notification: &notification_content::MonitoringChangeNotification,
+    items: &[NotificationRecordItemView],
 ) -> anyhow::Result<()> {
+    let record_id = crate::db::insert_notification_record(
+        &manager.inner.db,
+        &target.user_id,
+        &crate::models::NotificationRecordDraft {
+            kind: format!(
+                "monitoring.{}",
+                notification
+                    .events
+                    .iter()
+                    .map(|event| event.as_str())
+                    .collect::<Vec<_>>()
+                    .join("+")
+            ),
+            title: notification.title.clone(),
+            summary: notification.summary.clone(),
+            partition_label: notification_partition_label_from_items(items),
+            telegram_status: if target.tg_enabled {
+                "pending".to_string()
+            } else {
+                "skipped".to_string()
+            },
+            web_push_status: if target.wp_enabled {
+                "pending".to_string()
+            } else {
+                "skipped".to_string()
+            },
+            items: items.to_vec(),
+        },
+    )
+    .await?;
+    let telegram_text = notification_content::append_notification_record_link(
+        &notification.telegram_text,
+        target.site_base_url.as_deref(),
+        &record_id,
+    );
     let _ = crate::db::insert_log(
         &manager.inner.db,
         Some(&target.user_id),
@@ -619,6 +815,7 @@ async fn deliver_monitoring_change_notification(
                 "runId": run_id,
                 "userId": target.user_id,
                 "meta": meta,
+                "notificationRecordId": record_id,
             })),
         )
         .await;
@@ -629,17 +826,31 @@ async fn deliver_monitoring_change_notification(
                 &manager.inner.cfg.telegram_api_base_url,
                 token,
                 target_chat,
-                &notification.telegram_text,
+                &telegram_text,
             )
             .await
             {
                 Ok(_) => {
+                    crate::db::update_notification_record_channel_status(
+                        &manager.inner.db,
+                        &record_id,
+                        "telegram",
+                        "success",
+                    )
+                    .await?;
                     let _ = manager
                         .record_notify(run_id, "telegram", "success", None)
                         .await;
                 }
                 Err(err) => {
                     let err_msg = err.to_string();
+                    crate::db::update_notification_record_channel_status(
+                        &manager.inner.db,
+                        &record_id,
+                        "telegram",
+                        "error",
+                    )
+                    .await?;
                     let _ = manager
                         .record_notify(run_id, "telegram", "error", Some(&err_msg))
                         .await;
@@ -663,6 +874,13 @@ async fn deliver_monitoring_change_notification(
                         Some("missing telegram config"),
                     )
                     .await;
+                crate::db::update_notification_record_channel_status(
+                    &manager.inner.db,
+                    &record_id,
+                    "telegram",
+                    "skipped",
+                )
+                .await?;
             }
         }
     }
@@ -680,18 +898,39 @@ async fn deliver_monitoring_change_notification(
             .await
             {
                 Ok(_) => {
+                    crate::db::update_notification_record_channel_status(
+                        &manager.inner.db,
+                        &record_id,
+                        "webPush",
+                        "success",
+                    )
+                    .await?;
                     let _ = manager
                         .record_notify(run_id, "webPush", "success", None)
                         .await;
                 }
                 Err(err) => {
                     let err_msg = err.to_string();
+                    crate::db::update_notification_record_channel_status(
+                        &manager.inner.db,
+                        &record_id,
+                        "webPush",
+                        "error",
+                    )
+                    .await?;
                     let _ = manager
                         .record_notify(run_id, "webPush", "error", Some(&err_msg))
                         .await;
                 }
             },
             Ok(None) => {
+                crate::db::update_notification_record_channel_status(
+                    &manager.inner.db,
+                    &record_id,
+                    "webPush",
+                    "skipped",
+                )
+                .await?;
                 let _ = manager
                     .record_notify(
                         run_id,
@@ -703,6 +942,13 @@ async fn deliver_monitoring_change_notification(
             }
             Err(err) => {
                 let err_msg = err.to_string();
+                crate::db::update_notification_record_channel_status(
+                    &manager.inner.db,
+                    &record_id,
+                    "webPush",
+                    "error",
+                )
+                .await?;
                 let _ = manager
                     .record_notify(run_id, "webPush", "error", Some(&err_msg))
                     .await;
@@ -2000,6 +2246,7 @@ WHERE s.monitoring_events_partition_catalog_change_enabled = 1
         ids.extend(applied.listed_pending_zero_stock_ids.iter().cloned());
         ids.extend(applied.delisted_ids.iter().cloned());
         let config_by_id = load_config_lifecycle_records(&self.inner.db, &ids).await?;
+        let item_by_id = load_notification_record_item_map(&self.inner.db, &ids).await?;
 
         let listed_records = applied
             .listed_event_ids
@@ -2046,6 +2293,7 @@ WHERE s.monitoring_events_partition_catalog_change_enabled = 1
 
         struct MonitoredFallbackContext<'a> {
             listed_records: &'a [&'a ConfigLifecycleRecord],
+            listed_items: &'a HashMap<String, NotificationRecordItemView>,
             key: &'a TaskKey,
             poller_waiter_user_ids: &'a HashSet<String>,
             listed_id_set: &'a HashSet<String>,
@@ -2070,16 +2318,19 @@ WHERE s.monitoring_events_partition_catalog_change_enabled = 1
                 if !allow_for_target {
                     continue;
                 }
+                let Some(item) = ctx.listed_items.get(&record.id) else {
+                    continue;
+                };
                 let notification = notification_content::build_monitoring_change_notification(
-                    &record.name,
+                    &item.name,
                     &notification_content::MonitoringSnapshot {
                         inventory_quantity: 0,
-                        price: &record.price,
+                        price: &item.price,
                         digest: "lifecycle-listed-pending",
                     },
                     &notification_content::MonitoringSnapshot {
-                        inventory_quantity: record.quantity,
-                        price: &record.price,
+                        inventory_quantity: item.inventory.quantity,
+                        price: &item.price,
                         digest: "lifecycle-listed-pending",
                     },
                     target.site_base_url.as_deref(),
@@ -2087,10 +2338,10 @@ WHERE s.monitoring_events_partition_catalog_change_enabled = 1
                 .expect("synthetic restock notification should exist");
                 let msg = format!(
                     "[restock] {} ({}) qty={} price={} {}",
-                    record.name,
+                    item.name,
                     record.id,
-                    record.quantity,
-                    record.price.amount,
+                    item.inventory.quantity,
+                    item.price.amount,
                     target.site_base_url.clone().unwrap_or_default()
                 );
                 deliver_monitoring_change_notification(
@@ -2106,6 +2357,7 @@ WHERE s.monitoring_events_partition_catalog_change_enabled = 1
                         "lifecycleFallback": true,
                     }),
                     &notification,
+                    std::slice::from_ref(item),
                 )
                 .await?;
             }
@@ -2116,6 +2368,7 @@ WHERE s.monitoring_events_partition_catalog_change_enabled = 1
         let listed_id_set = applied.listed_ids.iter().cloned().collect::<HashSet<_>>();
         let monitored_fallback_ctx = MonitoredFallbackContext {
             listed_records: &listed_records,
+            listed_items: &item_by_id,
             key,
             poller_waiter_user_ids,
             listed_id_set: &listed_id_set,
@@ -2170,6 +2423,11 @@ WHERE s.monitoring_events_partition_catalog_change_enabled = 1
                 if monitored_ids.contains(&record.id) {
                     continue;
                 }
+                let items = item_by_id
+                    .get(&record.id)
+                    .cloned()
+                    .into_iter()
+                    .collect::<Vec<_>>();
                 let msg = format!(
                     "[config_added] {} ({}) qty={} price={}",
                     record.name, record.id, record.quantity, record.price.amount
@@ -2186,22 +2444,31 @@ WHERE s.monitoring_events_partition_catalog_change_enabled = 1
                     self,
                     Some(run_id),
                     target,
-                    "catalog.config.added",
-                    &msg,
-                    serde_json::json!({
-                        "fid": &key.fid,
-                        "gid": key.gid.as_deref(),
-                        "configId": &record.id,
-                        "partitionKey": &partition_key,
-                        "fetchedAt": &applied.fetched_at,
-                        "changeKind": "added",
-                    }),
-                    &notification,
+                    OutboundDeliveryPayload {
+                        scope: "catalog.config.added",
+                        msg: &msg,
+                        meta: serde_json::json!({
+                            "fid": &key.fid,
+                            "gid": key.gid.as_deref(),
+                            "configId": &record.id,
+                            "partitionKey": &partition_key,
+                            "fetchedAt": &applied.fetched_at,
+                            "changeKind": "added",
+                        }),
+                        record_kind: "catalog.config.added",
+                        notification: &notification,
+                        items: &items,
+                    },
                 )
                 .await?;
             }
 
             for record in &delisted_records {
+                let items = item_by_id
+                    .get(&record.id)
+                    .cloned()
+                    .into_iter()
+                    .collect::<Vec<_>>();
                 let msg = format!(
                     "[config_removed] {} ({}) qty={} price={}",
                     record.name, record.id, record.quantity, record.price.amount
@@ -2218,17 +2485,21 @@ WHERE s.monitoring_events_partition_catalog_change_enabled = 1
                     self,
                     Some(run_id),
                     target,
-                    "catalog.config.removed",
-                    &msg,
-                    serde_json::json!({
-                        "fid": &key.fid,
-                        "gid": key.gid.as_deref(),
-                        "configId": &record.id,
-                        "partitionKey": &partition_key,
-                        "fetchedAt": &applied.fetched_at,
-                        "changeKind": "removed",
-                    }),
-                    &notification,
+                    OutboundDeliveryPayload {
+                        scope: "catalog.config.removed",
+                        msg: &msg,
+                        meta: serde_json::json!({
+                            "fid": &key.fid,
+                            "gid": key.gid.as_deref(),
+                            "configId": &record.id,
+                            "partitionKey": &partition_key,
+                            "fetchedAt": &applied.fetched_at,
+                            "changeKind": "removed",
+                        }),
+                        record_kind: "catalog.config.removed",
+                        notification: &notification,
+                        items: &items,
+                    },
                 )
                 .await?;
             }
@@ -2305,6 +2576,8 @@ WHERE monitoring_events_site_region_change_enabled = 1
             }
             let (catalog_items, total_catalog_count) =
                 load_country_catalog_summary(&self.inner.db, &change.id).await?;
+            let notification_items =
+                load_country_catalog_notification_items(&self.inner.db, &change.id).await?;
             let country_key = catalog_region_key(&change.id, None);
             let summary_fetch_incomplete = added_catalog_fetch_failures.contains(&country_key)
                 || added_regions.iter().any(|region| {
@@ -2335,15 +2608,19 @@ WHERE monitoring_events_site_region_change_enabled = 1
                     self,
                     None,
                     target,
-                    "catalog.region.added",
-                    &msg,
-                    serde_json::json!({
-                        "countryId": &change.id,
-                        "countryName": &change.name,
-                        "catalogCount": total_catalog_count,
-                        "changeKind": "added",
-                    }),
-                    &notification,
+                    OutboundDeliveryPayload {
+                        scope: "catalog.region.added",
+                        msg: &msg,
+                        meta: serde_json::json!({
+                            "countryId": &change.id,
+                            "countryName": &change.name,
+                            "catalogCount": total_catalog_count,
+                            "changeKind": "added",
+                        }),
+                        record_kind: "catalog.region.added",
+                        notification: &notification,
+                        items: &notification_items,
+                    },
                 )
                 .await?;
             }
@@ -2365,14 +2642,18 @@ WHERE monitoring_events_site_region_change_enabled = 1
                     self,
                     None,
                     target,
-                    "catalog.region.removed",
-                    &msg,
-                    serde_json::json!({
-                        "countryId": &change.id,
-                        "countryName": &change.name,
-                        "changeKind": "removed",
-                    }),
-                    &notification,
+                    OutboundDeliveryPayload {
+                        scope: "catalog.region.removed",
+                        msg: &msg,
+                        meta: serde_json::json!({
+                            "countryId": &change.id,
+                            "countryName": &change.name,
+                            "changeKind": "removed",
+                        }),
+                        record_kind: "catalog.region.removed",
+                        notification: &notification,
+                        items: &[],
+                    },
                 )
                 .await?;
             }
@@ -2422,6 +2703,12 @@ WHERE s.monitoring_events_region_partition_change_enabled = 1
             let (catalog_items, total_catalog_count) =
                 load_region_catalog_summary(&self.inner.db, &change.country_id, &change.region_id)
                     .await?;
+            let notification_items = load_region_catalog_notification_items(
+                &self.inner.db,
+                &change.country_id,
+                &change.region_id,
+            )
+            .await?;
             let summary_fetch_incomplete = added_catalog_fetch_failures.contains(
                 &catalog_region_key(&change.country_id, Some(change.region_id.as_str())),
             );
@@ -2446,17 +2733,21 @@ WHERE s.monitoring_events_region_partition_change_enabled = 1
                     self,
                     None,
                     target,
-                    "catalog.partition.added",
-                    &msg,
-                    serde_json::json!({
-                        "countryId": &change.country_id,
-                        "countryName": &change.country_name,
-                        "regionId": &change.region_id,
-                        "regionName": &change.region_name,
-                        "catalogCount": total_catalog_count,
-                        "changeKind": "added",
-                    }),
-                    &notification,
+                    OutboundDeliveryPayload {
+                        scope: "catalog.partition.added",
+                        msg: &msg,
+                        meta: serde_json::json!({
+                            "countryId": &change.country_id,
+                            "countryName": &change.country_name,
+                            "regionId": &change.region_id,
+                            "regionName": &change.region_name,
+                            "catalogCount": total_catalog_count,
+                            "changeKind": "added",
+                        }),
+                        record_kind: "catalog.partition.added",
+                        notification: &notification,
+                        items: &notification_items,
+                    },
                 )
                 .await?;
             }
@@ -2515,16 +2806,20 @@ WHERE s.monitoring_events_region_partition_change_enabled = 1
                     self,
                     None,
                     target,
-                    "catalog.partition.removed",
-                    &msg,
-                    serde_json::json!({
-                        "countryId": &change.country_id,
-                        "countryName": &change.country_name,
-                        "regionId": &change.region_id,
-                        "regionName": &change.region_name,
-                        "changeKind": "removed",
-                    }),
-                    &notification,
+                    OutboundDeliveryPayload {
+                        scope: "catalog.partition.removed",
+                        msg: &msg,
+                        meta: serde_json::json!({
+                            "countryId": &change.country_id,
+                            "countryName": &change.country_name,
+                            "regionId": &change.region_id,
+                            "regionName": &change.region_name,
+                            "changeKind": "removed",
+                        }),
+                        record_kind: "catalog.partition.removed",
+                        notification: &notification,
+                        items: &[],
+                    },
                 )
                 .await?;
             }
@@ -2913,6 +3208,8 @@ mod tests {
             default_poll_jitter_pct: 0.1,
             log_retention_days: 7,
             log_retention_max_rows: 10_000,
+            notification_retention_days: 30,
+            notification_retention_max_rows: 10_000,
             ops_worker_concurrency: 1,
             ops_sse_replay_window_seconds: 3600,
             ops_log_retention_days: 7,

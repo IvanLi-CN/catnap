@@ -243,6 +243,35 @@ export type LogsResponse = {
   nextCursor: string | null;
 };
 
+export type NotificationRecordItem = {
+  configId?: string | null;
+  countryName: string;
+  regionName?: string | null;
+  partitionLabel?: string | null;
+  name: string;
+  specs: Spec[];
+  price: Money;
+  inventory: Inventory;
+  lifecycle: ConfigLifecycle;
+};
+
+export type NotificationRecord = {
+  id: string;
+  createdAt: string;
+  kind: string;
+  title: string;
+  summary: string;
+  partitionLabel?: string | null;
+  telegramStatus: string;
+  webPushStatus: string;
+  items: NotificationRecordItem[];
+};
+
+export type NotificationRecordsResponse = {
+  items: NotificationRecord[];
+  nextCursor: string | null;
+};
+
 export type OpsRange = "24h" | "7d" | "30d";
 
 export type OpsRateBucket = {
@@ -314,16 +343,30 @@ export type OpsStateResponse = {
   }>;
 };
 
-export type Route = "monitoring" | "products" | "settings" | "logs" | "ops";
+export type Route = "monitoring" | "products" | "notifications" | "settings" | "logs" | "ops";
 
 function getRoute(): Route {
   const raw = window.location.hash.replace(/^#/, "");
-  if (raw === "products" || raw === "settings" || raw === "logs" || raw === "ops") return raw;
+  if (
+    raw === "products" ||
+    raw === "notifications" ||
+    raw === "settings" ||
+    raw === "logs" ||
+    raw === "ops"
+  ) {
+    return raw;
+  }
   return "monitoring";
+}
+
+function getNotificationTargetId(): string | null {
+  const value = new URLSearchParams(window.location.search).get("notification")?.trim();
+  return value ? value : null;
 }
 
 function routeTitle(route: Route): string {
   if (route === "products") return "全部产品";
+  if (route === "notifications") return "通知记录";
   if (route === "settings") return "系统设置";
   if (route === "logs") return "日志";
   if (route === "ops") return "采集观测台";
@@ -332,6 +375,7 @@ function routeTitle(route: Route): string {
 
 function routeSubtitle(route: Route): string {
   if (route === "products") return "分组：国家地区 → 可用区域 → 配置 • 点击卡片下单（新标签页）";
+  if (route === "notifications") return "按用户隔离 • 深链定位 • cursor 按需加载与无限滚动";
   if (route === "settings") return "按用户隔离 • 自动保存（下次轮询使用新频率 + 抖动）";
   if (route === "logs") return "按用户隔离 • 支持过滤与分页（cursor）";
   if (route === "ops")
@@ -468,6 +512,70 @@ function formatRelativeTime(iso: string, nowMs: number): string {
 
 function clampNumber(v: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, v));
+}
+
+function formatAbsoluteTime(iso: string): string {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return iso;
+  return new Intl.DateTimeFormat(undefined, {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(new Date(t));
+}
+
+function notificationKindLabel(kind: string): string {
+  if (kind.startsWith("monitoring.")) {
+    const labels = kind
+      .slice("monitoring.".length)
+      .split("+")
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .map((part) => {
+        if (part === "restock") return "补货";
+        if (part === "price") return "价格变动";
+        if (part === "config") return "配置更新";
+        return part;
+      });
+    if (labels.length > 0) return labels.join(" + ");
+  }
+  if (kind.includes("partition")) return "分区上新机";
+  if (kind.includes("site")) return "全站上新机";
+  if (kind.includes("delisted")) return "已下架";
+  return kind || "通知";
+}
+
+function notificationStatusClass(status: string): string {
+  if (status === "success") return "pill sm center notification-status ok";
+  if (status === "error") return "pill sm center notification-status err";
+  if (status === "skipped") return "pill sm center notification-status skip";
+  return "pill sm center notification-status";
+}
+
+function notificationStatusLabel(status: string): string {
+  if (status === "success") return "成功";
+  if (status === "error") return "失败";
+  if (status === "skipped") return "跳过";
+  if (status === "pending") return "发送中";
+  if (status === "not_sent") return "未发送";
+  return status || "未知";
+}
+
+function mergeNotificationRecordLists(
+  current: NotificationRecord[],
+  incoming: NotificationRecord[],
+): NotificationRecord[] {
+  const byId = new Map<string, NotificationRecord>();
+  for (const item of current) byId.set(item.id, item);
+  for (const item of incoming) byId.set(item.id, item);
+  return Array.from(byId.values()).sort((a, b) => {
+    const order = b.createdAt.localeCompare(a.createdAt);
+    if (order !== 0) return order;
+    return b.id.localeCompare(a.id);
+  });
 }
 
 function useInventoryHistory(configIds: string[], refreshKey: string) {
@@ -641,6 +749,9 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array {
 
 export function App() {
   const [route, setRoute] = useState<Route>(() => getRoute());
+  const [notificationTargetId, setNotificationTargetId] = useState<string | null>(() =>
+    getNotificationTargetId(),
+  );
   const [bootstrap, setBootstrap] = useState<BootstrapResponse | null>(null);
   const [about, setAbout] = useState<AboutResponse | null>(null);
   const [aboutLoading, setAboutLoading] = useState<boolean>(false);
@@ -725,9 +836,16 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    const onHash = () => setRoute(getRoute());
-    window.addEventListener("hashchange", onHash);
-    return () => window.removeEventListener("hashchange", onHash);
+    const syncLocationUi = () => {
+      setRoute(getRoute());
+      setNotificationTargetId(getNotificationTargetId());
+    };
+    window.addEventListener("hashchange", syncLocationUi);
+    window.addEventListener("popstate", syncLocationUi);
+    return () => {
+      window.removeEventListener("hashchange", syncLocationUi);
+      window.removeEventListener("popstate", syncLocationUi);
+    };
   }, []);
 
   useEffect(() => {
@@ -1204,6 +1322,18 @@ export function App() {
     [applyProductsResponse, openOrderUrl],
   );
 
+  const clearNotificationTargetId = useCallback(() => {
+    setNotificationTargetId(null);
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has("notification")) return;
+    url.searchParams.delete("notification");
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `${url.pathname}${url.search}${url.hash}`,
+    );
+  }, []);
+
   const title = `Catnap • ${routeTitle(route)}`;
   const subtitle = route === "monitoring" ? null : routeSubtitle(route);
   const repoUrl = about?.repoUrl?.trim() ? about.repoUrl.trim() : null;
@@ -1241,6 +1371,12 @@ export function App() {
       </a>
       <a className={route === "products" ? "nav-item active" : "nav-item"} href="#products">
         全部产品
+      </a>
+      <a
+        className={route === "notifications" ? "nav-item active" : "nav-item"}
+        href="#notifications"
+      >
+        通知记录
       </a>
       <a className={route === "settings" ? "nav-item active" : "nav-item"} href="#settings">
         系统设置
@@ -1421,6 +1557,12 @@ export function App() {
             onToggle={toggleMonitoring}
             onTogglePartition={togglePartitionMonitoring}
             onOpenOrder={guardAndOpenOrder}
+          />
+        ) : route === "notifications" ? (
+          <NotificationsView
+            targetRecordId={notificationTargetId}
+            nowMs={nowMs}
+            onTargetHandled={clearNotificationTargetId}
           />
         ) : route === "settings" ? (
           <SettingsViewPanel
@@ -4004,6 +4146,323 @@ export function SettingsViewPanel({
             {aboutLoading ? "检查中…" : "检查更新"}
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+type NotificationsViewProps = {
+  fetchRecords?: (params: {
+    cursor: string | null;
+    limit: number;
+  }) => Promise<NotificationRecordsResponse>;
+  fetchRecord?: (id: string) => Promise<NotificationRecord>;
+  targetRecordId?: string | null;
+  nowMs?: number;
+  onTargetHandled?: () => void;
+};
+
+function NotificationSnapshotCard({
+  item,
+  nowMs,
+}: {
+  item: NotificationRecordItem;
+  nowMs: number;
+}) {
+  const flagIcon = resolveCountryFlagWatermarkIcon(item.countryName ?? null);
+  const capTone =
+    item.inventory.status === "unknown" || item.inventory.quantity === 0 ? "warn" : "";
+  const capText =
+    item.inventory.status === "unknown"
+      ? "?"
+      : item.inventory.quantity > 10
+        ? "10+"
+        : String(item.inventory.quantity);
+  const rawSpecCells = buildSpecCells(item.specs, SPEC_CARD_MAX_CELLS);
+  const specCells: SpecSlotCell[] = SPEC_SLOTS.slice(0, SPEC_CARD_MAX_CELLS).map((key, i) => {
+    const c = rawSpecCells[i];
+    return c ? { key, ...c } : { key, empty: true };
+  });
+  const lifecycleLabel = item.lifecycle.state === "delisted" ? "已下架" : "活跃";
+  const metaParts = [
+    item.partitionLabel?.trim() || null,
+    `更新：${formatRelativeTime(item.inventory.checkedAt, nowMs)}`,
+    `状态：${lifecycleLabel}`,
+  ].filter(Boolean);
+
+  return (
+    <article className="notification-item-card">
+      {flagIcon ? (
+        <span className="card-flag-watermark" aria-hidden="true">
+          <Icon className="card-flag-icon" icon={flagIcon} />
+        </span>
+      ) : null}
+      <div className={`mon-cap ${capTone}`}>{capText}</div>
+      <div className="card-content">
+        <div className="notification-item-title">
+          <span className="title-text">{item.name}</span>
+          {item.lifecycle.state === "delisted" ? <span className="pill sm err">下架</span> : null}
+        </div>
+        <div className="notification-item-specs" aria-label="通知快照规格">
+          {specCells.map((c) =>
+            "empty" in c ? (
+              <div className="spec-cell empty" key={c.key}>
+                <span className="spec-k"> </span>
+                <span className="spec-v"> </span>
+              </div>
+            ) : (
+              <div className="spec-cell" key={c.key}>
+                <span className="spec-k">{c.label}</span>
+                <span className="spec-v">{c.value}</span>
+              </div>
+            ),
+          )}
+        </div>
+        <div className="notification-item-price">{formatMoney(item.price)}</div>
+        <div className="notification-item-meta">{metaParts.join(" · ")}</div>
+      </div>
+    </article>
+  );
+}
+
+export function NotificationsView({
+  fetchRecords,
+  fetchRecord,
+  targetRecordId = null,
+  nowMs = Date.now(),
+  onTargetHandled,
+}: NotificationsViewProps = {}) {
+  const limit = 20;
+  const [items, setItems] = useState<NotificationRecord[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [initialLoading, setInitialLoading] = useState<boolean>(false);
+  const [loadingMore, setLoadingMore] = useState<boolean>(false);
+  const [loadingTarget, setLoadingTarget] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
+  const [targetError, setTargetError] = useState<string | null>(null);
+  const [highlightedId, setHighlightedId] = useState<string | null>(null);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const recordRefs = useRef<Map<string, HTMLElement>>(new Map());
+  const handledTargetIdRef = useRef<string | null>(null);
+
+  const fetchRecordsImpl = useCallback(
+    async (params: { cursor: string | null; limit: number }) => {
+      if (fetchRecords) return fetchRecords(params);
+      const q = new URLSearchParams();
+      if (params.cursor) q.set("cursor", params.cursor);
+      q.set("limit", String(params.limit));
+      return api<NotificationRecordsResponse>(`/api/notifications/records?${q.toString()}`);
+    },
+    [fetchRecords],
+  );
+
+  const fetchRecordImpl = useCallback(
+    async (id: string) => {
+      if (fetchRecord) return fetchRecord(id);
+      return api<NotificationRecord>(`/api/notifications/records/${encodeURIComponent(id)}`);
+    },
+    [fetchRecord],
+  );
+
+  const loadFirstPage = useCallback(async () => {
+    setInitialLoading(true);
+    setError(null);
+    try {
+      const res = await fetchRecordsImpl({ cursor: null, limit });
+      setItems((prev) => mergeNotificationRecordLists(prev, res.items));
+      setNextCursor(res.nextCursor);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setInitialLoading(false);
+    }
+  }, [fetchRecordsImpl]);
+
+  const loadMore = useCallback(async () => {
+    if (!nextCursor || initialLoading || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const res = await fetchRecordsImpl({ cursor: nextCursor, limit });
+      setItems((prev) => mergeNotificationRecordLists(prev, res.items));
+      setNextCursor(res.nextCursor);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [fetchRecordsImpl, initialLoading, loadingMore, nextCursor]);
+
+  useEffect(() => {
+    handledTargetIdRef.current = null;
+    setItems([]);
+    setNextCursor(null);
+    setTargetError(null);
+    setHighlightedId(null);
+    void loadFirstPage();
+  }, [loadFirstPage]);
+
+  useEffect(() => {
+    if (!targetRecordId) {
+      handledTargetIdRef.current = null;
+      return;
+    }
+    if (handledTargetIdRef.current === targetRecordId) return;
+
+    const existing = items.find((item) => item.id === targetRecordId);
+    if (existing) {
+      handledTargetIdRef.current = targetRecordId;
+      setTargetError(null);
+      setHighlightedId(existing.id);
+      onTargetHandled?.();
+      return;
+    }
+
+    handledTargetIdRef.current = targetRecordId;
+    let cancelled = false;
+    setLoadingTarget(true);
+    setTargetError(null);
+    void fetchRecordImpl(targetRecordId)
+      .then((record) => {
+        if (cancelled) return;
+        setItems((prev) => mergeNotificationRecordLists(prev, [record]));
+        setHighlightedId(record.id);
+        onTargetHandled?.();
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        if (e instanceof ApiHttpError && e.status === 404) {
+          setTargetError("记录不存在或已过期");
+          return;
+        }
+        handledTargetIdRef.current = null;
+        setTargetError(e instanceof Error ? e.message : String(e));
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setLoadingTarget(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchRecordImpl, items, onTargetHandled, targetRecordId]);
+
+  useEffect(() => {
+    if (!highlightedId) return;
+    const el = recordRefs.current.get(highlightedId);
+    if (!el) return;
+    const raf = window.requestAnimationFrame(() => {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+    const timer = window.setTimeout(() => {
+      setHighlightedId((current) => (current === highlightedId ? null : current));
+    }, 4_000);
+    return () => {
+      window.cancelAnimationFrame(raf);
+      window.clearTimeout(timer);
+    };
+  }, [highlightedId]);
+
+  useEffect(() => {
+    const node = sentinelRef.current;
+    if (!node || !nextCursor) return;
+    if (typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          void loadMore();
+        }
+      },
+      { rootMargin: "280px 0px" },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [loadMore, nextCursor]);
+
+  return (
+    <div className="panel" data-testid="page-notifications">
+      <div className="panel-section">
+        <div className="panel-title-row">
+          <div className="panel-title">通知记录</div>
+          <div className="notifications-meta-row">
+            <span className="pill sm">{`${items.length} 组`}</span>
+            {loadingTarget ? <span className="pill sm warn">定位中…</span> : null}
+          </div>
+        </div>
+        <div className="panel-subtitle">
+          每条通知都是一个组；组里展示该通知生成时关联到的机子快照，不随当前目录变化漂移。
+        </div>
+        {error ? <p className="error">{error}</p> : null}
+        {targetError ? <p className="error">{targetError}</p> : null}
+      </div>
+
+      <div className="panel-section notifications-panel-section">
+        {initialLoading && items.length === 0 ? <p className="muted">加载通知记录中…</p> : null}
+        {!initialLoading && items.length === 0 && !error ? (
+          <div className="notifications-empty">还没有通知记录。</div>
+        ) : null}
+
+        <div className="notifications-stack">
+          {items.map((record) => (
+            <section
+              className={`notification-group${highlightedId === record.id ? " is-highlighted" : ""}`}
+              key={record.id}
+              ref={(node) => {
+                if (node) {
+                  recordRefs.current.set(record.id, node);
+                } else {
+                  recordRefs.current.delete(record.id);
+                }
+              }}
+              data-record-id={record.id}
+            >
+              <header className="notification-group-head">
+                <div className="notification-group-main">
+                  <div className="notification-group-topline">
+                    <span className="pill sm badge on">{notificationKindLabel(record.kind)}</span>
+                    <span className="notification-group-time" title={record.createdAt}>
+                      {formatAbsoluteTime(record.createdAt)}
+                    </span>
+                  </div>
+                  <div className="notification-group-title">{record.title}</div>
+                  <div className="notification-group-summary">{record.summary}</div>
+                  {record.partitionLabel ? (
+                    <div className="notification-group-partition">{record.partitionLabel}</div>
+                  ) : null}
+                </div>
+
+                <div className="notification-group-statuses">
+                  <div className="notification-group-status-block">
+                    <span className="muted">Telegram</span>
+                    <span className={notificationStatusClass(record.telegramStatus)}>
+                      {notificationStatusLabel(record.telegramStatus)}
+                    </span>
+                  </div>
+                  <div className="notification-group-status-block">
+                    <span className="muted">Web Push</span>
+                    <span className={notificationStatusClass(record.webPushStatus)}>
+                      {notificationStatusLabel(record.webPushStatus)}
+                    </span>
+                  </div>
+                </div>
+              </header>
+
+              <div className="notification-group-items">
+                {record.items.map((item, index) => (
+                  <NotificationSnapshotCard
+                    item={item}
+                    key={`${record.id}:${item.configId ?? index}`}
+                    nowMs={nowMs}
+                  />
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
+
+        <div className="notifications-tail" ref={sentinelRef} aria-hidden="true" />
+        {loadingMore ? <p className="muted">正在加载更多通知…</p> : null}
+        {!nextCursor && items.length > 0 ? <p className="muted">已经到底啦。</p> : null}
       </div>
     </div>
   );
