@@ -3567,10 +3567,10 @@ export function SettingsViewPanel({
             {renderFieldError("regionPartitionChangeEnabled")}
           </div>
           <div className="hint">
-            启用后：仅通知已在 products 中开启“地区监控”的地区，关注可用区新增与删除。
+            启用后：仅通知已在 products 中开启“国家监控”的国家，关注可用区新增与删除。
           </div>
 
-          <div>地区变更</div>
+          <div>国家变更</div>
           <div className="settings-action-wrap">
             <button
               type="button"
@@ -3590,7 +3590,7 @@ export function SettingsViewPanel({
             </button>
             {renderFieldError("siteRegionChangeEnabled")}
           </div>
-          <div className="hint">启用后：全站范围关注地区新增与删除。</div>
+          <div className="hint">启用后：全站范围关注国家新增与删除。</div>
         </div>
       </div>
 

@@ -237,7 +237,7 @@ export const MonitoringEventModes: Story = {
     );
     const packageAction = getSettingsActionWrap(monitoringSection, "套餐变更");
     const partitionAction = getSettingsActionWrap(monitoringSection, "可用区变更");
-    const regionAction = getSettingsActionWrap(monitoringSection, "地区变更");
+    const regionAction = getSettingsActionWrap(monitoringSection, "国家变更");
 
     expect(within(packageAction).getByRole("button", { name: "启用" })).toBeVisible();
     expect(within(partitionAction).getByRole("button", { name: "关闭" })).toBeVisible();
@@ -249,8 +249,11 @@ export const MonitoringEventModes: Story = {
     ).toBeVisible();
     expect(
       within(monitoringSection).getByText(
-        "启用后：仅通知已在 products 中开启“地区监控”的地区，关注可用区新增与删除。",
+        "启用后：仅通知已在 products 中开启“国家监控”的国家，关注可用区新增与删除。",
       ),
+    ).toBeVisible();
+    expect(
+      within(monitoringSection).getByText("启用后：全站范围关注国家新增与删除。"),
     ).toBeVisible();
 
     await userEvent.click(within(partitionAction).getByRole("button", { name: "关闭" }));
