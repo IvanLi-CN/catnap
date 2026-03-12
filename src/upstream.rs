@@ -316,27 +316,57 @@ impl UpstreamClient {
         };
 
         let start = Instant::now();
-        let gate = upstream_request_gate();
-        let _guard = gate.lock().await;
-        let res = self.client.get(&url).send().await?;
-        let status = res.status();
-        let http_status = status.as_u16();
-        if !status.is_success() {
-            anyhow::bail!("upstream http {status} for {url}");
-        }
-        let html = res.text().await?;
-        let elapsed_ms = start.elapsed().as_millis() as i64;
-        let bytes = html.len() as i64;
-        tokio::time::sleep(std::time::Duration::from_millis(
-            UPSTREAM_REQUEST_COOLDOWN_MS,
-        ))
-        .await;
+        let (html, http_status, elapsed_ms, bytes) = {
+            let gate = upstream_request_gate();
+            let _guard = gate.lock().await;
+            let res = self.client.get(&url).send().await?;
+            let status = res.status();
+            let http_status = status.as_u16();
+            if !status.is_success() {
+                anyhow::bail!("upstream http {status} for {url}");
+            }
+            let html = res.text().await?;
+            let elapsed_ms = start.elapsed().as_millis() as i64;
+            let bytes = html.len() as i64;
+            tokio::time::sleep(std::time::Duration::from_millis(
+                UPSTREAM_REQUEST_COOLDOWN_MS,
+            ))
+            .await;
+            (html, http_status, elapsed_ms, bytes)
+        };
 
         let parse_start = Instant::now();
-        let configs = parse_configs(fid, gid, &html);
-        let parse_elapsed_ms = parse_start.elapsed().as_millis() as i64;
+        let parsed_regions = parse_regions(fid, &html);
         let region_notice = parse_region_notice(&html);
-        let empty_result_authoritative = gid.is_none() && !parse_regions(fid, &html).is_empty();
+        let (configs, empty_result_authoritative) = if let Some(gid) = gid {
+            (
+                parse_configs(fid, Some(gid), &html),
+                !parsed_regions.is_empty(),
+            )
+        } else {
+            let direct_configs = parse_configs(fid, None, &html);
+            if parsed_regions.is_empty() {
+                (direct_configs, false)
+            } else if direct_configs.is_empty() {
+                (direct_configs, true)
+            } else {
+                let mut region_configs = Vec::new();
+                for region in &parsed_regions {
+                    let region_url = format!("{}?fid={fid}&gid={}", self.cart_url, region.id);
+                    let region_html = self.fetch_html(&region_url).await?;
+                    region_configs.extend(parse_configs(
+                        fid,
+                        Some(region.id.as_str()),
+                        &region_html,
+                    ));
+                }
+                (
+                    retain_country_direct_configs(direct_configs, &region_configs),
+                    true,
+                )
+            }
+        };
+        let parse_elapsed_ms = parse_start.elapsed().as_millis() as i64;
 
         if configs.is_empty() && !empty_result_authoritative {
             anyhow::bail!("upstream parse produced 0 configs for {url}");
@@ -878,6 +908,7 @@ fn known_pid_fallback(name: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::Router;
 
     #[test]
     fn parses_countries() {
@@ -1249,6 +1280,118 @@ mod tests {
         let retained = retain_country_direct_configs(direct, &region);
         assert_eq!(retained.len(), 1);
         assert_eq!(retained[0].source_pid.as_deref(), Some("256"));
+    }
+
+    async fn spawn_stub_server(app: Router) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        format!("http://{}", addr)
+    }
+
+    #[tokio::test]
+    async fn fetch_region_configs_detailed_drops_region_mirrors_from_country_root() {
+        let fid_html = r#"
+<!doctype html>
+<html lang="zh-CN">
+  <body>
+    <div class="firstgroup_box_group">
+      <div class="secondgroup_item pointer active" onclick="window.location.href='/cart?fid=2&gid=56'">
+        <a class="yy-bth-text-a">HKG Premium</a>
+        <a class="yy-bth-text-b">湾仔</a>
+      </div>
+    </div>
+    <div class="card cartitem shadow w-100">
+      <div class="card-body">
+        <h4>HKG-Premium Basic</h4>
+      </div>
+      <div class="text-right">
+        ¥ <a class="cart-num DINCondensed-Bold">24.90</a> 元 / 月
+      </div>
+      <div class="card-footer">
+        <a href="/cart?action=configureproduct&pid=117">立即购买</a>
+      </div>
+    </div>
+  </body>
+</html>
+"#;
+        let gid_56_html = include_str!("../tests/fixtures/cart-fid-2-gid-56.html");
+
+        #[derive(serde::Deserialize)]
+        struct CartQuery {
+            fid: Option<String>,
+            gid: Option<String>,
+        }
+
+        let upstream = Router::new().route(
+            "/cart",
+            axum::routing::get(
+                move |axum::extract::Query(q): axum::extract::Query<CartQuery>| async move {
+                    match (q.fid.as_deref(), q.gid.as_deref()) {
+                        (Some("2"), None) => fid_html.to_string(),
+                        (Some("2"), Some("56")) => gid_56_html.to_string(),
+                        _ => "not found".to_string(),
+                    }
+                },
+            ),
+        );
+        let base = spawn_stub_server(upstream).await;
+        let client = UpstreamClient::new(format!("{base}/cart")).unwrap();
+
+        let result = client
+            .fetch_region_configs_detailed("2", None)
+            .await
+            .unwrap();
+
+        assert!(result.empty_result_authoritative);
+        assert_eq!(result.configs.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn fetch_region_configs_detailed_accepts_empty_region_when_selector_exists() {
+        let gid_56_empty_html = r#"
+<!doctype html>
+<html lang="zh-CN">
+  <body>
+    <div class="firstgroup_box_group">
+      <div class="secondgroup_item pointer active" onclick="window.location.href='/cart?fid=2&gid=56'">
+        <a class="yy-bth-text-a">HKG Premium</a>
+        <a class="yy-bth-text-b">湾仔</a>
+      </div>
+    </div>
+  </body>
+</html>
+"#;
+
+        #[derive(serde::Deserialize)]
+        struct CartQuery {
+            fid: Option<String>,
+            gid: Option<String>,
+        }
+
+        let upstream = Router::new().route(
+            "/cart",
+            axum::routing::get(
+                move |axum::extract::Query(q): axum::extract::Query<CartQuery>| async move {
+                    match (q.fid.as_deref(), q.gid.as_deref()) {
+                        (Some("2"), Some("56")) => gid_56_empty_html.to_string(),
+                        _ => "not found".to_string(),
+                    }
+                },
+            ),
+        );
+        let base = spawn_stub_server(upstream).await;
+        let client = UpstreamClient::new(format!("{base}/cart")).unwrap();
+
+        let result = client
+            .fetch_region_configs_detailed("2", Some("56"))
+            .await
+            .unwrap();
+
+        assert!(result.empty_result_authoritative);
+        assert_eq!(result.configs.len(), 0);
     }
 
     #[test]
