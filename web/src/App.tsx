@@ -1671,6 +1671,28 @@ function buildGroupNoticeByKey(notices: RegionNotice[]): Map<string, string> {
   return out;
 }
 
+function buildCountriesWithTopologyRegions(regions: Region[]): Set<string> {
+  const out = new Set<string>();
+  for (const region of regions) {
+    out.add(region.countryId);
+  }
+  return out;
+}
+
+function resolveScopedGroupNotice(
+  noticesByKey: Map<string, string>,
+  countriesWithTopologyRegions: Set<string>,
+  countryId: string,
+  regionId: string | null,
+): string | null {
+  const notice = noticesByKey.get(buildPartitionKey(countryId, regionId));
+  if (!notice) return null;
+  if (regionId === null && countriesWithTopologyRegions.has(countryId)) {
+    return null;
+  }
+  return notice;
+}
+
 function isArchivedDelisted(cfg: Config): boolean {
   return cfg.lifecycle.state === "delisted" && Boolean(cfg.lifecycle.cleanupAt);
 }
@@ -2091,6 +2113,10 @@ export function ProductsView({
     () => buildGroupNoticeByKey(bootstrap.catalog.regionNotices),
     [bootstrap.catalog.regionNotices],
   );
+  const countriesWithTopologyRegions = useMemo(
+    () => buildCountriesWithTopologyRegions(bootstrap.catalog.regions),
+    [bootstrap.catalog.regions],
+  );
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -2214,7 +2240,12 @@ export function ProductsView({
         countryName,
         isCloud: countryName.includes("云服务器"),
         countryMonitorEnabled: enabledPartitionKeys.has(countryKey),
-        countryNotice: groupNoticeByKey.get(countryKey) ?? null,
+        countryNotice: resolveScopedGroupNotice(
+          groupNoticeByKey,
+          countriesWithTopologyRegions,
+          countryId,
+          null,
+        ),
         directConfigs: [],
         groups: [],
         groupsByKey: new Map(),
@@ -2242,7 +2273,12 @@ export function ProductsView({
         title,
         subtitle,
         partitionEnabled: enabledPartitionKeys.has(groupKey),
-        notice: groupNoticeByKey.get(groupKey) ?? null,
+        notice: resolveScopedGroupNotice(
+          groupNoticeByKey,
+          countriesWithTopologyRegions,
+          country.countryId,
+          regionId,
+        ),
         configs: [],
         sortLabel,
       };
@@ -2377,6 +2413,7 @@ export function ProductsView({
     bootstrap.catalog.countries,
     bootstrap.catalog.regions,
     countriesById,
+    countriesWithTopologyRegions,
     countryFilter,
     enabledPartitionKeys,
     filtered,
@@ -2628,6 +2665,10 @@ export function MonitoringView({
     () => buildGroupNoticeByKey(bootstrap.catalog.regionNotices),
     [bootstrap.catalog.regionNotices],
   );
+  const countriesWithTopologyRegions = useMemo(
+    () => buildCountriesWithTopologyRegions(bootstrap.catalog.regions),
+    [bootstrap.catalog.regions],
+  );
 
   return (
     <div className="panel" data-testid="page-monitoring">
@@ -2685,7 +2726,12 @@ export function MonitoringView({
             key={k}
             collapseKey={`catnap:collapse:${k}`}
             title={title}
-            groupNotice={groupNoticeByKey.get(k) ?? null}
+            groupNotice={resolveScopedGroupNotice(
+              groupNoticeByKey,
+              countriesWithTopologyRegions,
+              countryId,
+              regionId || null,
+            )}
             items={items}
             countriesById={countriesById}
             orderBaseUrl={orderBaseUrl}

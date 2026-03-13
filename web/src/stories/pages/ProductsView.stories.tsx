@@ -61,6 +61,72 @@ function buildPartitionMonitoringBootstrap(): BootstrapResponse {
   return bootstrap;
 }
 
+function buildCountryNoticeBoundaryBootstrap(): BootstrapResponse {
+  const bootstrap = cloneBootstrap();
+  const baseUsConfig = bootstrap.catalog.configs.find((cfg) => cfg.id === "cfg-3");
+  const cloudConfig = bootstrap.catalog.configs.find((cfg) => cfg.id === "cfg-cloud-1");
+  const sharedNotice = "特惠年付机，IPV6入口，出口cloudflare warp";
+
+  bootstrap.catalog.configs = bootstrap.catalog.configs.filter((cfg) =>
+    ["cfg-1", "cfg-4", "cfg-2", "cfg-2b"].includes(cfg.id),
+  );
+
+  if (baseUsConfig) {
+    bootstrap.catalog.configs.push({
+      ...baseUsConfig,
+      id: "cfg-us-default",
+      regionId: null,
+      name: "VPS • 4C/8G（美国）",
+      inventory: {
+        ...baseUsConfig.inventory,
+        quantity: 7,
+        status: "available",
+      },
+      lifecycle: {
+        ...baseUsConfig.lifecycle,
+        state: "active",
+        delistedAt: null,
+        cleanupAt: null,
+      },
+      monitorEnabled: false,
+    });
+  }
+
+  if (cloudConfig) {
+    bootstrap.catalog.configs.push({
+      ...cloudConfig,
+      monitorEnabled: false,
+    });
+  }
+
+  bootstrap.catalog.regionNotices = [
+    {
+      countryId: "us",
+      regionId: null,
+      text: sharedNotice,
+    },
+    {
+      countryId: "us",
+      regionId: "us-ca",
+      text: sharedNotice,
+    },
+    {
+      countryId: "cloud",
+      regionId: null,
+      text: "云产品全区共享库存，不区分可用区。",
+    },
+  ];
+  bootstrap.monitoring.enabledConfigIds = bootstrap.catalog.configs
+    .filter((cfg) => cfg.monitorEnabled)
+    .map((cfg) => cfg.id);
+  bootstrap.monitoring.enabledPartitions = [
+    { countryId: "jp", regionId: "jp-tokyo" },
+    { countryId: "us", regionId: null },
+  ];
+
+  return bootstrap;
+}
+
 function buildTopologyOnlyBootstrap(): BootstrapResponse {
   const bootstrap = cloneBootstrap();
 
@@ -227,7 +293,7 @@ export const Default: Story = {};
 
 export const PartitionMonitoringFocus: Story = {
   args: {
-    bootstrap: buildPartitionMonitoringBootstrap(),
+    bootstrap: buildCountryNoticeBoundaryBootstrap(),
   },
   play: async ({ canvasElement }) => {
     const japanSection = await findPanelSection(canvasElement as HTMLElement, "日本");
@@ -235,6 +301,12 @@ export const PartitionMonitoringFocus: Story = {
     const tokyoBlock = await findProductRegionBlock(canvasElement as HTMLElement, "东京");
     const osakaBlock = await findProductRegionBlock(canvasElement as HTMLElement, "大阪");
     const californiaBlock = await findProductRegionBlock(canvasElement as HTMLElement, "加州");
+    const cloudSection = await findPanelSection(canvasElement as HTMLElement, "云服务器");
+    const usHeader = usSection.querySelector(".product-country-header");
+    const sharedNotice = "特惠年付机，IPV6入口，出口cloudflare warp";
+    if (!(usHeader instanceof HTMLElement)) {
+      throw new Error("Unable to find US country header");
+    }
 
     expect(within(japanSection).getByTestId("country-monitor-jp")).toHaveTextContent("监控：关");
     expect(within(usSection).getByTestId("country-monitor-us")).toHaveTextContent("监控：开");
@@ -244,6 +316,9 @@ export const PartitionMonitoringFocus: Story = {
       "监控：关",
     );
     expect(within(usSection).queryByText("默认可用区")).not.toBeInTheDocument();
+    expect(within(usHeader).queryByText(sharedNotice)).not.toBeInTheDocument();
+    expect(within(californiaBlock).getByText(sharedNotice)).toBeVisible();
+    expect(within(cloudSection).getByText("云产品全区共享库存，不区分可用区。")).toBeVisible();
     expect(within(usSection).getByText("VPS • 4C/8G（美国）")).toBeVisible();
     expect(within(tokyoBlock).getAllByText("监控：开")).toHaveLength(2);
 
