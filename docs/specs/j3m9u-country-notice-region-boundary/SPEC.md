@@ -65,6 +65,30 @@
 - `cd web && bun run typecheck`
 - `cd web && bun run test:storybook`
 
+## Visual Evidence (PR)
+
+- source_type: storybook_canvas
+  target_program: mock-only
+  capture_scope: element
+  sensitive_exclusion: N/A
+  submission_gate: pending-owner-approval
+  story_id_or_title: Pages/ProductsView/PartitionMonitoringFocus
+  state: country-notice-suppressed
+  evidence_note: 验证 products 页中“美国”国家头部不再显示误挂的说明，而“加州”可用区块继续显示该说明；无可用区的“云服务器”仍保留国家说明。
+  image:
+  ![Products country notice boundary](./assets/products-country-notice-boundary.png)
+
+- source_type: storybook_canvas
+  target_program: mock-only
+  capture_scope: element
+  sensitive_exclusion: N/A
+  submission_gate: pending-owner-approval
+  story_id_or_title: Pages/MonitoringView/CountryNoticeFollowsRegionBoundary
+  state: country-notice-suppressed
+  evidence_note: 验证 monitoring 页国家级分组不再显示误归属说明，而“美国 / 加州”分组保留说明；无可用区国家仍保留 country-scoped notice。
+  image:
+  ![Monitoring country notice boundary](./assets/monitoring-country-notice-boundary.png)
+
 ## 实现里程碑（Milestones）
 
 - [x] M1: 冻结 follow-up spec 与索引
@@ -81,3 +105,4 @@
 
 - 2026-03-13: 创建 follow-up spec，冻结国家说明与可用区说明的展示边界。
 - 2026-03-13: 完成前端 suppress 逻辑与 Storybook 边界断言，等待 PR / checks / review-loop 收口。
+- 2026-03-13: 补充 Storybook mock 视觉证据到 spec，等待主人确认是否提交截图变更。
