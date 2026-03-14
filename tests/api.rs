@@ -2209,6 +2209,30 @@ async fn notification_records_api_includes_telegram_deliveries() {
     )
     .await
     .unwrap();
+    sqlx::query(
+        r#"
+INSERT INTO notification_record_deliveries (
+  id,
+  record_id,
+  channel,
+  position,
+  target,
+  status,
+  error_message,
+  created_at,
+  updated_at
+)
+VALUES (?, ?, 'webPush', 0, ?, 'success', NULL, ?, ?)
+"#,
+    )
+    .bind("delivery-web-push")
+    .bind(&record_id)
+    .bind("https://push.example.com/subscriptions/demo")
+    .bind("2026-03-14T00:00:00Z")
+    .bind("2026-03-14T00:00:00Z")
+    .execute(&t.db)
+    .await
+    .unwrap();
     catnap::db::update_notification_record_channel_status(&t.db, &record_id, "telegram", "partial_success")
         .await
         .unwrap();
@@ -2232,6 +2256,8 @@ async fn notification_records_api_includes_telegram_deliveries() {
     assert_eq!(json["telegramStatus"].as_str(), Some("partial_success"));
     let deliveries = json["telegramDeliveries"].as_array().unwrap();
     assert_eq!(deliveries.len(), 2);
+    assert_eq!(deliveries[0]["target"].as_str(), Some("@ok"));
+    assert_eq!(deliveries[1]["target"].as_str(), Some("@bad"));
     let by_target = deliveries
         .iter()
         .map(|item| {

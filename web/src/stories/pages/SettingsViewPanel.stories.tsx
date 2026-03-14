@@ -275,12 +275,19 @@ export const UpdateAvailable: Story = {
 export const TelegramSuccessBubble: Story = {
   args: { about: aboutOk },
   play: async ({ canvasElement }) => {
-    const restoreFetch = installFetchMock((url) => {
+    let requestTargets: string[] = [];
+    const restoreFetch = installFetchMock((url, init) => {
       if (url.endsWith("/api/notifications/telegram/test")) {
+        requestTargets = init?.body
+          ? ((JSON.parse(String(init.body)) as { targets?: string[] }).targets ?? [])
+          : [];
         return jsonOk({
           ok: true,
           status: "success",
-          results: [{ target: "@catnap", status: "success" }],
+          results: [
+            { target: "@catnap", status: "success" },
+            { target: "@new-channel", status: "success" },
+          ],
         });
       }
       throw new Error(`Unexpected fetch in TelegramSuccessBubble: ${url}`);
@@ -288,6 +295,8 @@ export const TelegramSuccessBubble: Story = {
 
     try {
       const canvas = within(canvasElement);
+      const input = await canvas.findByPlaceholderText("@channel 或 -1001234567890");
+      await userEvent.type(input, "@new-channel");
       const button = await canvas.findByRole("button", { name: "测试 Telegram" });
       const beforeMetrics = {
         left: button.offsetLeft,
@@ -300,8 +309,10 @@ export const TelegramSuccessBubble: Story = {
       await waitFor(() => {
         expect(bubble).toBeVisible();
       });
+      expect(requestTargets).toEqual(["@catnap", "-1002233445566", "@new-channel"]);
       expect(bubble).toHaveTextContent("已全部发送");
       expect(bubble).toHaveTextContent("@catnap");
+      expect(bubble).toHaveTextContent("@new-channel");
       await expectActionFeedbackBeforeButton(
         canvasElement as HTMLElement,
         "测试 Telegram",

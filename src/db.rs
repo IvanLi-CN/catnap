@@ -321,6 +321,7 @@ CREATE TABLE IF NOT EXISTS notification_record_deliveries (
   id TEXT PRIMARY KEY,
   record_id TEXT NOT NULL,
   channel TEXT NOT NULL,
+  position INTEGER NOT NULL DEFAULT 0,
   target TEXT NOT NULL,
   status TEXT NOT NULL,
   error_message TEXT NULL,
@@ -366,7 +367,7 @@ CREATE INDEX IF NOT EXISTS idx_event_logs_user_ts ON event_logs (user_id, ts DES
 CREATE INDEX IF NOT EXISTS idx_event_logs_ts ON event_logs (ts DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_notification_records_user_created ON notification_records (user_id, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_notification_record_items_record_position ON notification_record_items (record_id, position ASC);
-CREATE INDEX IF NOT EXISTS idx_notification_record_deliveries_record_channel ON notification_record_deliveries (record_id, channel, created_at ASC, id ASC);
+CREATE INDEX IF NOT EXISTS idx_notification_record_deliveries_record_channel ON notification_record_deliveries (record_id, channel, position ASC, id ASC);
 CREATE INDEX IF NOT EXISTS idx_notification_record_deliveries_channel_ts ON notification_record_deliveries (channel, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_inventory_samples_1m_ts ON inventory_samples_1m (ts_minute);
 CREATE INDEX IF NOT EXISTS idx_catalog_url_cache_last_success_at ON catalog_url_cache (last_success_at DESC, url_key);
@@ -508,6 +509,13 @@ CREATE INDEX IF NOT EXISTS idx_ops_notify_runs_channel_ts ON ops_notify_runs (ch
     )
     .await?;
     add_column_if_missing(db, "settings", "telegram_targets_json", "TEXT NULL").await?;
+    add_column_if_missing(
+        db,
+        "notification_record_deliveries",
+        "position",
+        "INTEGER NOT NULL DEFAULT 0",
+    )
+    .await?;
     if !site_listed_column_exists {
         sqlx::query(
             r#"
@@ -2631,7 +2639,7 @@ pub async fn replace_notification_record_deliveries(
         .execute(&mut *tx)
         .await?;
 
-    for delivery in deliveries {
+    for (position, delivery) in deliveries.iter().enumerate() {
         let id = Uuid::new_v4().to_string();
         sqlx::query(
             r#"
@@ -2639,18 +2647,20 @@ INSERT INTO notification_record_deliveries (
   id,
   record_id,
   channel,
+  position,
   target,
   status,
   error_message,
   created_at,
   updated_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 "#,
         )
         .bind(&id)
         .bind(record_id)
         .bind(channel)
+        .bind(position as i64)
         .bind(&delivery.target)
         .bind(&delivery.status)
         .bind(delivery.error.as_deref())
@@ -2699,7 +2709,8 @@ async fn load_notification_record_deliveries_by_record_ids(
 SELECT record_id, channel, target, status, error_message
 FROM notification_record_deliveries
 WHERE record_id IN ({placeholders})
-ORDER BY record_id ASC, created_at ASC, id ASC
+  AND channel = 'telegram'
+ORDER BY record_id ASC, position ASC, created_at ASC, id ASC
 "#
     );
 

@@ -3671,15 +3671,16 @@ export function SettingsViewPanel({
     );
   };
 
-  const commitTelegramTargetDraft = useCallback(async () => {
+  const commitTelegramTargetDraft = useCallback(async (): Promise<string[]> => {
     const nextValue = tgTargetDraftInput.trim();
     setFieldError("tgTargets", null);
-    if (!nextValue) return;
+    if (!nextValue) return tgTargets;
     const nextTargets = normalizeTelegramTargets([...tgTargets, nextValue]);
     setTgTargetDraftInput("");
     setTgTargets(nextTargets);
     clearTgTestStatus();
     await flushAutosaveImmediate({ tgTargets: nextTargets }, "tgTargets");
+    return nextTargets;
   }, [clearTgTestStatus, flushAutosaveImmediate, setFieldError, tgTargetDraftInput, tgTargets]);
 
   const removeTelegramTarget = useCallback(
@@ -4046,6 +4047,9 @@ export function SettingsViewPanel({
                         void commitTelegramTargetDraft();
                       }
                     }}
+                    onBlur={() => {
+                      void commitTelegramTargetDraft();
+                    }}
                   />
                 </div>
               </div>
@@ -4078,12 +4082,13 @@ export function SettingsViewPanel({
                 clearTgTestStatus();
                 setFieldError("tgTestAction", null);
                 try {
+                  const nextTargets = await commitTelegramTargetDraft();
                   const res = await fetch("/api/notifications/telegram/test", {
                     method: "POST",
                     headers: { "content-type": "application/json" },
                     body: JSON.stringify({
                       botToken: tgBotTokenInput.trim() ? tgBotTokenInput.trim() : null,
-                      targets: tgTargets,
+                      targets: nextTargets,
                       text: null,
                     }),
                   });
