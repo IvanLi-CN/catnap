@@ -307,8 +307,8 @@ async fn post_partition_catalog_refresh(
     _user: axum::extract::Extension<UserView>,
     Json(req): Json<PartitionRefreshRequest>,
 ) -> Result<Json<PartitionRefreshResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let country_id = req.country_id.trim();
-    let region_id = req.region_id.trim();
+    let country_id = req.country_id.as_deref().map(str::trim).unwrap_or("");
+    let region_id = req.region_id.as_deref().map(str::trim).unwrap_or("");
     if country_id.is_empty() || region_id.is_empty() {
         return Err(json_invalid_argument());
     }

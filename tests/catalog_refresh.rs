@@ -1,5 +1,5 @@
 use axum::{
-    body::Body,
+    body::{to_bytes, Body},
     http::{Request, StatusCode},
 };
 use catnap::{build_app, AppState, RuntimeConfig};
@@ -334,6 +334,25 @@ async fn partition_refresh_forces_real_fetch_and_rejects_invalid_scope() {
         .status()
     }
 
+    async fn post_partition_refresh_raw(
+        app: axum::Router,
+        body: serde_json::Value,
+    ) -> axum::response::Response {
+        app.oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/catalog/refresh/partition")
+                .header("host", "example.com")
+                .header("origin", "http://example.com")
+                .header("content-type", "application/json")
+                .header("x-user", "u_1")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+    }
+
     assert_eq!(
         post_partition_refresh(t.app.clone(), "2", "56").await,
         StatusCode::OK
@@ -354,6 +373,20 @@ async fn partition_refresh_forces_real_fetch_and_rejects_invalid_scope() {
         post_partition_refresh(t.app.clone(), "2", "999").await,
         StatusCode::BAD_REQUEST
     );
+
+    let missing_region = post_partition_refresh_raw(
+        t.app.clone(),
+        serde_json::json!({
+            "countryId": "2",
+        }),
+    )
+    .await;
+    assert_eq!(missing_region.status(), StatusCode::BAD_REQUEST);
+    let bytes = to_bytes(missing_region.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(json["error"]["code"], "INVALID_ARGUMENT");
 
     catnap::db::replace_catalog_topology(&t.db, &format!("{base}/cart"), &[], &[])
         .await

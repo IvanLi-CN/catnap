@@ -181,6 +181,7 @@ type ProductRegionGroup = {
   title: string;
   subtitle: string | null;
   partitionEnabled: boolean;
+  refreshAvailable: boolean;
   notice: string | null;
   configs: Config[];
 };
@@ -957,15 +958,25 @@ export function App() {
           body: JSON.stringify({ countryId, regionId }),
         });
 
-        const nextBootstrap = await api<BootstrapResponse>("/api/bootstrap");
-        setBootstrap(nextBootstrap);
-        const products = await api<ProductsResponse>("/api/products");
-        applyProductsResponse(products);
+        try {
+          const nextBootstrap = await api<BootstrapResponse>("/api/bootstrap");
+          setBootstrap(nextBootstrap);
+          const products = await api<ProductsResponse>("/api/products");
+          applyProductsResponse(products);
+          setPartitionRefreshStates((prev) => ({
+            ...prev,
+            [partitionKey]: { kind: "success", message: "已刷新" },
+          }));
+        } catch {
+          setPartitionRefreshStates((prev) => ({
+            ...prev,
+            [partitionKey]: {
+              kind: "success",
+              message: "已刷新，页面数据同步稍后重试",
+            },
+          }));
+        }
 
-        setPartitionRefreshStates((prev) => ({
-          ...prev,
-          [partitionKey]: { kind: "success", message: "已刷新" },
-        }));
         schedulePartitionRefreshReset(partitionKey);
       } catch (e) {
         setPartitionRefreshStates((prev) => ({
@@ -2360,10 +2371,14 @@ export function ProductsView({
       title: string,
       subtitle: string | null,
       sortLabel: string,
+      refreshAvailable: boolean,
     ) => {
       const groupKey = buildPartitionKey(country.countryId, regionId);
       let regionGroup = country.groupsByKey.get(groupKey);
       if (regionGroup) {
+        if (refreshAvailable) {
+          regionGroup.refreshAvailable = true;
+        }
         return regionGroup;
       }
 
@@ -2373,6 +2388,7 @@ export function ProductsView({
         title,
         subtitle,
         partitionEnabled: enabledPartitionKeys.has(groupKey),
+        refreshAvailable,
         notice: resolveScopedGroupNotice(
           groupNoticeByKey,
           countriesWithTopologyRegions,
@@ -2402,6 +2418,7 @@ export function ProductsView({
         regionLabel,
         region?.locationName ?? null,
         `${regionLabel}::${region?.locationName ?? ""}`,
+        false,
       );
       regionGroup.configs.push(cfg);
     }
@@ -2480,6 +2497,7 @@ export function ProductsView({
             region.name,
             region.locationName ?? null,
             `${region.name}::${region.locationName ?? ""}`,
+            true,
           );
         }
       }
@@ -3072,21 +3090,23 @@ ${countryCatalogLink}`}
                         </div>
                       </div>
                       <div className="panel-title-actions">
-                        <PartitionRefreshButton
-                          regionTitle={group.title}
-                          testId={`region-refresh-${buildScopedRegionDomKey(
-                            country.countryId,
-                            group.regionId,
-                          )}`}
-                          state={
-                            partitionRefreshStates[
-                              buildPartitionKey(country.countryId, group.regionId)
-                            ]
-                          }
-                          onRefresh={() =>
-                            void onRefreshPartition(country.countryId, group.regionId)
-                          }
-                        />
+                        {group.refreshAvailable ? (
+                          <PartitionRefreshButton
+                            regionTitle={group.title}
+                            testId={`region-refresh-${buildScopedRegionDomKey(
+                              country.countryId,
+                              group.regionId,
+                            )}`}
+                            state={
+                              partitionRefreshStates[
+                                buildPartitionKey(country.countryId, group.regionId)
+                              ]
+                            }
+                            onRefresh={() =>
+                              void onRefreshPartition(country.countryId, group.regionId)
+                            }
+                          />
+                        ) : null}
                         <MonitorToggle
                           labelledBy={`products-region-heading-${buildScopedRegionDomKey(
                             country.countryId,
@@ -3111,7 +3131,13 @@ ${countryCatalogLink}`}
                   <div className="product-region-content">
                     {partitionRefreshStates[buildPartitionKey(country.countryId, group.regionId)]
                       ?.kind === "success" ? (
-                      <div className="product-region-refresh-feedback success">已刷新</div>
+                      <div className="product-region-refresh-feedback success">
+                        {
+                          partitionRefreshStates[
+                            buildPartitionKey(country.countryId, group.regionId)
+                          ]?.message
+                        }
+                      </div>
                     ) : null}
                     {partitionRefreshStates[buildPartitionKey(country.countryId, group.regionId)]
                       ?.kind === "error" ? (

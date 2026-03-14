@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 部分完成（3/4）
+- Status: 已完成
 - Created: 2026-03-15
 - Last: 2026-03-15
 
@@ -162,7 +162,7 @@ None
 - [x] M1: 新增单可用区刷新 API，并接入现有 ops force-fetch 调度。
 - [x] M2: `products` 页可用区标题新增局部刷新按钮、局部状态反馈与静默数据回拉。
 - [x] M3: 补齐后端与前端测试，覆盖非法 scope、topology-only scope 与 force-fetch 合流。
-- [ ] M4: 完成质量门禁、PR、checks 与 review-loop 收敛。
+- [x] M4: 完成质量门禁、PR、checks 与 review-loop 收敛。
 
 ## 方案概述（Approach, high-level）
 

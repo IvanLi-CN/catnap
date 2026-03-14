@@ -13,7 +13,7 @@ import { ResponsivePageStory, expectResponsiveBreakpoints } from "./responsivePa
 
 type DemoProps = {
   bootstrap?: BootstrapResponse;
-  refreshScenario?: "static" | "topology-fill" | "error";
+  refreshScenario?: "static" | "topology-fill" | "error" | "hydrate-error";
 };
 
 function cloneBootstrap(bootstrap: BootstrapResponse = demoBootstrap): BootstrapResponse {
@@ -162,6 +162,35 @@ function buildCountryMonitorTopologyBootstrap(): BootstrapResponse {
   return bootstrap;
 }
 
+function buildArchivedHistoryOnlyRegionBootstrap(): BootstrapResponse {
+  const bootstrap = cloneBootstrap();
+  const archivedAt = new Date().toISOString();
+  const historicalConfig = bootstrap.catalog.configs.find((cfg) => cfg.id === "cfg-2");
+
+  if (!historicalConfig) {
+    throw new Error("Unable to find base config for archived history scope");
+  }
+
+  bootstrap.catalog.configs = [
+    {
+      ...historicalConfig,
+      id: "cfg-jp-sapporo-archived",
+      regionId: "jp-sapporo",
+      sourceGid: "jp-sapporo",
+      name: "VPS • 2C/4G（札幌）",
+      lifecycle: {
+        ...historicalConfig.lifecycle,
+        state: "delisted",
+        delistedAt: archivedAt,
+        cleanupAt: archivedAt,
+      },
+    } satisfies Config,
+  ];
+  bootstrap.catalog.regionNotices = [];
+
+  return bootstrap;
+}
+
 async function findPanelSection(canvasElement: HTMLElement, title: string) {
   await within(canvasElement).findByTestId("page-products");
   const heading = Array.from(canvasElement.querySelectorAll(".panel-section .panel-title")).find(
@@ -300,6 +329,14 @@ function ProductsViewDemo({
 
         if (refreshScenario === "error") {
           setPartitionRefreshState(key, { kind: "error", message: "上游刷新失败" });
+          return;
+        }
+
+        if (refreshScenario === "hydrate-error") {
+          setPartitionRefreshState(key, {
+            kind: "success",
+            message: "已刷新，页面数据同步稍后重试",
+          });
           return;
         }
 
@@ -504,6 +541,19 @@ export const ManualRegionRefreshError: Story = {
   },
 };
 
+export const ManualRegionRefreshHydrationFallback: Story = {
+  args: {
+    bootstrap: buildTopologyOnlyBootstrap(),
+    refreshScenario: "hydrate-error",
+  },
+  play: async ({ canvasElement }) => {
+    const amsterdamBlock = await findProductRegionBlock(canvasElement as HTMLElement, "阿姆斯特丹");
+    await userEvent.click(within(amsterdamBlock).getByTestId("region-refresh-nl-ams"));
+    expect(await within(amsterdamBlock).findByText("已刷新，页面数据同步稍后重试")).toBeVisible();
+    expect(within(amsterdamBlock).getByText("当前暂无套餐。")).toBeVisible();
+  },
+};
+
 export const RegionFilterHidesUnrelatedCountryMonitorScopes: Story = {
   args: {
     bootstrap: buildRegionFilterMonitorBootstrap(),
@@ -600,6 +650,20 @@ export const ArchivedViewHidesTopologyOnlyScopes: Story = {
     expect(
       within(canvasElement as HTMLElement).queryByText("当前暂无可用区与套餐。"),
     ).not.toBeInTheDocument();
+  },
+};
+
+export const ArchivedHistoryScopeHidesRefreshButton: Story = {
+  args: {
+    bootstrap: buildArchivedHistoryOnlyRegionBootstrap(),
+  },
+  play: async ({ canvasElement }) => {
+    const archiveSelect = within(canvasElement as HTMLElement).getByDisplayValue("仅正常");
+    await userEvent.selectOptions(archiveSelect, "archived");
+
+    const sapporoBlock = await findProductRegionBlock(canvasElement as HTMLElement, "jp-sapporo");
+    expect(within(sapporoBlock).queryByTestId("region-refresh-jp-sapporo")).not.toBeInTheDocument();
+    expect(within(sapporoBlock).getByTestId("region-monitor-jp-sapporo")).toBeVisible();
   },
 };
 

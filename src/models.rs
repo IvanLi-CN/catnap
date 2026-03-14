@@ -264,8 +264,8 @@ pub struct MonitoringPartitionToggleResponse {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PartitionRefreshRequest {
-    pub country_id: String,
-    pub region_id: String,
+    pub country_id: Option<String>,
+    pub region_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
