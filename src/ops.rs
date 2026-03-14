@@ -570,14 +570,6 @@ async fn deliver_telegram_channel(
         &deliveries,
     )
     .await?;
-    let _ = manager
-        .record_notify(
-            request.notify_run_id,
-            "telegram",
-            "error",
-            Some("missing telegram config"),
-        )
-        .await;
     crate::db::update_notification_record_channel_status(
         &manager.inner.db,
         request.record_id,
@@ -3319,17 +3311,13 @@ mod tests {
         );
 
         let notify_row = sqlx::query(
-            "SELECT result, error_message FROM ops_notify_runs WHERE task_run_id = ? AND channel = 'telegram' ORDER BY id DESC LIMIT 1",
+            "SELECT COUNT(*) FROM ops_notify_runs WHERE task_run_id = ? AND channel = 'telegram'",
         )
         .bind(42_i64)
         .fetch_one(&db)
         .await
         .unwrap();
-        assert_eq!(notify_row.get::<String, _>(0), "error");
-        assert_eq!(
-            notify_row.get::<Option<String>, _>(1).as_deref(),
-            Some("missing telegram config")
-        );
+        assert_eq!(notify_row.get::<i64, _>(0), 0);
     }
 
     #[test]

@@ -1177,15 +1177,6 @@ async fn poll_once(
                             &state.db, &record_id, "telegram", "error",
                         )
                         .await?;
-                        let _ = state
-                            .ops
-                            .record_notify(
-                                run.run_id,
-                                "telegram",
-                                "error",
-                                Some("missing telegram config"),
-                            )
-                            .await;
                     }
                 }
 

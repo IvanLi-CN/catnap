@@ -59,6 +59,7 @@
 - 多目标 UI 保持输入顺序稳定，重复目标自动去重，删除/新增操作不打断自动保存体验。
 - 通知记录页在聚合状态外，直接展示每个 Telegram 目标的最近结果与错误摘要。
 - Ops 的 Telegram 成功率继续可观测，多目标场景按目标尝试记账，而不是按整条通知记 1 次。
+- Telegram 本地配置缺失时，通知记录仍应展示可操作错误，但这类配置故障不计入按目标 fan-out 成功率。
 
 ## 功能与行为规格（Functional/Behavior Spec）
 
@@ -68,11 +69,12 @@
   - 用户在设置页编辑 Telegram targets 标签列表。
   - 前端自动保存时提交 `targets[]`；后端规范化后持久化到多目标字段，并将首个目标镜像到旧 `telegram_target`。
 - Telegram 测试：
-  - 点击“测试 Telegram”后，后端读取本次请求的 `targets[]`（若为空则回退到已保存配置）。
+  - 点击“测试 Telegram”后，后端读取本次请求的 `targets[]`；若字段缺失或为 `null` 则回退到已保存配置，若显式提供但归一化后为空则直接返回缺少 targets。
   - 后端对每个目标顺序调用 Telegram Bot API，响应返回逐目标结果；前端显示整体成功/部分成功/失败与逐目标明细。
 - 真实通知：
   - `poller` / `ops` 创建通知记录后，对全部 Telegram 目标顺序 fan-out。
   - 每个目标的成功/失败都写入投递明细表与日志；通知主记录的 `telegramStatus` 根据明细聚合。
+  - 若 Telegram 已启用但缺少 bot token / targets，则记录一条本地配置错误明细用于 UI 诊断，但不把它算进按目标成功率统计。
 - 通知记录展示：
   - 通知列表继续按通知组显示，但 Telegram 区域新增逐目标明细列表。
   - 单个目标失败时，组状态显示 `partial_success` 或 `error`，并能看到失败目标与错误信息。
@@ -196,6 +198,7 @@ None
 
 - 2026-03-14: 创建规格，冻结 Telegram 多目标设置、测试与通知记录明细契约。
 - 2026-03-14: 完成多目标 settings/test/notification-record 实现，质量门已通过，待 PR 与 review-loop 收口。
+- 2026-03-14: review-loop 修正删除后立即测试、显式空 targets 语义、投递顺序稳定性与配置错误诊断边界。
 
 ## 参考（References）
 

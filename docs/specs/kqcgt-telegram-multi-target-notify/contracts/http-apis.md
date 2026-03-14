@@ -55,7 +55,8 @@ Response on partial success:
 ```
 
 Rules:
-- if request `targets` is null/empty after normalization, server falls back to saved targets;
+- if request `targets` is omitted or null, server falls back to saved targets;
+- if request `targets` is present but becomes empty after normalization, server returns `400 INVALID_ARGUMENT` instead of falling back;
 - if all effective targets are missing, return `400 INVALID_ARGUMENT`;
 - if at least one target succeeds and at least one fails, return `200` with `status=partial_success`;
 - if all targets fail, return `500 INTERNAL` with `status=error` and per-target results;
@@ -81,5 +82,6 @@ Rules:
 
 Rules:
 - `telegramDeliveries` is omitted or empty only when Telegram was not attempted for that record;
+- when Telegram is enabled but local config is incomplete, `telegramDeliveries` may contain a synthetic diagnostic row with `target="(config)"` and an actionable error message;
 - deliveries are returned in the same order as the normalized target list used for sending;
 - `webPushStatus` contract is unchanged.
