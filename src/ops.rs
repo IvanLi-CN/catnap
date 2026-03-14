@@ -1,5 +1,5 @@
 use crate::config::RuntimeConfig;
-use crate::models::{Money, NotificationRecordItemView};
+use crate::models::{Money, NotificationRecordDeliveryView, NotificationRecordItemView};
 use crate::notification_content::{
     self, ConfigLifecycleNotificationKind, TopologyNotificationKind,
 };
@@ -557,11 +557,24 @@ async fn deliver_telegram_channel(
         return Ok(());
     }
 
+    let deliveries = vec![NotificationRecordDeliveryView {
+        channel: "telegram".to_string(),
+        target: "(config)".to_string(),
+        status: "error".to_string(),
+        error: Some("missing telegram config".to_string()),
+    }];
+    crate::db::replace_notification_record_deliveries(
+        &manager.inner.db,
+        request.record_id,
+        "telegram",
+        &deliveries,
+    )
+    .await?;
     let _ = manager
         .record_notify(
             request.notify_run_id,
             "telegram",
-            "skipped",
+            "error",
             Some("missing telegram config"),
         )
         .await;
@@ -569,7 +582,7 @@ async fn deliver_telegram_channel(
         &manager.inner.db,
         request.record_id,
         "telegram",
-        "skipped",
+        "error",
     )
     .await?;
     Ok(())
@@ -3253,6 +3266,70 @@ mod tests {
     async fn build_ops_manager(upstream_cart_url: String) -> (OpsManager, SqlitePool) {
         let cfg = test_config(upstream_cart_url.clone());
         build_ops_manager_with_config(cfg, upstream_cart_url).await
+    }
+
+    #[tokio::test]
+    async fn deliver_telegram_channel_records_config_errors() {
+        let cfg = test_config("https://example.com/cart".to_string());
+        let (ops, db) =
+            build_ops_manager_with_config(cfg.clone(), cfg.upstream_cart_url.clone()).await;
+        crate::db::ensure_user(&db, &cfg, "u_1").await.unwrap();
+        let record_id = crate::db::insert_notification_record(
+            &db,
+            "u_1",
+            &crate::models::NotificationRecordDraft {
+                kind: "monitoring.config".to_string(),
+                title: "Test".to_string(),
+                summary: "Missing telegram config".to_string(),
+                partition_label: None,
+                telegram_status: "pending".to_string(),
+                web_push_status: "skipped".to_string(),
+                items: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+
+        deliver_telegram_channel(
+            &ops,
+            TelegramDeliveryRequest {
+                notify_run_id: 42,
+                user_id: "u_1",
+                record_id: &record_id,
+                enabled: true,
+                bot_token: None,
+                targets: &[],
+                text: "hello",
+            },
+        )
+        .await
+        .unwrap();
+
+        let record = crate::db::get_notification_record(&db, "u_1", &record_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(record.telegram_status, "error");
+        assert_eq!(record.telegram_deliveries.len(), 1);
+        assert_eq!(record.telegram_deliveries[0].target, "(config)");
+        assert_eq!(record.telegram_deliveries[0].status, "error");
+        assert_eq!(
+            record.telegram_deliveries[0].error.as_deref(),
+            Some("missing telegram config")
+        );
+
+        let notify_row = sqlx::query(
+            "SELECT result, error_message FROM ops_notify_runs WHERE task_run_id = ? AND channel = 'telegram' ORDER BY id DESC LIMIT 1",
+        )
+        .bind(42_i64)
+        .fetch_one(&db)
+        .await
+        .unwrap();
+        assert_eq!(notify_row.get::<String, _>(0), "error");
+        assert_eq!(
+            notify_row.get::<Option<String>, _>(1).as_deref(),
+            Some("missing telegram config")
+        );
     }
 
     #[test]

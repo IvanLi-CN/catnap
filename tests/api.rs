@@ -1306,6 +1306,40 @@ async fn telegram_test_returns_400_when_missing_token_or_target() {
 }
 
 #[tokio::test]
+async fn telegram_test_does_not_fall_back_when_request_targets_are_explicitly_empty() {
+    let t = make_app().await;
+    ensure_user_exists(&t, "u_1").await;
+    sqlx::query(
+        "UPDATE settings SET telegram_enabled = 1, telegram_bot_token = ?, telegram_target = ?, telegram_targets_json = ? WHERE user_id = ?",
+    )
+    .bind("saved-token")
+    .bind("@saved-target")
+    .bind("[\"@saved-target\"]")
+    .bind("u_1")
+    .execute(&t.db)
+    .await
+    .unwrap();
+
+    let (status, json) = post_telegram_test(
+        &t,
+        "u_1",
+        serde_json::json!({
+            "botToken": "request-token",
+            "targets": [],
+            "text": null,
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(json["error"]["code"], "INVALID_ARGUMENT");
+    assert_eq!(
+        json["error"]["message"].as_str(),
+        Some("缺少 targets（可在本次请求提供或先在设置中保存）")
+    );
+}
+
+#[tokio::test]
 async fn telegram_test_returns_5xx_when_upstream_fails() {
     let tg = axum::Router::new().route(
         "/*path",
@@ -2233,9 +2267,14 @@ VALUES (?, ?, 'webPush', 0, ?, 'success', NULL, ?, ?)
     .execute(&t.db)
     .await
     .unwrap();
-    catnap::db::update_notification_record_channel_status(&t.db, &record_id, "telegram", "partial_success")
-        .await
-        .unwrap();
+    catnap::db::update_notification_record_channel_status(
+        &t.db,
+        &record_id,
+        "telegram",
+        "partial_success",
+    )
+    .await
+    .unwrap();
 
     let res = t
         .app

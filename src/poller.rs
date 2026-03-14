@@ -1125,10 +1125,7 @@ async fn poll_once(
                         .await?;
                         let status = db::aggregate_telegram_status(true, &deliveries);
                         db::update_notification_record_channel_status(
-                            &state.db,
-                            &record_id,
-                            "telegram",
-                            &status,
+                            &state.db, &record_id, "telegram", &status,
                         )
                         .await?;
                         for delivery in &deliveries {
@@ -1163,11 +1160,21 @@ async fn poll_once(
                             }
                         }
                     } else {
-                        db::update_notification_record_channel_status(
+                        let deliveries = vec![crate::models::NotificationRecordDeliveryView {
+                            channel: "telegram".to_string(),
+                            target: "(config)".to_string(),
+                            status: "error".to_string(),
+                            error: Some("missing telegram config".to_string()),
+                        }];
+                        db::replace_notification_record_deliveries(
                             &state.db,
                             &record_id,
                             "telegram",
-                            "skipped",
+                            &deliveries,
+                        )
+                        .await?;
+                        db::update_notification_record_channel_status(
+                            &state.db, &record_id, "telegram", "error",
                         )
                         .await?;
                         let _ = state
@@ -1175,7 +1182,7 @@ async fn poll_once(
                             .record_notify(
                                 run.run_id,
                                 "telegram",
-                                "skipped",
+                                "error",
                                 Some("missing telegram config"),
                             )
                             .await;

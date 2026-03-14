@@ -1021,10 +1021,7 @@ async fn post_telegram_test(
         .as_deref()
         .map(str::trim)
         .filter(|v| !v.is_empty());
-    let req_targets = req
-        .targets
-        .map(db::normalize_telegram_targets)
-        .unwrap_or_default();
+    let req_targets = req.targets.map(db::normalize_telegram_targets);
     let saved_bot_token = settings
         .telegram_bot_token
         .as_deref()
@@ -1041,10 +1038,10 @@ async fn post_telegram_test(
             .into_response();
         }
     };
-    let targets = if req_targets.is_empty() {
-        saved_targets
-    } else {
+    let targets = if let Some(req_targets) = req_targets {
         req_targets
+    } else {
+        saved_targets
     };
     if targets.is_empty() {
         return json_invalid_argument_with_message(

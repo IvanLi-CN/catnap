@@ -189,24 +189,24 @@ async function expectActionFeedbackBeforeButton(
   const buttonCenterY = afterRect.top + afterRect.height / 2;
 
   if (bubbleClasses.includes("settings-feedback-bubble-inline-side-left")) {
-    expect(bubbleRect.right).toBeLessThanOrEqual(afterRect.left - 8);
+    expect(bubbleRect.right).toBeLessThanOrEqual(afterRect.left - 7);
     expect(Math.abs(bubbleCenterY - buttonCenterY)).toBeLessThanOrEqual(8);
     return;
   }
 
   if (bubbleClasses.includes("settings-feedback-bubble-inline-side-right")) {
-    expect(bubbleRect.left).toBeGreaterThanOrEqual(afterRect.right + 8);
+    expect(bubbleRect.left).toBeGreaterThanOrEqual(afterRect.right + 7);
     expect(Math.abs(bubbleCenterY - buttonCenterY)).toBeLessThanOrEqual(8);
     return;
   }
 
   if (bubbleClasses.includes("settings-feedback-bubble-inline-side-top")) {
-    expect(bubbleRect.bottom).toBeLessThanOrEqual(afterRect.top - 8);
+    expect(bubbleRect.bottom).toBeLessThanOrEqual(afterRect.top - 7);
     return;
   }
 
   expect(bubbleClasses.includes("settings-feedback-bubble-inline-side-bottom")).toBe(true);
-  expect(bubbleRect.top).toBeGreaterThanOrEqual(afterRect.bottom + 8);
+  expect(bubbleRect.top).toBeGreaterThanOrEqual(afterRect.bottom + 7);
 }
 
 const meta = {

@@ -62,8 +62,14 @@ pub fn aggregate_telegram_status(
         return "skipped".to_string();
     }
 
-    let success = deliveries.iter().filter(|item| item.status == "success").count();
-    let error = deliveries.iter().filter(|item| item.status == "error").count();
+    let success = deliveries
+        .iter()
+        .filter(|item| item.status == "success")
+        .count();
+    let error = deliveries
+        .iter()
+        .filter(|item| item.status == "error")
+        .count();
 
     if success == deliveries.len() {
         "success".to_string()
