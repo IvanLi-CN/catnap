@@ -5,6 +5,7 @@ import {
   type ArchiveFilterMode,
   type BootstrapResponse,
   type Config,
+  type PartitionRefreshState,
   ProductsView,
 } from "../../App";
 import { countriesById, demoBootstrap, regionsById } from "../fixtures";
@@ -12,6 +13,7 @@ import { ResponsivePageStory, expectResponsiveBreakpoints } from "./responsivePa
 
 type DemoProps = {
   bootstrap?: BootstrapResponse;
+  refreshScenario?: "static" | "topology-fill" | "error";
 };
 
 function cloneBootstrap(bootstrap: BootstrapResponse = demoBootstrap): BootstrapResponse {
@@ -184,11 +186,17 @@ async function findProductRegionBlock(canvasElement: HTMLElement, title: string)
   return block;
 }
 
-function ProductsViewDemo({ bootstrap: initialBootstrap = demoBootstrap }: DemoProps) {
+function ProductsViewDemo({
+  bootstrap: initialBootstrap = demoBootstrap,
+  refreshScenario = "static",
+}: DemoProps) {
   const [bootstrap, setBootstrap] = useState<BootstrapResponse>(() =>
     cloneBootstrap(initialBootstrap),
   );
   const [archiveFilterMode, setArchiveFilterMode] = useState<ArchiveFilterMode>("active");
+  const [partitionRefreshStates, setPartitionRefreshStates] = useState<
+    Record<string, PartitionRefreshState>
+  >({});
   const countries = useMemo(() => {
     const next = countriesById();
     for (const country of bootstrap.catalog.countries) {
@@ -203,6 +211,15 @@ function ProductsViewDemo({ bootstrap: initialBootstrap = demoBootstrap }: DemoP
     }
     return next;
   }, [bootstrap.catalog.regions]);
+
+  const setPartitionRefreshState = (key: string, next: PartitionRefreshState | null) => {
+    setPartitionRefreshStates((prev) => {
+      const updated = { ...prev };
+      if (next) updated[key] = next;
+      else delete updated[key];
+      return updated;
+    });
+  };
 
   return (
     <ProductsView
@@ -276,6 +293,76 @@ function ProductsViewDemo({ bootstrap: initialBootstrap = demoBootstrap }: DemoP
           },
         }));
       }}
+      onRefreshPartition={async (countryId, regionId) => {
+        const key = `${countryId}::${regionId}`;
+        setPartitionRefreshState(key, { kind: "running" });
+        await new Promise((resolve) => window.setTimeout(resolve, 40));
+
+        if (refreshScenario === "error") {
+          setPartitionRefreshState(key, { kind: "error", message: "上游刷新失败" });
+          return;
+        }
+
+        setBootstrap((prev) => {
+          if (refreshScenario !== "topology-fill" || key !== "nl::nl-ams") {
+            return prev;
+          }
+          if (prev.catalog.configs.some((cfg) => cfg.id === "cfg-nl-ams-1")) {
+            return prev;
+          }
+          const now = new Date().toISOString();
+          return {
+            ...prev,
+            catalog: {
+              ...prev.catalog,
+              regionNotices: [
+                ...prev.catalog.regionNotices.filter(
+                  (notice) => !(notice.countryId === "nl" && notice.regionId === "nl-ams"),
+                ),
+                {
+                  countryId: "nl",
+                  regionId: "nl-ams",
+                  text: "BGP 线路已刷新，当前可下单。",
+                },
+              ],
+              configs: [
+                ...prev.catalog.configs,
+                {
+                  id: "cfg-nl-ams-1",
+                  countryId: "nl",
+                  regionId: "nl-ams",
+                  sourcePid: "2001",
+                  sourceFid: "nl",
+                  sourceGid: "nl-ams",
+                  name: "VPS • 2C/4G（阿姆斯特丹）",
+                  specs: [
+                    { key: "CPU", value: "2C" },
+                    { key: "内存", value: "4G" },
+                  ],
+                  price: { amount: 45, currency: "CNY", period: "month" },
+                  inventory: {
+                    status: "available",
+                    quantity: 3,
+                    checkedAt: now,
+                  },
+                  digest: "digest-nl-ams-1",
+                  lifecycle: {
+                    state: "active",
+                    listedAt: now,
+                    delistedAt: null,
+                    cleanupAt: null,
+                  },
+                  monitorSupported: true,
+                  monitorEnabled: false,
+                } satisfies Config,
+              ],
+              fetchedAt: now,
+            },
+          };
+        });
+        setPartitionRefreshState(key, { kind: "success", message: "已刷新" });
+      }}
+      partitionRefreshStates={partitionRefreshStates}
       onOpenOrder={() => {}}
     />
   );
@@ -384,6 +471,36 @@ export const TopologyOnlyScopes: Story = {
       "监控：关",
     );
     expect(within(singaporeSection).getByText("当前暂无可用区与套餐。")).toBeVisible();
+  },
+};
+
+export const ManualRegionRefresh: Story = {
+  args: {
+    bootstrap: buildTopologyOnlyBootstrap(),
+    refreshScenario: "topology-fill",
+  },
+  play: async ({ canvasElement }) => {
+    const amsterdamBlock = await findProductRegionBlock(canvasElement as HTMLElement, "阿姆斯特丹");
+    expect(within(amsterdamBlock).getByText("当前暂无套餐。")).toBeVisible();
+
+    await userEvent.click(within(amsterdamBlock).getByTestId("region-refresh-nl-ams"));
+    expect(await within(amsterdamBlock).findByLabelText("刷新 阿姆斯特丹 中")).toBeDisabled();
+    expect(await within(amsterdamBlock).findByText("已刷新")).toBeVisible();
+    expect(await within(amsterdamBlock).findByText("VPS • 2C/4G（阿姆斯特丹）")).toBeVisible();
+    expect(within(amsterdamBlock).getByText("BGP 线路已刷新，当前可下单。")).toBeVisible();
+  },
+};
+
+export const ManualRegionRefreshError: Story = {
+  args: {
+    bootstrap: buildTopologyOnlyBootstrap(),
+    refreshScenario: "error",
+  },
+  play: async ({ canvasElement }) => {
+    const amsterdamBlock = await findProductRegionBlock(canvasElement as HTMLElement, "阿姆斯特丹");
+    await userEvent.click(within(amsterdamBlock).getByTestId("region-refresh-nl-ams"));
+    expect(await within(amsterdamBlock).findByText("上游刷新失败")).toBeVisible();
+    expect(within(amsterdamBlock).getByText("当前暂无套餐。")).toBeVisible();
   },
 };
 

@@ -34,6 +34,10 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/inventory/history", post(post_inventory_history))
         .route("/catalog/refresh", post(post_catalog_refresh))
+        .route(
+            "/catalog/refresh/partition",
+            post(post_partition_catalog_refresh),
+        )
         .route("/catalog/refresh/events", get(get_catalog_refresh_events))
         .route("/ops/state", get(get_ops_state))
         .route("/ops/stream", get(get_ops_stream))
@@ -296,6 +300,37 @@ async fn post_catalog_refresh(
         Err(crate::catalog_refresh::TriggerError::RateLimited) => Err(json_rate_limited()),
         Err(crate::catalog_refresh::TriggerError::Internal(_)) => Err(json_internal_error()),
     }
+}
+
+async fn post_partition_catalog_refresh(
+    State(state): State<AppState>,
+    _user: axum::extract::Extension<UserView>,
+    Json(req): Json<PartitionRefreshRequest>,
+) -> Result<Json<PartitionRefreshResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let country_id = req.country_id.trim();
+    let region_id = req.region_id.trim();
+    if country_id.is_empty() || region_id.is_empty() {
+        return Err(json_invalid_argument());
+    }
+
+    let exists = db::catalog_named_region_exists(&state.db, country_id, region_id)
+        .await
+        .map_err(|_| json_internal_error())?;
+    if !exists {
+        return Err(json_invalid_argument());
+    }
+
+    state
+        .ops
+        .enqueue_and_wait_force_fetch(country_id, Some(region_id), "manual_refresh")
+        .await
+        .map_err(|_| json_internal_error())?;
+
+    Ok(Json(PartitionRefreshResponse {
+        country_id: country_id.to_string(),
+        region_id: region_id.to_string(),
+        refreshed: true,
+    }))
 }
 
 async fn get_catalog_refresh_events(
