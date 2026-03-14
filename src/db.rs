@@ -13,6 +13,73 @@ const CANONICAL_RFC3339: &[FormatItem<'static>] =
     format_description!("[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:9]Z");
 const NOTIFICATION_RECORD_CURSOR_MAX_TS: &str = "9999-12-31T23:59:59.999999999Z";
 
+pub fn normalize_telegram_targets<I, S>(targets: I) -> Vec<String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut out = Vec::new();
+    for raw in targets {
+        let target = raw.as_ref().trim();
+        if target.is_empty() {
+            continue;
+        }
+        if out.iter().any(|seen| seen == target) {
+            continue;
+        }
+        out.push(target.to_string());
+    }
+    out
+}
+
+fn parse_telegram_targets_json(raw: Option<&str>) -> Vec<String> {
+    let Some(raw) = raw.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Vec::new();
+    };
+    let parsed = serde_json::from_str::<Vec<String>>(raw).unwrap_or_default();
+    normalize_telegram_targets(parsed)
+}
+
+pub fn telegram_targets_from_storage(
+    telegram_targets_json: Option<&str>,
+    legacy_target: Option<&str>,
+) -> Vec<String> {
+    let parsed = parse_telegram_targets_json(telegram_targets_json);
+    if !parsed.is_empty() {
+        return parsed;
+    }
+    normalize_telegram_targets(legacy_target)
+}
+
+pub fn aggregate_telegram_status(
+    attempted: bool,
+    deliveries: &[NotificationRecordDeliveryView],
+) -> String {
+    if !attempted {
+        return "skipped".to_string();
+    }
+    if deliveries.is_empty() {
+        return "skipped".to_string();
+    }
+
+    let success = deliveries.iter().filter(|item| item.status == "success").count();
+    let error = deliveries.iter().filter(|item| item.status == "error").count();
+
+    if success == deliveries.len() {
+        "success".to_string()
+    } else if error == deliveries.len() {
+        "error".to_string()
+    } else if success > 0 && error > 0 {
+        "partial_success".to_string()
+    } else if deliveries.iter().any(|item| item.status == "pending") {
+        "pending".to_string()
+    } else if deliveries.iter().all(|item| item.status == "skipped") {
+        "skipped".to_string()
+    } else {
+        "error".to_string()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SettingsRow {
     pub poll_interval_minutes: i64,
@@ -27,6 +94,7 @@ pub struct SettingsRow {
     pub telegram_enabled: bool,
     pub telegram_bot_token: Option<String>,
     pub telegram_target: Option<String>,
+    pub telegram_targets: Vec<String>,
 
     pub web_push_enabled: bool,
 
@@ -59,14 +127,8 @@ impl SettingsRow {
                         .telegram_bot_token
                         .as_ref()
                         .is_some_and(|v| !v.trim().is_empty())
-                        && self
-                            .telegram_target
-                            .as_ref()
-                            .is_some_and(|v| !v.trim().is_empty()),
-                    target: self
-                        .telegram_target
-                        .clone()
-                        .filter(|v| !v.trim().is_empty()),
+                        && !self.telegram_targets.is_empty(),
+                    targets: self.telegram_targets.clone(),
                 },
                 web_push: WebPushSettingsView {
                     enabled: self.web_push_enabled,
@@ -198,6 +260,7 @@ CREATE TABLE IF NOT EXISTS settings (
   telegram_enabled INTEGER NOT NULL,
   telegram_bot_token TEXT NULL,
   telegram_target TEXT NULL,
+  telegram_targets_json TEXT NULL,
   web_push_enabled INTEGER NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -254,6 +317,17 @@ CREATE TABLE IF NOT EXISTS notification_record_items (
   lifecycle_delisted_at TEXT NULL
 );
 
+CREATE TABLE IF NOT EXISTS notification_record_deliveries (
+  id TEXT PRIMARY KEY,
+  record_id TEXT NOT NULL,
+  channel TEXT NOT NULL,
+  target TEXT NOT NULL,
+  status TEXT NOT NULL,
+  error_message TEXT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS ops_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   ts TEXT NOT NULL,
@@ -292,6 +366,8 @@ CREATE INDEX IF NOT EXISTS idx_event_logs_user_ts ON event_logs (user_id, ts DES
 CREATE INDEX IF NOT EXISTS idx_event_logs_ts ON event_logs (ts DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_notification_records_user_created ON notification_records (user_id, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_notification_record_items_record_position ON notification_record_items (record_id, position ASC);
+CREATE INDEX IF NOT EXISTS idx_notification_record_deliveries_record_channel ON notification_record_deliveries (record_id, channel, created_at ASC, id ASC);
+CREATE INDEX IF NOT EXISTS idx_notification_record_deliveries_channel_ts ON notification_record_deliveries (channel, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_inventory_samples_1m_ts ON inventory_samples_1m (ts_minute);
 CREATE INDEX IF NOT EXISTS idx_catalog_url_cache_last_success_at ON catalog_url_cache (last_success_at DESC, url_key);
 CREATE INDEX IF NOT EXISTS idx_catalog_countries_sort ON catalog_countries (sort_index, id);
@@ -431,6 +507,7 @@ CREATE INDEX IF NOT EXISTS idx_ops_notify_runs_channel_ts ON ops_notify_runs (ch
         "INTEGER NOT NULL DEFAULT 0",
     )
     .await?;
+    add_column_if_missing(db, "settings", "telegram_targets_json", "TEXT NULL").await?;
     if !site_listed_column_exists {
         sqlx::query(
             r#"
@@ -946,10 +1023,11 @@ pub async fn ensure_user(
             telegram_enabled,
             telegram_bot_token,
             telegram_target,
+            telegram_targets_json,
             web_push_enabled,
             created_at,
             updated_at
-        ) VALUES (?, ?, ?, NULL, ?, 0, 0, 0, 0, 0, 0, 0, 0, NULL, NULL, 0, ?, ?)"#,
+        ) VALUES (?, ?, ?, NULL, ?, 0, 0, 0, 0, 0, 0, 0, 0, NULL, NULL, NULL, 0, ?, ?)"#,
     )
     .bind(user_id)
     .bind(cfg.default_poll_interval_minutes)
@@ -976,6 +1054,7 @@ pub async fn get_settings(db: &SqlitePool, user_id: &str) -> anyhow::Result<Sett
             telegram_enabled,
             telegram_bot_token,
             telegram_target,
+            telegram_targets_json,
             web_push_enabled,
             created_at,
             updated_at
@@ -997,9 +1076,13 @@ pub async fn get_settings(db: &SqlitePool, user_id: &str) -> anyhow::Result<Sett
         telegram_enabled: row.get::<i64, _>(7) != 0,
         telegram_bot_token: row.get::<Option<String>, _>(8),
         telegram_target: row.get::<Option<String>, _>(9),
-        web_push_enabled: row.get::<i64, _>(10) != 0,
-        created_at: row.get::<String, _>(11),
-        updated_at: row.get::<String, _>(12),
+        telegram_targets: telegram_targets_from_storage(
+            row.get::<Option<String>, _>(10).as_deref(),
+            row.get::<Option<String>, _>(9).as_deref(),
+        ),
+        web_push_enabled: row.get::<i64, _>(11) != 0,
+        created_at: row.get::<String, _>(12),
+        updated_at: row.get::<String, _>(13),
     })
 }
 
@@ -1012,7 +1095,7 @@ pub async fn update_settings(
 
     let existing = get_settings(db, user_id).await?;
     let existing_bot_token = existing.telegram_bot_token;
-    let existing_target = existing.telegram_target;
+    let existing_targets = existing.telegram_targets;
     let existing_partition_catalog_change_enabled =
         existing.monitoring_events_partition_catalog_change_enabled;
     let existing_region_partition_change_enabled =
@@ -1026,13 +1109,16 @@ pub async fn update_settings(
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())
         .or(existing_bot_token);
-    let telegram_target = req
-        .notifications
-        .telegram
-        .target
-        .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty())
-        .or(existing_target);
+    let telegram_targets = match req.notifications.telegram.targets {
+        Some(targets) => normalize_telegram_targets(targets),
+        None => existing_targets,
+    };
+    let telegram_target = telegram_targets.first().cloned();
+    let telegram_targets_json = if telegram_targets.is_empty() {
+        None
+    } else {
+        Some(serde_json::to_string(&telegram_targets)?)
+    };
 
     let auto_interval_hours = existing.catalog_refresh_auto_interval_hours;
     let partition_catalog_change_enabled = req
@@ -1063,6 +1149,7 @@ pub async fn update_settings(
             telegram_enabled = ?,
             telegram_bot_token = ?,
             telegram_target = ?,
+            telegram_targets_json = ?,
             web_push_enabled = ?,
             updated_at = ?
         WHERE user_id = ?"#,
@@ -1093,6 +1180,7 @@ pub async fn update_settings(
     })
     .bind(telegram_bot_token)
     .bind(telegram_target)
+    .bind(telegram_targets_json)
     .bind(if req.notifications.web_push.enabled {
         1
     } else {
@@ -2373,6 +2461,7 @@ pub async fn list_logs(
 
 fn notification_record_view_from_row(
     row: &sqlx::sqlite::SqliteRow,
+    telegram_deliveries: Vec<NotificationRecordDeliveryView>,
     items: Vec<NotificationRecordItemView>,
 ) -> NotificationRecordView {
     NotificationRecordView {
@@ -2384,6 +2473,7 @@ fn notification_record_view_from_row(
         partition_label: row.get::<Option<String>, _>("partition_label"),
         telegram_status: row.get::<String, _>("telegram_status"),
         web_push_status: row.get::<String, _>("web_push_status"),
+        telegram_deliveries,
         items,
     }
 }
@@ -2527,6 +2617,53 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     Ok(id)
 }
 
+pub async fn replace_notification_record_deliveries(
+    db: &SqlitePool,
+    record_id: &str,
+    channel: &str,
+    deliveries: &[NotificationRecordDeliveryView],
+) -> anyhow::Result<()> {
+    let now = now_rfc3339();
+    let mut tx = db.begin().await?;
+    sqlx::query("DELETE FROM notification_record_deliveries WHERE record_id = ? AND channel = ?")
+        .bind(record_id)
+        .bind(channel)
+        .execute(&mut *tx)
+        .await?;
+
+    for delivery in deliveries {
+        let id = Uuid::new_v4().to_string();
+        sqlx::query(
+            r#"
+INSERT INTO notification_record_deliveries (
+  id,
+  record_id,
+  channel,
+  target,
+  status,
+  error_message,
+  created_at,
+  updated_at
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+"#,
+        )
+        .bind(&id)
+        .bind(record_id)
+        .bind(channel)
+        .bind(&delivery.target)
+        .bind(&delivery.status)
+        .bind(delivery.error.as_deref())
+        .bind(&now)
+        .bind(&now)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    tx.commit().await?;
+    Ok(())
+}
+
 pub async fn update_notification_record_channel_status(
     db: &SqlitePool,
     record_id: &str,
@@ -2544,6 +2681,47 @@ pub async fn update_notification_record_channel_status(
         .execute(db)
         .await?;
     Ok(())
+}
+
+async fn load_notification_record_deliveries_by_record_ids(
+    db: &SqlitePool,
+    record_ids: &[String],
+) -> anyhow::Result<std::collections::HashMap<String, Vec<NotificationRecordDeliveryView>>> {
+    if record_ids.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+
+    let placeholders = std::iter::repeat_n("?", record_ids.len())
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql = format!(
+        r#"
+SELECT record_id, channel, target, status, error_message
+FROM notification_record_deliveries
+WHERE record_id IN ({placeholders})
+ORDER BY record_id ASC, created_at ASC, id ASC
+"#
+    );
+
+    let mut query = sqlx::query(&sql);
+    for record_id in record_ids {
+        query = query.bind(record_id);
+    }
+
+    let rows = query.fetch_all(db).await?;
+    let mut out = std::collections::HashMap::new();
+    for row in rows {
+        let record_id = row.get::<String, _>("record_id");
+        out.entry(record_id)
+            .or_insert_with(Vec::new)
+            .push(NotificationRecordDeliveryView {
+                channel: row.get::<String, _>("channel"),
+                target: row.get::<String, _>("target"),
+                status: row.get::<String, _>("status"),
+                error: row.get::<Option<String>, _>("error_message"),
+            });
+    }
+    Ok(out)
 }
 
 pub async fn list_notification_records(
@@ -2589,12 +2767,15 @@ LIMIT ?
         .map(|row| row.get::<String, _>("id"))
         .collect::<Vec<_>>();
     let mut items_by_record = load_notification_record_items_by_record_ids(db, &record_ids).await?;
+    let mut deliveries_by_record =
+        load_notification_record_deliveries_by_record_ids(db, &record_ids).await?;
 
     let mut items = Vec::with_capacity(visible_rows.len());
     for row in visible_rows {
         let record_id = row.get::<String, _>("id");
         items.push(notification_record_view_from_row(
             row,
+            deliveries_by_record.remove(&record_id).unwrap_or_default(),
             items_by_record.remove(&record_id).unwrap_or_default(),
         ));
     }
@@ -2634,8 +2815,11 @@ WHERE user_id = ? AND id = ?
 
     let mut items_by_record =
         load_notification_record_items_by_record_ids(db, &[record_id.to_string()]).await?;
+    let mut deliveries_by_record =
+        load_notification_record_deliveries_by_record_ids(db, &[record_id.to_string()]).await?;
     Ok(Some(notification_record_view_from_row(
         &row,
+        deliveries_by_record.remove(record_id).unwrap_or_default(),
         items_by_record.remove(record_id).unwrap_or_default(),
     )))
 }
@@ -2683,6 +2867,17 @@ DELETE FROM notification_record_items
 WHERE NOT EXISTS (
   SELECT 1 FROM notification_records
   WHERE notification_records.id = notification_record_items.record_id
+)"#,
+    )
+    .execute(&mut *tx)
+    .await?;
+
+    sqlx::query(
+        r#"
+DELETE FROM notification_record_deliveries
+WHERE NOT EXISTS (
+  SELECT 1 FROM notification_records
+  WHERE notification_records.id = notification_record_deliveries.record_id
 )"#,
     )
     .execute(&mut *tx)

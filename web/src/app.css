@@ -1379,6 +1379,51 @@ select {
   width: 100%;
 }
 
+.settings-tag-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+
+.settings-tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: 100%;
+}
+
+.settings-tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(92, 118, 166, 0.32);
+  background: rgba(92, 118, 166, 0.12);
+  color: var(--text);
+  padding: 0 12px;
+  height: 32px;
+  font: inherit;
+  font-weight: 700;
+}
+
+.settings-tag-chip:hover {
+  border-color: rgba(92, 118, 166, 0.48);
+  background: rgba(92, 118, 166, 0.18);
+}
+
+.settings-tag-input-pill {
+  min-width: min(320px, 100%);
+  flex: 1 1 260px;
+}
+
+.settings-tag-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
 .settings-actions {
   margin-top: 24px;
   display: flex;
@@ -1924,6 +1969,12 @@ select {
   background: color-mix(in oklab, var(--ok-ink), transparent 90%);
 }
 
+.notification-status.warn {
+  color: var(--warn-ink);
+  border-color: color-mix(in oklab, var(--warn-ink), transparent 72%);
+  background: color-mix(in oklab, var(--warn-ink), transparent 88%);
+}
+
 .notification-status.err {
   color: var(--err-ink);
   border-color: color-mix(in oklab, var(--err-ink), transparent 74%);
@@ -1938,6 +1989,30 @@ select {
 
 .notifications-panel-section {
   gap: 18px;
+}
+
+.notification-delivery-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.notification-delivery-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.notification-delivery-target {
+  font-weight: 800;
+  color: var(--text);
+}
+
+.notification-delivery-error {
+  color: var(--muted);
+  font-size: 13px;
 }
 
 .notifications-meta-row {

@@ -1103,72 +1103,82 @@ async fn poll_once(
                 );
 
                 if settings.telegram_enabled {
-                    match (
-                        settings.telegram_bot_token.as_deref(),
-                        settings.telegram_target.as_deref(),
-                    ) {
-                        (Some(token), Some(target)) => {
-                            match crate::notifications::send_telegram(
-                                &state.config.telegram_api_base_url,
-                                token,
-                                target,
-                                &telegram_text,
-                            )
-                            .await
-                            {
-                                Ok(_) => {
-                                    db::update_notification_record_channel_status(
-                                        &state.db, &record_id, "telegram", "success",
-                                    )
-                                    .await?;
-                                    let _ = state
-                                        .ops
-                                        .record_notify(run.run_id, "telegram", "success", None)
-                                        .await;
-                                }
-                                Err(err) => {
-                                    warn!(user_id, error = %err, "telegram send failed");
-                                    let err_msg = err.to_string();
-                                    db::update_notification_record_channel_status(
-                                        &state.db, &record_id, "telegram", "error",
-                                    )
-                                    .await?;
-                                    let _ = state
-                                        .ops
-                                        .record_notify(
-                                            run.run_id,
-                                            "telegram",
-                                            "error",
-                                            Some(&err_msg),
-                                        )
-                                        .await;
-                                    db::insert_log(
-                                        &state.db,
-                                        Some(user_id),
-                                        "warn",
-                                        "notify.telegram",
-                                        "telegram send failed",
-                                        Some(serde_json::json!({ "error": err.to_string() })),
-                                    )
-                                    .await?;
-                                }
-                            }
-                        }
-                        _ => {
-                            db::update_notification_record_channel_status(
-                                &state.db, &record_id, "telegram", "skipped",
-                            )
-                            .await?;
+                    let token = settings
+                        .telegram_bot_token
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty());
+                    if let Some(token) = token.filter(|_| !settings.telegram_targets.is_empty()) {
+                        let deliveries = crate::notifications::send_telegram_to_targets(
+                            &state.config.telegram_api_base_url,
+                            token,
+                            &settings.telegram_targets,
+                            &telegram_text,
+                        )
+                        .await;
+                        db::replace_notification_record_deliveries(
+                            &state.db,
+                            &record_id,
+                            "telegram",
+                            &deliveries,
+                        )
+                        .await?;
+                        let status = db::aggregate_telegram_status(true, &deliveries);
+                        db::update_notification_record_channel_status(
+                            &state.db,
+                            &record_id,
+                            "telegram",
+                            &status,
+                        )
+                        .await?;
+                        for delivery in &deliveries {
+                            let result = if delivery.status == "success" {
+                                "success"
+                            } else {
+                                "error"
+                            };
                             let _ = state
                                 .ops
                                 .record_notify(
                                     run.run_id,
                                     "telegram",
-                                    "skipped",
-                                    Some("missing telegram config"),
+                                    result,
+                                    delivery.error.as_deref(),
                                 )
                                 .await;
+                            if let Some(err) = delivery.error.as_deref() {
+                                warn!(user_id, target = %delivery.target, error = %err, "telegram send failed");
+                                db::insert_log(
+                                    &state.db,
+                                    Some(user_id),
+                                    "warn",
+                                    "notify.telegram",
+                                    "telegram send failed",
+                                    Some(serde_json::json!({
+                                        "target": delivery.target,
+                                        "error": err,
+                                    })),
+                                )
+                                .await?;
+                            }
                         }
+                    } else {
+                        db::update_notification_record_channel_status(
+                            &state.db,
+                            &record_id,
+                            "telegram",
+                            "skipped",
+                        )
+                        .await?;
+                        let _ = state
+                            .ops
+                            .record_notify(
+                                run.run_id,
+                                "telegram",
+                                "skipped",
+                                Some("missing telegram config"),
+                            )
+                            .await;
                     }
                 }
 

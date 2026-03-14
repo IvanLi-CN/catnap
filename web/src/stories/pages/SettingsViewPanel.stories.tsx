@@ -277,7 +277,11 @@ export const TelegramSuccessBubble: Story = {
   play: async ({ canvasElement }) => {
     const restoreFetch = installFetchMock((url) => {
       if (url.endsWith("/api/notifications/telegram/test")) {
-        return jsonOk();
+        return jsonOk({
+          ok: true,
+          status: "success",
+          results: [{ target: "@catnap", status: "success" }],
+        });
       }
       throw new Error(`Unexpected fetch in TelegramSuccessBubble: ${url}`);
     });
@@ -296,7 +300,8 @@ export const TelegramSuccessBubble: Story = {
       await waitFor(() => {
         expect(bubble).toBeVisible();
       });
-      expect(bubble).toHaveTextContent("已发送");
+      expect(bubble).toHaveTextContent("已全部发送");
+      expect(bubble).toHaveTextContent("@catnap");
       await expectActionFeedbackBeforeButton(
         canvasElement as HTMLElement,
         "测试 Telegram",
@@ -314,7 +319,11 @@ export const TelegramSuccessBubbleDismissible: Story = {
   play: async ({ canvasElement }) => {
     const restoreFetch = installFetchMock((url) => {
       if (url.endsWith("/api/notifications/telegram/test")) {
-        return jsonOk();
+        return jsonOk({
+          ok: true,
+          status: "success",
+          results: [{ target: "@catnap", status: "success" }],
+        });
       }
       throw new Error(`Unexpected fetch in TelegramSuccessBubbleDismissible: ${url}`);
     });

@@ -196,7 +196,7 @@ struct NotificationDeliveryTarget {
     site_base_url: Option<String>,
     tg_enabled: bool,
     tg_bot_token: Option<String>,
-    tg_target: Option<String>,
+    tg_targets: Vec<String>,
     wp_enabled: bool,
 }
 
@@ -207,8 +207,11 @@ impl NotificationDeliveryTarget {
             site_base_url: row.get::<Option<String>, _>(1),
             tg_enabled: row.get::<i64, _>(2) != 0,
             tg_bot_token: row.get::<Option<String>, _>(3),
-            tg_target: row.get::<Option<String>, _>(4),
-            wp_enabled: row.get::<i64, _>(5) != 0,
+            tg_targets: crate::db::telegram_targets_from_storage(
+                row.get::<Option<String>, _>(5).as_deref(),
+                row.get::<Option<String>, _>(4).as_deref(),
+            ),
+            wp_enabled: row.get::<i64, _>(6) != 0,
         }
     }
 }
@@ -476,6 +479,102 @@ fn notification_partition_label_from_items(items: &[NotificationRecordItemView])
     })
 }
 
+struct TelegramDeliveryRequest<'a> {
+    notify_run_id: i64,
+    user_id: &'a str,
+    record_id: &'a str,
+    enabled: bool,
+    bot_token: Option<&'a str>,
+    targets: &'a [String],
+    text: &'a str,
+}
+
+async fn deliver_telegram_channel(
+    manager: &OpsManager,
+    request: TelegramDeliveryRequest<'_>,
+) -> anyhow::Result<()> {
+    if !request.enabled {
+        return Ok(());
+    }
+
+    let tg_bot_token = request
+        .bot_token
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if let Some(token) = tg_bot_token.filter(|_| !request.targets.is_empty()) {
+        let deliveries = notifications::send_telegram_to_targets(
+            &manager.inner.cfg.telegram_api_base_url,
+            token,
+            request.targets,
+            request.text,
+        )
+        .await;
+        crate::db::replace_notification_record_deliveries(
+            &manager.inner.db,
+            request.record_id,
+            "telegram",
+            &deliveries,
+        )
+        .await?;
+        let aggregate_status = crate::db::aggregate_telegram_status(true, &deliveries);
+        crate::db::update_notification_record_channel_status(
+            &manager.inner.db,
+            request.record_id,
+            "telegram",
+            &aggregate_status,
+        )
+        .await?;
+
+        for delivery in &deliveries {
+            let result = if delivery.status == "success" {
+                "success"
+            } else {
+                "error"
+            };
+            let _ = manager
+                .record_notify(
+                    request.notify_run_id,
+                    "telegram",
+                    result,
+                    delivery.error.as_deref(),
+                )
+                .await;
+            if let Some(err) = delivery.error.as_deref() {
+                let _ = crate::db::insert_log(
+                    &manager.inner.db,
+                    Some(request.user_id),
+                    "warn",
+                    "notify.telegram",
+                    "telegram send failed",
+                    Some(serde_json::json!({
+                        "target": delivery.target,
+                        "error": err,
+                    })),
+                )
+                .await;
+            }
+        }
+        return Ok(());
+    }
+
+    let _ = manager
+        .record_notify(
+            request.notify_run_id,
+            "telegram",
+            "skipped",
+            Some("missing telegram config"),
+        )
+        .await;
+    crate::db::update_notification_record_channel_status(
+        &manager.inner.db,
+        request.record_id,
+        "telegram",
+        "skipped",
+    )
+    .await?;
+    Ok(())
+}
+
 async fn deliver_outbound_notification(
     manager: &OpsManager,
     run_id: Option<i64>,
@@ -537,70 +636,19 @@ async fn deliver_outbound_notification(
         )
         .await;
 
-    if target.tg_enabled {
-        match (target.tg_bot_token.as_deref(), target.tg_target.as_deref()) {
-            (Some(token), Some(target_chat)) => match notifications::send_telegram(
-                &manager.inner.cfg.telegram_api_base_url,
-                token,
-                target_chat,
-                &telegram_text,
-            )
-            .await
-            {
-                Ok(_) => {
-                    crate::db::update_notification_record_channel_status(
-                        &manager.inner.db,
-                        &record_id,
-                        "telegram",
-                        "success",
-                    )
-                    .await?;
-                    let _ = manager
-                        .record_notify(notify_run_id, "telegram", "success", None)
-                        .await;
-                }
-                Err(err) => {
-                    let err_msg = err.to_string();
-                    crate::db::update_notification_record_channel_status(
-                        &manager.inner.db,
-                        &record_id,
-                        "telegram",
-                        "error",
-                    )
-                    .await?;
-                    let _ = manager
-                        .record_notify(notify_run_id, "telegram", "error", Some(&err_msg))
-                        .await;
-                    let _ = crate::db::insert_log(
-                        &manager.inner.db,
-                        Some(&target.user_id),
-                        "warn",
-                        "notify.telegram",
-                        "telegram send failed",
-                        Some(serde_json::json!({ "error": err.to_string() })),
-                    )
-                    .await;
-                }
-            },
-            _ => {
-                let _ = manager
-                    .record_notify(
-                        notify_run_id,
-                        "telegram",
-                        "skipped",
-                        Some("missing telegram config"),
-                    )
-                    .await;
-                crate::db::update_notification_record_channel_status(
-                    &manager.inner.db,
-                    &record_id,
-                    "telegram",
-                    "skipped",
-                )
-                .await?;
-            }
-        }
-    }
+    deliver_telegram_channel(
+        manager,
+        TelegramDeliveryRequest {
+            notify_run_id,
+            user_id: &target.user_id,
+            record_id: &record_id,
+            enabled: target.tg_enabled,
+            bot_token: target.tg_bot_token.as_deref(),
+            targets: &target.tg_targets,
+            text: &telegram_text,
+        },
+    )
+    .await?;
 
     if target.wp_enabled {
         match crate::db::get_latest_web_push_subscription(&manager.inner.db, &target.user_id).await
@@ -734,6 +782,7 @@ SELECT DISTINCT
   s.telegram_enabled,
   s.telegram_bot_token,
   s.telegram_target,
+  s.telegram_targets_json,
   s.web_push_enabled
 FROM settings s
 JOIN monitoring_configs m
@@ -820,70 +869,19 @@ async fn deliver_monitoring_change_notification(
         )
         .await;
 
-    if target.tg_enabled {
-        match (target.tg_bot_token.as_deref(), target.tg_target.as_deref()) {
-            (Some(token), Some(target_chat)) => match notifications::send_telegram(
-                &manager.inner.cfg.telegram_api_base_url,
-                token,
-                target_chat,
-                &telegram_text,
-            )
-            .await
-            {
-                Ok(_) => {
-                    crate::db::update_notification_record_channel_status(
-                        &manager.inner.db,
-                        &record_id,
-                        "telegram",
-                        "success",
-                    )
-                    .await?;
-                    let _ = manager
-                        .record_notify(run_id, "telegram", "success", None)
-                        .await;
-                }
-                Err(err) => {
-                    let err_msg = err.to_string();
-                    crate::db::update_notification_record_channel_status(
-                        &manager.inner.db,
-                        &record_id,
-                        "telegram",
-                        "error",
-                    )
-                    .await?;
-                    let _ = manager
-                        .record_notify(run_id, "telegram", "error", Some(&err_msg))
-                        .await;
-                    let _ = crate::db::insert_log(
-                        &manager.inner.db,
-                        Some(&target.user_id),
-                        "warn",
-                        "notify.telegram",
-                        "telegram send failed",
-                        Some(serde_json::json!({ "error": err.to_string() })),
-                    )
-                    .await;
-                }
-            },
-            _ => {
-                let _ = manager
-                    .record_notify(
-                        run_id,
-                        "telegram",
-                        "skipped",
-                        Some("missing telegram config"),
-                    )
-                    .await;
-                crate::db::update_notification_record_channel_status(
-                    &manager.inner.db,
-                    &record_id,
-                    "telegram",
-                    "skipped",
-                )
-                .await?;
-            }
-        }
-    }
+    deliver_telegram_channel(
+        manager,
+        TelegramDeliveryRequest {
+            notify_run_id: run_id,
+            user_id: &target.user_id,
+            record_id: &record_id,
+            enabled: target.tg_enabled,
+            bot_token: target.tg_bot_token.as_deref(),
+            targets: &target.tg_targets,
+            text: &telegram_text,
+        },
+    )
+    .await?;
 
     if target.wp_enabled {
         match crate::db::get_latest_web_push_subscription(&manager.inner.db, &target.user_id).await
@@ -2224,6 +2222,7 @@ SELECT
   s.telegram_enabled,
   s.telegram_bot_token,
   s.telegram_target,
+  s.telegram_targets_json,
   s.web_push_enabled
 FROM settings s
 JOIN monitoring_partitions m
@@ -2558,6 +2557,7 @@ SELECT
   telegram_enabled,
   telegram_bot_token,
   telegram_target,
+  telegram_targets_json,
   web_push_enabled
 FROM settings
 WHERE monitoring_events_site_region_change_enabled = 1
@@ -2677,6 +2677,7 @@ SELECT
   s.telegram_enabled,
   s.telegram_bot_token,
   s.telegram_target,
+  s.telegram_targets_json,
   s.web_push_enabled
 FROM settings s
 JOIN monitoring_partitions m
@@ -2768,6 +2769,7 @@ SELECT
   s.telegram_enabled,
   s.telegram_bot_token,
   s.telegram_target,
+  s.telegram_targets_json,
   s.web_push_enabled
 FROM settings s
 JOIN monitoring_partitions m

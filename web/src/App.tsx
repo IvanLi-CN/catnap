@@ -116,7 +116,7 @@ export type SettingsView = {
     siteRegionChangeEnabled: boolean;
   };
   notifications: {
-    telegram: { enabled: boolean; configured: boolean; target?: string };
+    telegram: { enabled: boolean; configured: boolean; targets: string[] };
     webPush: { enabled: boolean; vapidPublicKey?: string };
   };
 };
@@ -255,6 +255,13 @@ export type NotificationRecordItem = {
   lifecycle: ConfigLifecycle;
 };
 
+export type NotificationRecordDelivery = {
+  channel: string;
+  target: string;
+  status: string;
+  error?: string | null;
+};
+
 export type NotificationRecord = {
   id: string;
   createdAt: string;
@@ -264,7 +271,20 @@ export type NotificationRecord = {
   partitionLabel?: string | null;
   telegramStatus: string;
   webPushStatus: string;
+  telegramDeliveries?: NotificationRecordDelivery[];
   items: NotificationRecordItem[];
+};
+
+type TelegramTestDeliveryResult = {
+  target: string;
+  status: string;
+  error?: string | null;
+};
+
+type TelegramTestResponse = {
+  ok: boolean;
+  status: string;
+  results: TelegramTestDeliveryResult[];
 };
 
 export type NotificationRecordsResponse = {
@@ -550,6 +570,7 @@ function notificationKindLabel(kind: string): string {
 
 function notificationStatusClass(status: string): string {
   if (status === "success") return "pill sm center notification-status ok";
+  if (status === "partial_success") return "pill sm center notification-status warn";
   if (status === "error") return "pill sm center notification-status err";
   if (status === "skipped") return "pill sm center notification-status skip";
   return "pill sm center notification-status";
@@ -557,6 +578,7 @@ function notificationStatusClass(status: string): string {
 
 function notificationStatusLabel(status: string): string {
   if (status === "success") return "成功";
+  if (status === "partial_success") return "部分成功";
   if (status === "error") return "失败";
   if (status === "skipped") return "跳过";
   if (status === "pending") return "发送中";
@@ -1210,7 +1232,7 @@ export function App() {
           telegram: {
             enabled: next.notifications.telegram.enabled,
             botToken: next.telegramBotToken ?? null,
-            target: next.notifications.telegram.target ?? null,
+            targets: next.notifications.telegram.targets ?? [],
           },
           webPush: { enabled: next.notifications.webPush.enabled },
         },
@@ -3050,7 +3072,7 @@ type SettingsFieldKey =
   | "regionPartitionChangeEnabled"
   | "siteRegionChangeEnabled"
   | "tgEnabled"
-  | "tgTarget"
+  | "tgTargets"
   | "tgBotToken"
   | "tgTestAction"
   | "wpEnableAction"
@@ -3070,7 +3092,7 @@ type SettingsDraft = {
   regionPartitionChangeEnabled: boolean;
   siteRegionChangeEnabled: boolean;
   tgEnabled: boolean;
-  tgTargetInput: string;
+  tgTargets: string[];
   tgBotTokenInput: string;
   wpEnabled: boolean;
 };
@@ -3085,7 +3107,7 @@ type SettingsPersistSnapshot = {
     siteRegionChangeEnabled: boolean;
   };
   notifications: {
-    telegram: { enabled: boolean; target: string | null };
+    telegram: { enabled: boolean; targets: string[] };
     webPush: { enabled: boolean };
   };
   telegramBotToken: string | null;
@@ -3094,6 +3116,20 @@ type SettingsPersistSnapshot = {
 function normalizeOptionalText(value: string): string | null {
   const next = value.trim();
   return next ? next : null;
+}
+
+function normalizeTelegramTargets(values: string[]): string[] {
+  const out: string[] = [];
+  for (const value of values) {
+    const next = value.trim();
+    if (!next || out.includes(next)) continue;
+    out.push(next);
+  }
+  return out;
+}
+
+function sameStringList(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((item, index) => item === b[index]);
 }
 
 function parseStrictInteger(raw: string): number | null {
@@ -3130,9 +3166,7 @@ function buildPersistedSnapshotFromSettings(settings: SettingsView): SettingsPer
     notifications: {
       telegram: {
         enabled: settings.notifications.telegram.enabled,
-        target: settings.notifications.telegram.target?.trim()
-          ? settings.notifications.telegram.target.trim()
-          : null,
+        targets: normalizeTelegramTargets(settings.notifications.telegram.targets ?? []),
       },
       webPush: {
         enabled: settings.notifications.webPush.enabled,
@@ -3149,7 +3183,10 @@ function clonePersistedSnapshot(snapshot: SettingsPersistSnapshot): SettingsPers
     catalogRefresh: { ...snapshot.catalogRefresh },
     monitoringEvents: { ...snapshot.monitoringEvents },
     notifications: {
-      telegram: { ...snapshot.notifications.telegram },
+      telegram: {
+        enabled: snapshot.notifications.telegram.enabled,
+        targets: [...snapshot.notifications.telegram.targets],
+      },
       webPush: { ...snapshot.notifications.webPush },
     },
     telegramBotToken: snapshot.telegramBotToken,
@@ -3177,7 +3214,7 @@ function snapshotToOnSaveInput(
       telegram: {
         enabled: snapshot.notifications.telegram.enabled,
         configured: false,
-        target: snapshot.notifications.telegram.target ?? undefined,
+        targets: [...snapshot.notifications.telegram.targets],
       },
       webPush: {
         enabled: snapshot.notifications.webPush.enabled,
@@ -3230,12 +3267,13 @@ export function SettingsViewPanel({
   const [tgEnabled, setTgEnabled] = useState<boolean>(
     bootstrap.settings.notifications.telegram.enabled,
   );
-  const [tgTargetInput, setTgTargetInput] = useState<string>(
-    bootstrap.settings.notifications.telegram.target ?? "",
+  const [tgTargets, setTgTargets] = useState<string[]>(
+    normalizeTelegramTargets(bootstrap.settings.notifications.telegram.targets ?? []),
   );
+  const [tgTargetDraftInput, setTgTargetDraftInput] = useState<string>("");
   const [tgBotTokenInput, setTgBotTokenInput] = useState<string>("");
   const [tgTestPending, setTgTestPending] = useState<boolean>(false);
-  const [tgTestStatus, setTgTestStatus] = useState<string | null>(null);
+  const [tgTestResult, setTgTestResult] = useState<TelegramTestResponse | null>(null);
   const [wpEnabled, setWpEnabled] = useState<boolean>(
     bootstrap.settings.notifications.webPush.enabled,
   );
@@ -3273,15 +3311,15 @@ export function SettingsViewPanel({
 
   const clearTgTestStatus = useCallback(() => {
     clearFeedbackTimer(tgTestSuccessTimerRef);
-    setTgTestStatus(null);
+    setTgTestResult(null);
   }, []);
 
-  const showTgTestStatus = useCallback((message: string) => {
+  const showTgTestStatus = useCallback((result: TelegramTestResponse) => {
     clearFeedbackTimer(tgTestSuccessTimerRef);
-    setTgTestStatus(message);
+    setTgTestResult(result);
     tgTestSuccessTimerRef.current = window.setTimeout(() => {
       tgTestSuccessTimerRef.current = null;
-      setTgTestStatus(null);
+      setTgTestResult(null);
     }, SETTINGS_TEST_SUCCESS_BUBBLE_MS);
   }, []);
 
@@ -3333,7 +3371,7 @@ export function SettingsViewPanel({
       regionPartitionChangeEnabled,
       siteRegionChangeEnabled,
       tgEnabled,
-      tgTargetInput,
+      tgTargets,
       tgBotTokenInput,
       wpEnabled,
       ...overrides,
@@ -3346,7 +3384,7 @@ export function SettingsViewPanel({
       regionPartitionChangeEnabled,
       siteRegionChangeEnabled,
       tgEnabled,
-      tgTargetInput,
+      tgTargets,
       tgBotTokenInput,
       wpEnabled,
     ],
@@ -3494,9 +3532,9 @@ export function SettingsViewPanel({
         changed = true;
       }
 
-      const nextTarget = normalizeOptionalText(draft.tgTargetInput);
-      if (nextTarget !== next.notifications.telegram.target) {
-        next.notifications.telegram.target = nextTarget;
+      const nextTargets = normalizeTelegramTargets(draft.tgTargets);
+      if (!sameStringList(nextTargets, next.notifications.telegram.targets)) {
+        next.notifications.telegram.targets = nextTargets;
         changed = true;
       }
 
@@ -3632,6 +3670,75 @@ export function SettingsViewPanel({
       />
     );
   };
+
+  const commitTelegramTargetDraft = useCallback(async () => {
+    const nextValue = tgTargetDraftInput.trim();
+    setFieldError("tgTargets", null);
+    if (!nextValue) return;
+    const nextTargets = normalizeTelegramTargets([...tgTargets, nextValue]);
+    setTgTargetDraftInput("");
+    setTgTargets(nextTargets);
+    clearTgTestStatus();
+    await flushAutosaveImmediate({ tgTargets: nextTargets }, "tgTargets");
+  }, [clearTgTestStatus, flushAutosaveImmediate, setFieldError, tgTargetDraftInput, tgTargets]);
+
+  const removeTelegramTarget = useCallback(
+    async (targetToRemove: string) => {
+      const nextTargets = tgTargets.filter((target) => target !== targetToRemove);
+      setFieldError("tgTargets", null);
+      setTgTargets(nextTargets);
+      clearTgTestStatus();
+      await flushAutosaveImmediate({ tgTargets: nextTargets }, "tgTargets");
+    },
+    [clearTgTestStatus, flushAutosaveImmediate, setFieldError, tgTargets],
+  );
+
+  const renderTelegramTestFeedback = () => {
+    const errorMessage = fieldErrors.tgTestAction;
+    const tone =
+      errorMessage || tgTestResult?.status === "error"
+        ? "error"
+        : tgTestResult?.status === "partial_success"
+          ? "neutral"
+          : "success";
+    const children = errorMessage ? (
+      <span>{errorMessage}</span>
+    ) : tgTestResult ? (
+      <div className="settings-feedback-content">
+        <div className="settings-feedback-title">
+          {tgTestResult.status === "success"
+            ? "已全部发送"
+            : tgTestResult.status === "partial_success"
+              ? "部分目标发送成功"
+              : "全部目标发送失败"}
+        </div>
+        {tgTestResult.results.map((result) => (
+          <div className="settings-feedback-row" key={`${result.target}:${result.status}`}>
+            <span className="settings-feedback-key">{result.target}</span>
+            <span className={notificationStatusClass(result.status)}>
+              {notificationStatusLabel(result.status)}
+            </span>
+            {result.error ? <span className="settings-feedback-line">{result.error}</span> : null}
+          </div>
+        ))}
+      </div>
+    ) : null;
+
+    return (
+      <SettingsFeedbackBubble
+        anchorRef={tgTestButtonRef}
+        inline
+        message={null}
+        onClose={errorMessage ? () => setFieldError("tgTestAction", null) : clearTgTestStatus}
+        open={Boolean(children)}
+        testId="settings-feedback-tg-test"
+        tone={tone}
+      >
+        {children}
+      </SettingsFeedbackBubble>
+    );
+  };
+
   const renderSaveStateMessage = () => {
     if (!saveState.message) return null;
     if (saveState.kind === "saving" || saveState.kind === "saved") {
@@ -3907,21 +4014,55 @@ export function SettingsViewPanel({
         </div>
 
         <div className="settings-row" style={{ marginTop: "16px" }}>
-          <div>Target（chat id 或频道）</div>
+          <div>Targets（chat id / @channel）</div>
           <div className="settings-input-wrap">
-            <div className="pill">
-              <input
-                value={tgTargetInput}
-                onChange={(e) => {
-                  const value = e.target.value;
-                  clearTgTestStatus();
-                  setTgTargetInput(value);
-                  setFieldError("tgTarget", null);
-                  scheduleAutosave({ tgTargetInput: value }, "tgTarget");
-                }}
-              />
+            <div className="settings-tag-editor">
+              <div className="settings-tag-list">
+                {tgTargets.map((target) => (
+                  <button
+                    className="settings-tag-chip"
+                    key={target}
+                    onClick={() => {
+                      void removeTelegramTarget(target);
+                    }}
+                    type="button"
+                  >
+                    <span>{target}</span>
+                    <span aria-hidden="true">×</span>
+                  </button>
+                ))}
+                <div className="pill settings-tag-input-pill">
+                  <input
+                    placeholder="@channel 或 -1001234567890"
+                    value={tgTargetDraftInput}
+                    onChange={(e) => {
+                      clearTgTestStatus();
+                      setTgTargetDraftInput(e.target.value);
+                      setFieldError("tgTargets", null);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === ",") {
+                        e.preventDefault();
+                        void commitTelegramTargetDraft();
+                      }
+                    }}
+                  />
+                </div>
+              </div>
+              <div className="settings-tag-actions">
+                <button
+                  className="pill sm center"
+                  onClick={() => {
+                    void commitTelegramTargetDraft();
+                  }}
+                  type="button"
+                >
+                  添加目标
+                </button>
+                <span className="hint">回车或逗号添加；点击目标可删除</span>
+              </div>
             </div>
-            {renderFieldError("tgTarget")}
+            {renderFieldError("tgTargets")}
           </div>
         </div>
 
@@ -3937,17 +4078,32 @@ export function SettingsViewPanel({
                 clearTgTestStatus();
                 setFieldError("tgTestAction", null);
                 try {
-                  await api<{ ok: true }>("/api/notifications/telegram/test", {
+                  const res = await fetch("/api/notifications/telegram/test", {
                     method: "POST",
                     headers: { "content-type": "application/json" },
                     body: JSON.stringify({
                       botToken: tgBotTokenInput.trim() ? tgBotTokenInput.trim() : null,
-                      target: tgTargetInput.trim() ? tgTargetInput.trim() : null,
+                      targets: tgTargets,
                       text: null,
                     }),
                   });
-                  showTgTestStatus("已发送");
-                  setFieldError("tgTestAction", null);
+                  const bodyText = await res.text();
+                  const parsed = bodyText
+                    ? (JSON.parse(bodyText) as TelegramTestResponse | ApiError)
+                    : null;
+                  if (!res.ok) {
+                    if (parsed && "results" in parsed) {
+                      setTgTestResult(parsed as TelegramTestResponse);
+                      setFieldError("tgTestAction", null);
+                    } else {
+                      throw new Error(
+                        (parsed as ApiError | null)?.error?.message ?? `HTTP ${res.status}`,
+                      );
+                    }
+                  } else {
+                    showTgTestStatus(parsed as TelegramTestResponse);
+                    setFieldError("tgTestAction", null);
+                  }
                 } catch (e) {
                   clearTgTestStatus();
                   setFieldError("tgTestAction", e instanceof Error ? e.message : String(e));
@@ -3958,14 +4114,7 @@ export function SettingsViewPanel({
             >
               {tgTestPending ? "测试中…" : "测试 Telegram"}
             </button>
-            {renderActionFeedback(
-              "tgTestAction",
-              tgTestStatus,
-              clearTgTestStatus,
-              "settings-feedback-tg-test",
-              true,
-              tgTestButtonRef,
-            )}
+            {renderTelegramTestFeedback()}
           </div>
         </div>
 
@@ -4529,6 +4678,25 @@ export function NotificationsView({
                   </div>
                 </div>
               </header>
+
+              {record.telegramDeliveries && record.telegramDeliveries.length > 0 ? (
+                <div className="notification-delivery-list">
+                  {record.telegramDeliveries.map((delivery) => (
+                    <div
+                      className="notification-delivery-row"
+                      key={`${record.id}:${delivery.target}:${delivery.status}`}
+                    >
+                      <span className="notification-delivery-target">{delivery.target}</span>
+                      <span className={notificationStatusClass(delivery.status)}>
+                        {notificationStatusLabel(delivery.status)}
+                      </span>
+                      {delivery.error ? (
+                        <span className="notification-delivery-error">{delivery.error}</span>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
 
               <div className="notification-group-items">
                 {record.items.map((item, index) => (
