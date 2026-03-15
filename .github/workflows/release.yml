@@ -8,7 +8,7 @@ on:
       - completed
 
 concurrency:
-  group: release-${{ github.event.workflow_run.head_sha || github.run_id }}
+  group: release-main
   cancel-in-progress: false
 
 permissions:
@@ -33,6 +33,7 @@ jobs:
       release_matrix: ${{ steps.plan.outputs.release_matrix }}
       release_plan: ${{ steps.plan.outputs.release_plan }}
       target_sha: ${{ steps.meta.outputs.target_sha }}
+      should_publish: ${{ steps.meta.outputs.should_publish }}
     steps:
       - name: Checkout target history
         uses: actions/checkout@v6
@@ -46,9 +47,26 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "target_sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
+          target_sha="$(git rev-parse HEAD)"
+          git fetch --no-tags --depth=1 origin main
+          current_main_sha="$(git rev-parse FETCH_HEAD)"
+          run_attempt='${{ github.event.workflow_run.run_attempt || 1 }}'
+          should_publish="true"
+          if [[ "${target_sha}" != "${current_main_sha}" ]]; then
+            should_publish="false"
+          fi
+          if [[ "${run_attempt}" != "1" ]]; then
+            should_publish="false"
+          fi
+          {
+            echo "target_sha=${target_sha}"
+            echo "current_main_sha=${current_main_sha}"
+            echo "run_attempt=${run_attempt}"
+            echo "should_publish=${should_publish}"
+          } >> "${GITHUB_OUTPUT}"
 
       - name: Plan missing releases
+        if: steps.meta.outputs.should_publish == 'true'
         id: plan
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -79,6 +97,9 @@ jobs:
               "### Release reconciliation",
               f"- workflow_run_id: ${{ github.event.workflow_run.id }}",
               f"- target_sha: ${{ steps.meta.outputs.target_sha }}",
+              f"- current_main_sha: ${{ steps.meta.outputs.current_main_sha }}",
+              f"- run_attempt: ${{ steps.meta.outputs.run_attempt }}",
+              f"- should_publish: ${{ steps.meta.outputs.should_publish }}",
               f"- release_count: ${{ steps.plan.outputs.release_count || '0' }}",
               "- plan:",
               "```json",
@@ -91,7 +112,7 @@ jobs:
 
   publish:
     name: Release Publish (${{ matrix.tag }})
-    if: needs.plan.outputs.has_releases == 'true'
+    if: needs.plan.outputs.should_publish == 'true' && needs.plan.outputs.has_releases == 'true'
     needs: [plan]
     runs-on: ubuntu-latest
     timeout-minutes: 180

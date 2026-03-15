@@ -57,17 +57,81 @@ jobs:
         id: plan
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_LEGACY_MISSING_CHANNEL: ${{ inputs.legacy_missing_channel }}
+          TARGET_REF: ${{ inputs.target_ref }}
+          TARGET_SHA: ${{ steps.meta.outputs.target_sha }}
         shell: bash
         run: |
           set -euo pipefail
-          python3 ./.github/scripts/release_plan.py plan \
+          plan_json="$(python3 ./.github/scripts/release_plan.py plan \
             --repo "${GITHUB_REPOSITORY}" \
             --repo-root "$PWD" \
-            --target-sha "${{ steps.meta.outputs.target_sha }}" \
-            --target-ref "${{ inputs.target_ref }}" \
-            --legacy-missing-channel "${{ inputs.legacy_missing_channel }}" \
-            --github-output "${GITHUB_OUTPUT}"
+            --target-sha "${TARGET_SHA}" \
+            --target-ref "${TARGET_REF}" \
+            --legacy-missing-channel "${{ inputs.legacy_missing_channel }}")"
+          PLAN_JSON="${plan_json}" python3 - <<'PY'
+          import json
+          import os
+          import re
+          import subprocess
+          from pathlib import Path
+
+          plan = json.loads(os.environ["PLAN_JSON"])
+          target_ref = os.environ["TARGET_REF"]
+          target_sha = os.environ["TARGET_SHA"]
+
+          def version_sort_key(tag: str) -> tuple[int, int, int]:
+              major, minor, patch = tag[1:].split(".")
+              return int(major), int(minor), int(patch)
+
+          tag_match = re.fullmatch(r"v(?P<core>\d+\.\d+\.\d+)(?P<rc>-rc\.[0-9a-f]{7})?", target_ref)
+          if not plan["entries"] and tag_match:
+              core = tag_match.group("core")
+              rc_suffix = tag_match.group("rc")
+              prerelease = rc_suffix is not None
+              app_version = f"{core}{rc_suffix or ''}"
+              publish_latest = False
+              channel = "rc" if prerelease else "stable"
+              if not prerelease:
+                  stable_tags = subprocess.run(
+                      ["git", "tag", "--merged", target_sha, "-l", "v[0-9]*.[0-9]*.[0-9]*"],
+                      check=True,
+                      text=True,
+                      capture_output=True,
+                  ).stdout.splitlines()
+                  stable_tags = sorted((tag for tag in stable_tags if tag), key=version_sort_key)
+                  publish_latest = bool(stable_tags) and stable_tags[-1] == target_ref
+              plan["entries"] = [
+                  {
+                      "commit_sha": target_sha,
+                      "commit_subject": f"manual tag repair: {target_ref}",
+                      "pr_number": None,
+                      "intent_label": "manual:tag-repair",
+                      "channel_label": f"channel:{channel}",
+                      "channel_source": "manual-tag",
+                      "channel": channel,
+                      "bump_level": "none",
+                      "resolution_source": "manual-tag",
+                      "version": core,
+                      "app_version": app_version,
+                      "tag": target_ref,
+                      "prerelease": prerelease,
+                      "publish_latest": publish_latest,
+                      "tag_exists": True,
+                  }
+              ]
+              plan["release_count"] = 1
+
+          output = Path(os.environ["GITHUB_OUTPUT"])
+          with output.open("a", encoding="utf-8") as handle:
+              handle.write(f"has_releases={'true' if plan['entries'] else 'false'}\n")
+              handle.write(f"release_count={plan['release_count']}\n")
+              handle.write("release_matrix<<EOF\n")
+              handle.write(json.dumps({"include": plan["entries"]}, separators=(",", ":")) + "\n")
+              handle.write("EOF\n")
+              handle.write("release_plan<<EOF\n")
+              handle.write(json.dumps(plan, separators=(",", ":")) + "\n")
+              handle.write("EOF\n")
+          PY
 
       - name: Summary
         if: always()
