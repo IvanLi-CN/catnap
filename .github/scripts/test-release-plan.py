@@ -43,23 +43,33 @@ def commit(repo: Path, filename: str, content: str, subject: str) -> str:
     return git(repo, "rev-parse", "HEAD")
 
 
-def plan(repo: Path, fixture_path: Path, target_sha: str) -> dict:
+def plan(
+    repo: Path,
+    fixture_path: Path,
+    target_sha: str,
+    *,
+    target_ref: str = "main",
+    allow_tag_repair: bool = False,
+) -> dict:
+    cmd = [
+        "python3",
+        str(SCRIPT),
+        "plan",
+        "--repo",
+        "IvanLi-CN/catnap",
+        "--repo-root",
+        str(repo),
+        "--fixtures",
+        str(fixture_path),
+        "--target-sha",
+        target_sha,
+        "--target-ref",
+        target_ref,
+    ]
+    if allow_tag_repair:
+        cmd.append("--allow-tag-repair")
     result = subprocess.run(
-        [
-            "python3",
-            str(SCRIPT),
-            "plan",
-            "--repo",
-            "IvanLi-CN/catnap",
-            "--repo-root",
-            str(repo),
-            "--fixtures",
-            str(fixture_path),
-            "--target-sha",
-            target_sha,
-            "--target-ref",
-            "main",
-        ],
+        cmd,
         check=True,
         text=True,
         capture_output=True,
@@ -239,12 +249,48 @@ def test_commits_api_filters_non_main_pulls() -> None:
         assert_equal(payload["resolution_source"], "commits_api", "commits api resolution source")
         assert_equal(payload["should_release"], True, "filtered commits api release")
 
+
+def test_manual_tag_repair_preserves_latest_pointer() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        repo, _ = init_repo(Path(tmp))
+        sha90 = commit(repo, "feature-90.txt", "90\n", "feat: stable release 0.9.0")
+        git(repo, "tag", "v0.9.0", sha90)
+        sha100 = commit(repo, "feature-100.txt", "100\n", "feat: stable release 0.10.0")
+        git(repo, "tag", "v0.10.0", sha100)
+        fixture_path = Path(tmp) / "fixtures.json"
+        fixture_path.write_text(json.dumps({"commits_pulls": {}, "closed_pulls": [], "issues": {}}))
+
+        old_tag_payload = plan(
+            repo,
+            fixture_path,
+            sha90,
+            target_ref="v0.9.0",
+            allow_tag_repair=True,
+        )
+        old_tag_entry = old_tag_payload["entries"][0]
+        assert_equal(old_tag_payload["release_count"], 1, "manual old tag repair count")
+        assert_equal(old_tag_entry["tag"], "v0.9.0", "manual old tag repair tag")
+        assert_equal(old_tag_entry["publish_latest"], False, "manual old tag repair must not move latest")
+
+        latest_tag_payload = plan(
+            repo,
+            fixture_path,
+            sha100,
+            target_ref="v0.10.0",
+            allow_tag_repair=True,
+        )
+        latest_tag_entry = latest_tag_payload["entries"][0]
+        assert_equal(latest_tag_payload["release_count"], 1, "manual latest tag repair count")
+        assert_equal(latest_tag_entry["tag"], "v0.10.0", "manual latest tag repair tag")
+        assert_equal(latest_tag_entry["publish_latest"], True, "manual latest tag repair should keep latest")
+
 def main() -> int:
     test_sequential_stable_reconciliation()
     test_rc_candidate()
     test_merge_commit_sha_inspect()
     test_unresolved_subject_skips()
     test_commits_api_filters_non_main_pulls()
+    test_manual_tag_repair_preserves_latest_pointer()
     print("test-release-plan: all cases passed")
     return 0
 

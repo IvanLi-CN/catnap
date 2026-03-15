@@ -67,59 +67,14 @@ jobs:
             --repo-root "$PWD" \
             --target-sha "${TARGET_SHA}" \
             --target-ref "${TARGET_REF}" \
+            --allow-tag-repair \
             --legacy-missing-channel "${{ inputs.legacy_missing_channel }}")"
           PLAN_JSON="${plan_json}" python3 - <<'PY'
           import json
           import os
-          import re
-          import subprocess
           from pathlib import Path
 
           plan = json.loads(os.environ["PLAN_JSON"])
-          target_ref = os.environ["TARGET_REF"]
-          target_sha = os.environ["TARGET_SHA"]
-
-          def version_sort_key(tag: str) -> tuple[int, int, int]:
-              major, minor, patch = tag[1:].split(".")
-              return int(major), int(minor), int(patch)
-
-          tag_match = re.fullmatch(r"v(?P<core>\d+\.\d+\.\d+)(?P<rc>-rc\.[0-9a-f]{7})?", target_ref)
-          if not plan["entries"] and tag_match:
-              core = tag_match.group("core")
-              rc_suffix = tag_match.group("rc")
-              prerelease = rc_suffix is not None
-              app_version = f"{core}{rc_suffix or ''}"
-              publish_latest = False
-              channel = "rc" if prerelease else "stable"
-              if not prerelease:
-                  stable_tags = subprocess.run(
-                      ["git", "tag", "--merged", target_sha, "-l", "v[0-9]*.[0-9]*.[0-9]*"],
-                      check=True,
-                      text=True,
-                      capture_output=True,
-                  ).stdout.splitlines()
-                  stable_tags = sorted((tag for tag in stable_tags if tag), key=version_sort_key)
-                  publish_latest = bool(stable_tags) and stable_tags[-1] == target_ref
-              plan["entries"] = [
-                  {
-                      "commit_sha": target_sha,
-                      "commit_subject": f"manual tag repair: {target_ref}",
-                      "pr_number": None,
-                      "intent_label": "manual:tag-repair",
-                      "channel_label": f"channel:{channel}",
-                      "channel_source": "manual-tag",
-                      "channel": channel,
-                      "bump_level": "none",
-                      "resolution_source": "manual-tag",
-                      "version": core,
-                      "app_version": app_version,
-                      "tag": target_ref,
-                      "prerelease": prerelease,
-                      "publish_latest": publish_latest,
-                      "tag_exists": True,
-                  }
-              ]
-              plan["release_count"] = 1
 
           output = Path(os.environ["GITHUB_OUTPUT"])
           with output.open("a", encoding="utf-8") as handle:

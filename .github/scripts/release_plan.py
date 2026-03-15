@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import urllib.error
@@ -25,6 +26,7 @@ ALLOWED_CHANNEL_LABELS = {
     "channel:stable",
     "channel:rc",
 }
+RELEASE_TAG_PATTERN = re.compile(r"v(?P<core>\d+\.\d+\.\d+)(?P<rc>-rc\.[0-9a-f]{7})?")
 
 
 class PlanError(RuntimeError):
@@ -181,6 +183,11 @@ def parse_args() -> argparse.Namespace:
     plan_parser = subparsers.add_parser("plan", help="Plan missing releases up to a target SHA.")
     add_common_args(plan_parser, require_target_sha=True)
     plan_parser.add_argument("--target-ref", default="main", help="Human-readable target ref for summaries.")
+    plan_parser.add_argument(
+        "--allow-tag-repair",
+        action="store_true",
+        help="When the target ref is an existing release tag and no missing releases remain, synthesize one repair entry.",
+    )
 
     return parser.parse_args()
 
@@ -246,12 +253,20 @@ def git_first_parent_commits(repo_root: Path, target_sha: str, since_ref: str | 
 
 
 def git_latest_stable_tag(repo_root: Path, target_sha: str) -> tuple[str | None, str | None]:
-    merged_tags = run_git(repo_root, "tag", "--merged", target_sha, "-l", "v[0-9]*.[0-9]*.[0-9]*", check=False)
-    tags = [line.strip() for line in merged_tags.splitlines() if line.strip()]
+    tags = git_stable_tags(repo_root, merged_target=target_sha)
     if not tags:
         return None, None
     latest_tag = sorted(tags, key=version_sort_key)[-1]
     return latest_tag, latest_tag[1:]
+
+
+def git_stable_tags(repo_root: Path, merged_target: str | None = None) -> list[str]:
+    argv = ["tag"]
+    if merged_target:
+        argv.extend(["--merged", merged_target])
+    argv.extend(["-l", "v[0-9]*.[0-9]*.[0-9]*"])
+    output = run_git(repo_root, *argv, check=False)
+    return [line.strip() for line in output.splitlines() if line.strip()]
 
 
 def version_sort_key(tag: str) -> tuple[int, int, int]:
@@ -295,6 +310,19 @@ def normalize_ref(ref: str) -> str:
     if ref.startswith("refs/heads/"):
         return ref[len("refs/heads/") :]
     return ref
+
+
+def normalize_tag_ref(ref: str) -> str:
+    if ref.startswith("refs/tags/"):
+        return ref[len("refs/tags/") :]
+    return ref
+
+
+def parse_release_tag(ref: str) -> tuple[str, str | None] | None:
+    match = RELEASE_TAG_PATTERN.fullmatch(normalize_tag_ref(ref))
+    if not match:
+        return None
+    return match.group("core"), match.group("rc")
 
 
 def resolve_single_pull(
@@ -421,6 +449,8 @@ def build_plan(
     target_sha: str,
     target_ref: str,
     legacy_missing_channel: str,
+    *,
+    allow_tag_repair: bool = False,
 ) -> dict[str, Any]:
     latest_stable_tag, latest_stable_version = git_latest_stable_tag(context.repo_root, target_sha)
     current_stable = latest_stable_version or cargo_version(context.repo_root)
@@ -480,6 +510,11 @@ def build_plan(
     if stable_indexes:
         entries[stable_indexes[-1]]["publish_latest"] = True
 
+    if allow_tag_repair and not entries:
+        tag_repair_entry = build_tag_repair_entry(context.repo_root, target_ref, target_sha)
+        if tag_repair_entry is not None:
+            entries = [tag_repair_entry]
+
     return {
         "target_sha": target_sha,
         "target_ref": target_ref,
@@ -489,6 +524,38 @@ def build_plan(
         "entries": entries,
         "skipped_commits": skipped,
         "release_count": len(entries),
+    }
+
+
+def build_tag_repair_entry(repo_root: Path, target_ref: str, target_sha: str) -> dict[str, Any] | None:
+    parsed = parse_release_tag(target_ref)
+    if parsed is None:
+        return None
+
+    core, rc_suffix = parsed
+    prerelease = rc_suffix is not None
+    normalized_ref = normalize_tag_ref(target_ref)
+    publish_latest = False
+    if not prerelease:
+        stable_tags = sorted(git_stable_tags(repo_root), key=version_sort_key)
+        publish_latest = bool(stable_tags) and stable_tags[-1] == normalized_ref
+
+    return {
+        "commit_sha": target_sha,
+        "commit_subject": f"manual tag repair: {normalized_ref}",
+        "pr_number": None,
+        "intent_label": "manual:tag-repair",
+        "channel_label": f"channel:{'rc' if prerelease else 'stable'}",
+        "channel_source": "manual-tag",
+        "channel": "rc" if prerelease else "stable",
+        "bump_level": "none",
+        "resolution_source": "manual-tag",
+        "version": core,
+        "app_version": f"{core}{rc_suffix or ''}",
+        "tag": normalized_ref,
+        "prerelease": prerelease,
+        "publish_latest": publish_latest,
+        "tag_exists": git_ref_exists(repo_root, normalized_ref),
     }
 
 
@@ -561,7 +628,14 @@ def handle_inspect(args: argparse.Namespace) -> int:
 def handle_plan(args: argparse.Namespace) -> int:
     context = build_repo_context(args)
     client = build_client(args, context)
-    plan = build_plan(context, client, args.target_sha, args.target_ref, args.legacy_missing_channel)
+    plan = build_plan(
+        context,
+        client,
+        args.target_sha,
+        args.target_ref,
+        args.legacy_missing_channel,
+        allow_tag_repair=args.allow_tag_repair,
+    )
     print(json.dumps(plan, indent=2, sort_keys=True))
     write_output(args.github_output, "has_releases", "true" if plan["entries"] else "false")
     write_output(args.github_output, "release_count", str(plan["release_count"]))
