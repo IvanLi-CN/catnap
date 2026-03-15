@@ -26,7 +26,7 @@
 
 | ID   | Title | Status | Spec | Last | Notes |
 |-----:|-------|--------|------|------|-------|
-| qp3ht | 发布链路全量重构与防漏发对齐 | 部分完成（3/4） | `qp3ht-release-reconcile-governance/SPEC.md` | 2026-03-15 | workflow 拆分、planner/label gate/quality gates 合同已落地；待 PR、远端 `channel:rc` 与 review-loop 收口 |
+| qp3ht | 发布链路全量重构与防漏发对齐 | 部分完成（3/4） | `qp3ht-release-reconcile-governance/SPEC.md` | 2026-03-15 | PR #71：workflow 拆分、planner/label gate/quality gates 合同已落地；待 checks、review-loop 与 post-merge reconcile |
 | kqcgt | Telegram 多目标群/频道通知 | 部分完成（3/4） | `kqcgt-telegram-multi-target-notify/SPEC.md` | 2026-03-14 | spec-sync：多目标 settings / test / notification-record 实现已完成，待 PR / review-loop 收口 |
 | jpguk | 手动刷新单个可用区 | 已完成 | `jpguk-manual-region-refresh/SPEC.md` | 2026-03-15 | PR #70：单可用区手动刷新、局部回拉反馈与 review-loop 收口 |
 | j3m9u | 国家说明与可用区说明边界修复 | 已完成 | `j3m9u-country-notice-region-boundary/SPEC.md` | 2026-03-13 | PR #68：products / monitoring 统一修正 country notice 边界，并补齐 Storybook 视觉证据 |
