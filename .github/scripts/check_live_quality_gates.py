@@ -181,6 +181,18 @@ def validate_rules(declaration: dict[str, Any], rules: list[dict[str, Any]], bra
         raise ValidationError("required_checks must be a list of non-empty strings")
     required_checks = sorted(set(required_checks))
 
+    live_transition = declaration.get("live_transition", {})
+    if live_transition is None:
+        live_transition = {}
+    if not isinstance(live_transition, dict):
+        raise ValidationError("live_transition must be a JSON object when provided")
+    allowed_extra_required_checks = live_transition.get("allowed_extra_required_checks", [])
+    if not isinstance(allowed_extra_required_checks, list) or not all(
+        isinstance(item, str) and item for item in allowed_extra_required_checks
+    ):
+        raise ValidationError("live_transition.allowed_extra_required_checks must be a list of non-empty strings")
+    allowed_extra_required_checks = sorted(set(allowed_extra_required_checks))
+
     require_signed_commits = bool(policy.get("require_signed_commits", False))
     require_pull_request = bool(branch_policy.get("require_pull_request", False))
     require_merge_queue = bool(branch_policy.get("require_merge_queue", False))
@@ -255,14 +267,20 @@ def validate_rules(declaration: dict[str, Any], rules: list[dict[str, Any]], bra
             errors.append(f"{branch}: review_policy.enforcement.check_name must be set for required-check mode")
 
     live_required_checks = normalize_status_contexts(grouped.get("required_status_checks", []))
-    if live_required_checks != required_checks:
-        missing = sorted(set(required_checks) - set(live_required_checks))
-        unexpected = sorted(set(live_required_checks) - set(required_checks))
+    live_required_set = set(live_required_checks)
+    expected_required_set = set(required_checks)
+    allowed_extra_set = set(allowed_extra_required_checks)
+    missing = sorted(expected_required_set - live_required_set)
+    unexpected = sorted(live_required_set - expected_required_set - allowed_extra_set)
+    tolerated = sorted((live_required_set - expected_required_set) & allowed_extra_set)
+    if missing or unexpected:
         details: list[str] = []
         if missing:
             details.append(f"missing={', '.join(missing)}")
         if unexpected:
             details.append(f"unexpected={', '.join(unexpected)}")
+        if tolerated:
+            details.append(f"tolerated_extra={', '.join(tolerated)}")
         if not details:
             details.append("required status check order/content drifted")
         errors.append(f"{branch}: required_status_checks drift ({'; '.join(details)})")

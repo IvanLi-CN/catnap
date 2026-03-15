@@ -1,0 +1,222 @@
+name: Main CI
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-main-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_REPO: catnap
+  PLATFORMS: linux/amd64,linux/arm64
+
+jobs:
+  path-gate:
+    name: Path Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      frontend_changed: ${{ steps.gate.outputs.frontend_changed }}
+      backend_changed: ${{ steps.gate.outputs.backend_changed }}
+      docker_changed: ${{ steps.gate.outputs.docker_changed }}
+      reason: ${{ steps.gate.outputs.reason }}
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Compute change signals
+        id: gate
+        shell: bash
+        run: |
+          bash ./.github/scripts/ci-path-gate.sh
+
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### CI gating"
+            echo "- reason: ${{ steps.gate.outputs.reason }}"
+            echo "- frontend_changed: ${{ steps.gate.outputs.frontend_changed }}"
+            echo "- backend_changed: ${{ steps.gate.outputs.backend_changed }}"
+            echo "- docker_changed: ${{ steps.gate.outputs.docker_changed }}"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+
+  lint:
+    name: Lint & Checks
+    runs-on: ubuntu-latest
+    needs: [path-gate]
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Bun (optional)
+        if: hashFiles('web/package.json') != ''
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1
+
+      - name: Cache Bun install cache (optional)
+        if: hashFiles('web/package.json') != ''
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('web/bun.lock*') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+
+      - name: Build web dist (optional, required for Rust embed)
+        if: hashFiles('web/package.json') != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd web
+          bun install --frozen-lockfile
+          VITE_APP_VERSION="0.0.0" bun run build
+
+      - name: Cache Playwright browsers (gated)
+        if: hashFiles('web/package.json') != '' && needs.path-gate.outputs.frontend_changed == 'true'
+        id: cache-playwright
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('web/bun.lock*') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
+
+      - name: Front-end heavy checks (gated)
+        if: hashFiles('web/package.json') != '' && needs.path-gate.outputs.frontend_changed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd web
+          bun run lint
+          bun run typecheck
+          bun run build-storybook
+          bunx playwright install-deps chromium
+          if [[ "${{ steps.cache-playwright.outputs.cache-hit }}" != "true" ]]; then
+            bunx playwright install chromium
+          fi
+          bun run test:storybook
+
+      - name: Release planning regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash ./.github/scripts/test-release-intent.sh
+          python3 ./.github/scripts/test-release-plan.py
+
+      - name: Docker binary packaging regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash ./.github/scripts/test-prepare-docker-binaries.sh
+
+      - name: Quality gates contract tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash ./.github/scripts/test-quality-gates-contract.sh
+          bash ./.github/scripts/test-live-quality-gates.sh
+
+      - name: Quality gates live rules check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          QUALITY_GATES_LIVE_RULES_MODE: require
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 ./.github/scripts/check_live_quality_gates.py \
+            --repo "${GITHUB_REPOSITORY}" \
+            --declaration ./.github/quality-gates.json \
+            --branch main
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Install Rust components
+        run: rustup component add rustfmt clippy
+
+      - name: Cache cargo directories
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Cargo fmt check
+        run: cargo fmt --all -- --check
+
+      - name: Cargo clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Cargo check
+        run: cargo check --locked --all-targets --all-features
+
+  unit-tests:
+    name: Backend Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Bun (optional)
+        if: hashFiles('web/package.json') != ''
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1
+
+      - name: Cache Bun install cache (optional)
+        if: hashFiles('web/package.json') != ''
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('web/bun.lock*') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+
+      - name: Build web dist (optional, for embedded UI)
+        if: hashFiles('web/package.json') != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd web
+          bun install --frozen-lockfile
+          VITE_APP_VERSION="0.0.0" bun run build
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Cache cargo directories
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Run cargo test
+        run: cargo test --locked --all-features
+

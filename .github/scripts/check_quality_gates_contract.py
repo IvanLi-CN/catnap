@@ -19,8 +19,8 @@ REQUIRED_CHECKS = {
     "Lint & Checks",
     "Backend Tests",
     "Release Chain Smoke (PR)",
-    "Review Policy Gate",
 }
+INFORMATIONAL_CHECKS = {"Review Policy Gate"}
 
 
 def load_module(path: Path):
@@ -53,6 +53,28 @@ def validate_quality_gates(path: Path) -> None:
     required_checks = set(payload.get("required_checks", []))
     require(required_checks == REQUIRED_CHECKS, f"quality-gates.json: required_checks drifted: {sorted(required_checks)}")
 
+    informational_checks = set(payload.get("informational_checks", []))
+    require(
+        informational_checks == INFORMATIONAL_CHECKS,
+        f"quality-gates.json: informational_checks drifted: {sorted(informational_checks)}",
+    )
+
+    review_enforcement = payload["policy"]["review_policy"]["enforcement"]
+    require(
+        review_enforcement.get("mode") == "github-native",
+        "quality-gates.json: review_policy.enforcement.mode must be github-native",
+    )
+    require(
+        review_enforcement.get("bypass_mode") == "pull-request-only",
+        "quality-gates.json: review_policy.enforcement.bypass_mode must be pull-request-only",
+    )
+
+    live_transition = payload.get("live_transition", {})
+    require(
+        live_transition.get("allowed_extra_required_checks") == ["Review Policy Gate"],
+        "quality-gates.json: live transition must tolerate Review Policy Gate as an extra required check",
+    )
+
     expected = {
         (entry.get("workflow"), tuple(entry.get("jobs", [])))
         for entry in payload.get("expected_pr_workflows", [])
@@ -67,21 +89,51 @@ def validate_quality_gates(path: Path) -> None:
         "quality-gates.json: expected_pr_workflows must include Review Policy workflow/job",
     )
     require(
-        ("CI Pipeline", ("Path Gate", "Lint & Checks", "Backend Tests", "Release Chain Smoke (PR)")) in expected,
-        "quality-gates.json: expected_pr_workflows must include CI Pipeline required jobs without PR Label Gate",
+        ("PR CI", ("Path Gate", "Lint & Checks", "Backend Tests", "Release Chain Smoke (PR)")) in expected,
+        "quality-gates.json: expected_pr_workflows must include PR CI required jobs",
     )
 
 
-def validate_ci(path: Path) -> None:
+def validate_pr_ci(path: Path) -> None:
     text = path.read_text()
-    require_text(text, "merge_group:", "ci.yml")
-    require_text(text, "checks_requested", "ci.yml")
-    require_text(text, "github.event_name == 'merge_group'", "ci.yml")
-    forbid_text(text, "bootstrap-label-gate:", "ci.yml")
-    forbid_text(text, "github.event.inputs.pull_number", "ci.yml")
-    forbid_text(text, "metadata_gate.py label", "ci.yml")
-    forbid_text(text, "pull_request_target:", "ci.yml")
-    forbid_text(text, ".github/scripts/label-gate.sh", "ci.yml")
+    require_text(text, "merge_group:", "ci-pr.yml")
+    require_text(text, "checks_requested", "ci-pr.yml")
+    require_text(text, "cancel-in-progress: true", "ci-pr.yml")
+    require_text(text, "Release Chain Smoke (PR)", "ci-pr.yml")
+    require_text(text, "test-release-plan.py", "ci-pr.yml")
+    forbid_text(text, "workflow_dispatch:", "ci-pr.yml")
+    forbid_text(text, "release-intent:", "ci-pr.yml")
+    forbid_text(text, "pull_request_target:", "ci-pr.yml")
+
+
+def validate_main_ci(path: Path) -> None:
+    text = path.read_text()
+    require_text(text, "push:", "ci-main.yml")
+    require_text(text, "branches: [main]", "ci-main.yml")
+    require_text(text, "cancel-in-progress: false", "ci-main.yml")
+    require_text(text, "test-release-plan.py", "ci-main.yml")
+    forbid_text(text, "merge_group:", "ci-main.yml")
+    forbid_text(text, "Release Chain Smoke (PR)", "ci-main.yml")
+    forbid_text(text, "workflow_dispatch:", "ci-main.yml")
+
+
+def validate_release_workflow(path: Path) -> None:
+    text = path.read_text()
+    require_text(text, "workflow_run:", "release.yml")
+    require_text(text, "Main CI", "release.yml")
+    require_text(text, "./.github/scripts/release_plan.py plan", "release.yml")
+    require_text(text, "./.github/actions/release-publish", "release.yml")
+    require_text(text, "max-parallel: 1", "release.yml")
+    forbid_text(text, "workflow_dispatch:", "release.yml")
+
+
+def validate_release_reconcile(path: Path) -> None:
+    text = path.read_text()
+    require_text(text, "workflow_dispatch:", "release-backfill.yml")
+    require_text(text, "target_ref:", "release-backfill.yml")
+    require_text(text, "legacy_missing_channel:", "release-backfill.yml")
+    require_text(text, "./.github/scripts/release_plan.py plan", "release-backfill.yml")
+    require_text(text, "./.github/actions/release-publish", "release-backfill.yml")
 
 
 def validate_label_gate(path: Path) -> None:
@@ -93,6 +145,8 @@ def validate_label_gate(path: Path) -> None:
     require_text(text, "contents: read", "label-gate.yml")
     require_text(text, "actions/github-script@v8", "label-gate.yml")
     require_text(text, "GET /repos/{owner}/{repo}/commits/{commit_sha}/pulls", "label-gate.yml")
+    require_text(text, "channel:stable", "label-gate.yml")
+    require_text(text, "channel:rc", "label-gate.yml")
     require_text(text, "issues.get", "label-gate.yml")
     forbid_text(text, "actions/checkout", "label-gate.yml")
     forbid_text(text, "metadata_gate.py", "label-gate.yml")
@@ -171,7 +225,10 @@ def main() -> int:
     try:
         module = load_module(scripts_dir / "metadata_gate.py")
         validate_quality_gates(repo_root / ".github" / "quality-gates.json")
-        validate_ci(repo_root / ".github" / "workflows" / "ci.yml")
+        validate_pr_ci(repo_root / ".github" / "workflows" / "ci-pr.yml")
+        validate_main_ci(repo_root / ".github" / "workflows" / "ci-main.yml")
+        validate_release_workflow(repo_root / ".github" / "workflows" / "release.yml")
+        validate_release_reconcile(repo_root / ".github" / "workflows" / "release-backfill.yml")
         validate_label_gate(repo_root / ".github" / "workflows" / "label-gate.yml")
         validate_review_policy(repo_root / ".github" / "workflows" / "review-policy.yml")
         validate_merge_group_helpers(module, fixtures_dir)

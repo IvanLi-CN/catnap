@@ -88,7 +88,10 @@ async function testLabelGateSingleAnchor() {
       issues: {
         get: async ({ issue_number }) => ({
           data: {
-            labels: [{ name: issue_number === 42 ? 'type:patch' : 'type:minor' }],
+            labels: [
+            { name: issue_number === 42 ? 'type:patch' : 'type:minor' },
+            { name: 'channel:stable' },
+          ],
           },
         }),
       },

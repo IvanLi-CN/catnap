@@ -3,59 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TARGET_SCRIPT="${SCRIPT_DIR}/release-intent.sh"
-FIXTURES_DIR="${SCRIPT_DIR}/fixtures/release-intent"
 TMP_DIR="$(mktemp -d)"
-BIN_DIR="${TMP_DIR}/bin"
-mkdir -p "${BIN_DIR}"
 trap 'rm -rf "${TMP_DIR}"' EXIT
-
-cat > "${BIN_DIR}/curl" <<'CURL'
-#!/usr/bin/env bash
-set -euo pipefail
-url="${@: -1}"
-
-case "${url}" in
-  */commits/*/pulls)
-    status="${TEST_PULLS_STATUS:-0}"
-    payload_path="${TEST_PULLS_JSON_PATH:-}"
-    payload="${TEST_PULLS_JSON:-[]}"
-    ;;
-  */issues/*)
-    status="${TEST_ISSUE_STATUS:-0}"
-    payload_path="${TEST_ISSUE_JSON_PATH:-}"
-    payload="${TEST_ISSUE_JSON:-{}}"
-    ;;
-  *)
-    echo "curl stub: unexpected url: ${url}" >&2
-    exit 64
-    ;;
-esac
-
-if [[ "${status}" != "0" ]]; then
-  exit "${status}"
-fi
-
-if [[ -n "${payload_path}" ]]; then
-  cat "${payload_path}"
-else
-  printf '%s' "${payload}"
-fi
-CURL
-chmod +x "${BIN_DIR}/curl"
-
-cat > "${BIN_DIR}/git" <<'GIT'
-#!/usr/bin/env bash
-set -euo pipefail
-
-if [[ "${1:-}" == "log" && "${2:-}" == "-1" && "${3:-}" == "--format=%s" ]]; then
-  printf '%s\n' "${TEST_GIT_SUBJECT:-}"
-  exit 0
-fi
-
-echo "git stub: unsupported args: $*" >&2
-exit 64
-GIT
-chmod +x "${BIN_DIR}/git"
 
 fail() {
   echo "test-release-intent: $*" >&2
@@ -77,50 +26,137 @@ for line in path.read_text().splitlines():
 PY
 }
 
+create_repo_with_commit() {
+  local repo_dir="$1"
+  local subject="$2"
+
+  mkdir -p "${repo_dir}"
+  git -C "${repo_dir}" init -q
+  git -C "${repo_dir}" config user.name "Catnap Tests"
+  git -C "${repo_dir}" config user.email "tests@example.com"
+  cat > "${repo_dir}/Cargo.toml" <<'EOF'
+[package]
+name = "catnap"
+version = "0.1.0"
+edition = "2021"
+EOF
+  echo "seed" > "${repo_dir}/README.md"
+  git -C "${repo_dir}" add Cargo.toml README.md
+  git -C "${repo_dir}" commit -q -m "${subject}"
+  git -C "${repo_dir}" rev-parse HEAD
+}
+
+write_fixture() {
+  local fixture_path="$1"
+  local commit_sha="$2"
+  local mode="$3"
+  local label_mode="$4"
+
+  python3 - "$fixture_path" "$commit_sha" "$mode" "$label_mode" <<'PY'
+import json
+import pathlib
+import sys
+
+fixture_path = pathlib.Path(sys.argv[1])
+commit_sha = sys.argv[2]
+mode = sys.argv[3]
+label_mode = sys.argv[4]
+
+issues = {
+    "minor": ["type:minor", "channel:stable"],
+    "invalid": ["type:weird", "channel:stable"],
+    "legacy-minor": ["type:minor"],
+    "rc-patch": ["type:patch", "channel:rc"],
+}[label_mode]
+
+payload = {
+    "commits_pulls": {},
+    "closed_pulls": [],
+    "issues": {
+        "60": issues,
+    },
+}
+
+if mode == "api":
+    payload["commits_pulls"][commit_sha] = [{"number": 60}]
+elif mode == "merge-fallback":
+    payload["closed_pulls"].append(
+        {
+            "number": 60,
+            "merge_commit_sha": commit_sha,
+            "merged_at": "2026-03-15T00:00:00Z",
+            "base": {"ref": "main"},
+        }
+    )
+elif mode == "subject":
+    pass
+else:
+    raise SystemExit(f"unexpected mode: {mode}")
+
+fixture_path.write_text(json.dumps(payload))
+PY
+}
+
 run_case() {
   local name="$1"
   local event_name="$2"
   local ref="$3"
   local ref_name="$4"
-  local pulls_fixture="$5"
-  local issue_fixture="$6"
-  local subject="$7"
+  local subject="$5"
+  local fixture_mode="$6"
+  local label_mode="$7"
   local expected_should_release="$8"
   local expected_bump_level="$9"
   local expected_intent_label="${10}"
   local expected_pr_number="${11}"
+  local expected_channel_label="${12}"
+  local expected_channel_source="${13}"
+
+  local repo_dir="${TMP_DIR}/${name}-repo"
+  local sha
+  sha="$(create_repo_with_commit "${repo_dir}" "${subject}")"
+
+  local fixture_path="${TMP_DIR}/${name}.json"
+  if [[ "${fixture_mode}" != "none" ]]; then
+    write_fixture "${fixture_path}" "${sha}" "${fixture_mode}" "${label_mode}"
+  else
+    printf '{}\n' > "${fixture_path}"
+  fi
 
   local output_file="${TMP_DIR}/${name}.out"
   local log_file="${TMP_DIR}/${name}.log"
 
-  PATH="${BIN_DIR}:${PATH}" \
   GITHUB_TOKEN="test-token" \
   GITHUB_REPOSITORY="IvanLi-CN/catnap" \
-  GITHUB_SHA="cafc2179b10fa846d9ac0302d1c129618be7e13b" \
+  GITHUB_SHA="${sha}" \
   GITHUB_EVENT_NAME="${event_name}" \
   GITHUB_REF="${ref}" \
   GITHUB_REF_NAME="${ref_name}" \
-  GITHUB_API_URL="https://example.invalid" \
+  GITHUB_WORKSPACE="${repo_dir}" \
   GITHUB_OUTPUT="${output_file}" \
   BUMP_LEVEL="minor" \
-  TEST_PULLS_JSON_PATH="${FIXTURES_DIR}/${pulls_fixture}" \
-  TEST_ISSUE_JSON_PATH="${FIXTURES_DIR}/${issue_fixture}" \
-  TEST_GIT_SUBJECT="${subject}" \
+  TEST_RELEASE_PLAN_FIXTURES="${fixture_path}" \
   bash "${TARGET_SCRIPT}" >"${log_file}" 2>&1
 
   local actual_should_release
   local actual_bump_level
   local actual_intent_label
   local actual_pr_number
+  local actual_channel_label
+  local actual_channel_source
   actual_should_release="$(read_output "${output_file}" should_release)"
   actual_bump_level="$(read_output "${output_file}" bump_level)"
   actual_intent_label="$(read_output "${output_file}" intent_label)"
   actual_pr_number="$(read_output "${output_file}" pr_number)"
+  actual_channel_label="$(read_output "${output_file}" channel_label)"
+  actual_channel_source="$(read_output "${output_file}" channel_source)"
 
   [[ "${actual_should_release}" == "${expected_should_release}" ]] || fail "${name}: should_release=${actual_should_release} (expected ${expected_should_release})"
   [[ "${actual_bump_level}" == "${expected_bump_level}" ]] || fail "${name}: bump_level=${actual_bump_level} (expected ${expected_bump_level})"
   [[ "${actual_intent_label}" == "${expected_intent_label}" ]] || fail "${name}: intent_label=${actual_intent_label} (expected ${expected_intent_label})"
   [[ "${actual_pr_number}" == "${expected_pr_number}" ]] || fail "${name}: pr_number=${actual_pr_number} (expected ${expected_pr_number})"
+  [[ "${actual_channel_label}" == "${expected_channel_label}" ]] || fail "${name}: channel_label=${actual_channel_label} (expected ${expected_channel_label})"
+  [[ "${actual_channel_source}" == "${expected_channel_source}" ]] || fail "${name}: channel_source=${actual_channel_source} (expected ${expected_channel_source})"
 }
 
 run_case \
@@ -128,49 +164,57 @@ run_case \
   push \
   refs/heads/main \
   main \
-  pulls-pr-60.json \
-  issue-pr-60-minor.json \
   "feat: direct API mapping" \
+  api \
+  minor \
   true \
   minor \
   type:minor \
-  60
+  60 \
+  channel:stable \
+  label
 
 run_case \
-  merge_subject_fallback \
+  merge_commit_fallback \
   push \
   refs/heads/main \
   main \
-  pulls-empty.json \
-  issue-pr-60-minor.json \
-  "Merge pull request #60 from IvanLi-CN/th/low-pressure-discovery-refresh" \
+  "feat(products): add manual region refresh" \
+  merge-fallback \
+  legacy-minor \
   true \
   minor \
   type:minor \
-  60
+  60 \
+  channel:stable \
+  legacy-default
 
 run_case \
   squash_subject_fallback \
   push \
   refs/heads/main \
   main \
-  pulls-empty.json \
-  issue-pr-60-minor.json \
   "feat: reduce upstream pressure during catalog discovery (#60)" \
+  subject \
+  minor \
   true \
   minor \
   type:minor \
-  60
+  60 \
+  channel:stable \
+  label
 
 run_case \
   no_fallback_skip \
   push \
   refs/heads/main \
   main \
-  pulls-empty.json \
-  issue-pr-60-minor.json \
   "feat: direct push without pr mapping" \
+  subject \
+  minor \
   false \
+  none \
+  none \
   none \
   none \
   none
@@ -180,36 +224,42 @@ run_case \
   push \
   refs/heads/main \
   main \
-  pulls-empty.json \
-  issue-pr-60-invalid.json \
   "fix: release intent fallback should stay conservative (#60)" \
+  subject \
+  invalid \
   false \
   none \
-  invalid \
-  60
+  none \
+  none \
+  none \
+  none
 
 run_case \
   manual_publish_main \
   workflow_dispatch \
   refs/heads/main \
   main \
-  pulls-empty.json \
-  issue-pr-60-minor.json \
   "ignored" \
+  none \
+  minor \
   true \
   minor \
   manual:minor \
-  none
+  none \
+  channel:stable \
+  manual
 
 run_case \
   manual_branch_dispatch_skip \
   workflow_dispatch \
   refs/heads/th/test-branch \
   th/test-branch \
-  pulls-empty.json \
-  issue-pr-60-minor.json \
   "ignored" \
+  none \
+  minor \
   false \
+  none \
+  none \
   none \
   none \
   none

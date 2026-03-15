@@ -1,23 +1,14 @@
-name: Release Reconcile
+name: Release Pipeline
 
 on:
-  workflow_dispatch:
-    inputs:
-      target_ref:
-        description: Branch, tag, or commit SHA to reconcile up to
-        required: true
-        type: string
-      legacy_missing_channel:
-        description: How to classify historical merged PRs without channel labels
-        required: false
-        default: stable
-        type: choice
-        options:
-          - stable
-          - error
+  workflow_run:
+    workflows:
+      - Main CI
+    types:
+      - completed
 
 concurrency:
-  group: release-reconcile-${{ inputs.target_ref }}
+  group: release-${{ github.event.workflow_run.head_sha || github.run_id }}
   cancel-in-progress: false
 
 permissions:
@@ -25,7 +16,11 @@ permissions:
 
 jobs:
   plan:
-    name: Release Plan (manual)
+    name: Release Plan
+    if: |
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.event == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -44,7 +39,7 @@ jobs:
         with:
           fetch-depth: 0
           fetch-tags: true
-          ref: ${{ inputs.target_ref }}
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Resolve target metadata
         id: meta
@@ -57,7 +52,6 @@ jobs:
         id: plan
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_LEGACY_MISSING_CHANNEL: ${{ inputs.legacy_missing_channel }}
         shell: bash
         run: |
           set -euo pipefail
@@ -65,8 +59,7 @@ jobs:
             --repo "${GITHUB_REPOSITORY}" \
             --repo-root "$PWD" \
             --target-sha "${{ steps.meta.outputs.target_sha }}" \
-            --target-ref "${{ inputs.target_ref }}" \
-            --legacy-missing-channel "${{ inputs.legacy_missing_channel }}" \
+            --target-ref "main" \
             --github-output "${GITHUB_OUTPUT}"
 
       - name: Summary
@@ -74,8 +67,8 @@ jobs:
         shell: bash
         run: |
           {
-            echo "### Manual release reconciliation"
-            echo "- target_ref: ${{ inputs.target_ref }}"
+            echo "### Release reconciliation"
+            echo "- workflow_run_id: ${{ github.event.workflow_run.id }}"
             echo "- target_sha: ${{ steps.meta.outputs.target_sha }}"
             echo "- release_count: ${{ steps.plan.outputs.release_count || '0' }}"
             echo '- plan:'
