@@ -1224,6 +1224,32 @@ LIMIT 1
     Ok(row.is_some())
 }
 
+pub async fn catalog_named_region_exists(
+    db: &SqlitePool,
+    country_id: &str,
+    region_id: &str,
+) -> anyhow::Result<bool> {
+    let country_id = country_id.trim();
+    let region_id = region_id.trim();
+    if country_id.is_empty() || region_id.is_empty() {
+        return Ok(false);
+    }
+
+    let row = sqlx::query(
+        r#"
+SELECT 1
+FROM catalog_regions
+WHERE country_id = ? AND id = ?
+LIMIT 1
+"#,
+    )
+    .bind(country_id)
+    .bind(region_id)
+    .fetch_optional(db)
+    .await?;
+    Ok(row.is_some())
+}
+
 pub async fn list_enabled_monitoring_partitions(
     db: &SqlitePool,
     user_id: &str,
@@ -2908,6 +2934,7 @@ mod tests {
         .await
         .unwrap();
 
+        assert!(catalog_named_region_exists(&db, "7", "40").await.unwrap());
         assert!(catalog_partition_exists(&db, "7", None).await.unwrap());
         let saved = set_monitoring_partition_enabled(&db, "u_1", "7", None, true)
             .await
@@ -2978,6 +3005,7 @@ mod tests {
             .unwrap();
 
         assert!(!catalog_partition_exists(&db, "7", None).await.unwrap());
+        assert!(!catalog_named_region_exists(&db, "7", "40").await.unwrap());
         assert!(!catalog_partition_exists(&db, "7", Some("40"))
             .await
             .unwrap());

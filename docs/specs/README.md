@@ -26,6 +26,7 @@
 
 | ID   | Title | Status | Spec | Last | Notes |
 |-----:|-------|--------|------|------|-------|
+| jpguk | 手动刷新单个可用区 | 已完成 | `jpguk-manual-region-refresh/SPEC.md` | 2026-03-15 | PR #70：单可用区手动刷新、局部回拉反馈与 review-loop 收口 |
 | j3m9u | 国家说明与可用区说明边界修复 | 已完成 | `j3m9u-country-notice-region-boundary/SPEC.md` | 2026-03-13 | PR #68：products / monitoring 统一修正 country notice 边界，并补齐 Storybook 视觉证据 |
 | xm4p2 | 通知记录页与 Telegram 深链 | 已完成 | `xm4p2-notification-records-telegram-deeplink/SPEC.md` | 2026-03-11 | PR #66：通知记录持久化、独立页面、TG 深链、无限滚动与 review-loop 收口完成 |
 | 34tgn | 父级监控子级变更与拓扑告警 | 已完成 | `34tgn-parent-scope-monitoring-topology-alerts/SPEC.md` | 2026-03-11 | spec-sync：review 修复已并入；本地质量门与 Storybook 校验通过；PR #65 |

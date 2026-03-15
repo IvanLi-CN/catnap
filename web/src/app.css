@@ -632,6 +632,26 @@ select {
   height: 16px;
 }
 
+.partition-refresh-btn {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+}
+
+.partition-refresh-btn.success {
+  color: var(--success-bubble-icon-color);
+}
+
+.partition-refresh-btn.error {
+  color: var(--color-danger);
+}
+
+.partition-refresh-btn:disabled {
+  cursor: progress;
+  opacity: 0.95;
+}
+
 .panel-subtitle {
   margin-top: 8px;
   font-size: 14px;
@@ -735,6 +755,21 @@ select {
   font-size: 17px;
   font-weight: 700;
   letter-spacing: 0;
+}
+
+.product-region-refresh-feedback {
+  margin-bottom: 8px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.product-region-refresh-feedback.success {
+  color: var(--success-bubble-icon-color);
+}
+
+.product-region-refresh-feedback.error {
+  color: var(--color-danger);
 }
 
 .product-region-subtitle {
