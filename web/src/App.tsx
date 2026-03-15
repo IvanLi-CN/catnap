@@ -161,6 +161,12 @@ export type ProductsResponse = {
   fetchedAt: string;
 };
 
+export type PartitionRefreshResponse = {
+  countryId: string;
+  regionId: string;
+  refreshed: boolean;
+};
+
 export type ArchiveDelistedResponse = {
   archivedCount: number;
   archivedAt?: string | null;
@@ -175,6 +181,7 @@ type ProductRegionGroup = {
   title: string;
   subtitle: string | null;
   partitionEnabled: boolean;
+  refreshAvailable: boolean;
   notice: string | null;
   configs: Config[];
 };
@@ -188,6 +195,11 @@ type ProductCountryGroup = {
   directConfigs: Config[];
   groups: ProductRegionGroup[];
 };
+
+export type PartitionRefreshState =
+  | { kind: "running"; message?: string | null }
+  | { kind: "success"; message: string }
+  | { kind: "error"; message: string };
 
 export type InventoryHistoryPoint = { tsMinute: string; quantity: number };
 export type InventoryHistorySeries = {
@@ -811,9 +823,13 @@ export function App() {
     lastEventId: null,
     lastReset: null,
   });
+  const [partitionRefreshStates, setPartitionRefreshStates] = useState<
+    Record<string, PartitionRefreshState>
+  >({});
   const lastTerminalJobIdRef = useRef<string | null>(null);
   const orderGuardReqSeqRef = useRef<number>(0);
   const catalogBackfillPendingRef = useRef<boolean>(false);
+  const partitionRefreshTimersRef = useRef<Record<string, number>>({});
 
   const applyProductsResponse = useCallback((res: ProductsResponse) => {
     setBootstrap((prev) =>
@@ -891,6 +907,16 @@ export function App() {
     return () => window.clearInterval(id);
   }, []);
 
+  useEffect(
+    () => () => {
+      for (const timer of Object.values(partitionRefreshTimersRef.current)) {
+        window.clearTimeout(timer);
+      }
+      partitionRefreshTimersRef.current = {};
+    },
+    [],
+  );
+
   const refreshBootstrapSilently = useCallback(async () => {
     try {
       const json = await api<BootstrapResponse>("/api/bootstrap");
@@ -923,6 +949,85 @@ export function App() {
       // Ignore monitoring refresh errors.
     }
   }, []);
+
+  const clearPartitionRefreshState = useCallback((partitionKey: string) => {
+    const timer = partitionRefreshTimersRef.current[partitionKey];
+    if (typeof timer === "number") {
+      window.clearTimeout(timer);
+      delete partitionRefreshTimersRef.current[partitionKey];
+    }
+    setPartitionRefreshStates((prev) => {
+      if (!(partitionKey in prev)) return prev;
+      const next = { ...prev };
+      delete next[partitionKey];
+      return next;
+    });
+  }, []);
+
+  const schedulePartitionRefreshReset = useCallback((partitionKey: string) => {
+    const existing = partitionRefreshTimersRef.current[partitionKey];
+    if (typeof existing === "number") {
+      window.clearTimeout(existing);
+    }
+    partitionRefreshTimersRef.current[partitionKey] = window.setTimeout(() => {
+      delete partitionRefreshTimersRef.current[partitionKey];
+      setPartitionRefreshStates((prev) => {
+        if (!(partitionKey in prev)) return prev;
+        const next = { ...prev };
+        delete next[partitionKey];
+        return next;
+      });
+    }, SETTINGS_TEST_SUCCESS_BUBBLE_MS);
+  }, []);
+
+  const refreshPartition = useCallback(
+    async (countryId: string, regionId: string) => {
+      const partitionKey = buildPartitionKey(countryId, regionId);
+      clearPartitionRefreshState(partitionKey);
+      setPartitionRefreshStates((prev) => ({
+        ...prev,
+        [partitionKey]: { kind: "running" },
+      }));
+
+      try {
+        await api<PartitionRefreshResponse>("/api/catalog/refresh/partition", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ countryId, regionId }),
+        });
+
+        try {
+          const nextBootstrap = await api<BootstrapResponse>("/api/bootstrap");
+          setBootstrap(nextBootstrap);
+          const products = await api<ProductsResponse>("/api/products");
+          applyProductsResponse(products);
+          setPartitionRefreshStates((prev) => ({
+            ...prev,
+            [partitionKey]: { kind: "success", message: "已刷新" },
+          }));
+        } catch {
+          setPartitionRefreshStates((prev) => ({
+            ...prev,
+            [partitionKey]: {
+              kind: "success",
+              message: "已刷新，页面数据同步稍后重试",
+            },
+          }));
+        }
+
+        schedulePartitionRefreshReset(partitionKey);
+      } catch (e) {
+        setPartitionRefreshStates((prev) => ({
+          ...prev,
+          [partitionKey]: {
+            kind: "error",
+            message: e instanceof Error ? e.message : String(e),
+          },
+        }));
+      }
+    },
+    [applyProductsResponse, clearPartitionRefreshState, schedulePartitionRefreshReset],
+  );
 
   useEffect(() => {
     if (!hasBootstrap) return;
@@ -1594,6 +1699,8 @@ export function App() {
             onArchiveDelisted={archiveDelistedConfigs}
             onToggle={toggleMonitoring}
             onTogglePartition={togglePartitionMonitoring}
+            onRefreshPartition={refreshPartition}
+            partitionRefreshStates={partitionRefreshStates}
             onOpenOrder={guardAndOpenOrder}
           />
         ) : route === "notifications" ? (
@@ -2104,6 +2211,8 @@ export function ProductsView({
   onArchiveDelisted,
   onToggle,
   onTogglePartition,
+  onRefreshPartition,
+  partitionRefreshStates,
   onOpenOrder,
 }: {
   bootstrap: BootstrapResponse;
@@ -2115,6 +2224,8 @@ export function ProductsView({
   onArchiveDelisted: () => Promise<ArchiveDelistedResponse>;
   onToggle: (configId: string, enabled: boolean) => void;
   onTogglePartition: (countryId: string, regionId: string | null, enabled: boolean) => void;
+  onRefreshPartition: (countryId: string, regionId: string) => Promise<void>;
+  partitionRefreshStates: Record<string, PartitionRefreshState>;
   onOpenOrder: (cfg: Config, orderLink: OrderLink) => void;
 }) {
   const [countryFilter, setCountryFilter] = useState<string>("all");
@@ -2298,10 +2409,14 @@ export function ProductsView({
       title: string,
       subtitle: string | null,
       sortLabel: string,
+      refreshAvailable: boolean,
     ) => {
       const groupKey = buildPartitionKey(country.countryId, regionId);
       let regionGroup = country.groupsByKey.get(groupKey);
       if (regionGroup) {
+        if (refreshAvailable) {
+          regionGroup.refreshAvailable = true;
+        }
         return regionGroup;
       }
 
@@ -2311,6 +2426,7 @@ export function ProductsView({
         title,
         subtitle,
         partitionEnabled: enabledPartitionKeys.has(groupKey),
+        refreshAvailable,
         notice: resolveScopedGroupNotice(
           groupNoticeByKey,
           countriesWithTopologyRegions,
@@ -2340,6 +2456,7 @@ export function ProductsView({
         regionLabel,
         region?.locationName ?? null,
         `${regionLabel}::${region?.locationName ?? ""}`,
+        false,
       );
       regionGroup.configs.push(cfg);
     }
@@ -2418,6 +2535,7 @@ export function ProductsView({
             region.name,
             region.locationName ?? null,
             `${region.name}::${region.locationName ?? ""}`,
+            true,
           );
         }
       }
@@ -2585,9 +2703,11 @@ export function ProductsView({
           historyWindow={historyWindow}
           key={country.countryId}
           onOpenOrder={onOpenOrder}
+          onRefreshPartition={onRefreshPartition}
           onToggle={onToggle}
           onTogglePartition={onTogglePartition}
           orderBaseUrl={orderBaseUrl}
+          partitionRefreshStates={partitionRefreshStates}
         />
       ))}
 
@@ -2791,13 +2911,86 @@ export function MonitoringView({
   );
 }
 
+function PartitionRefreshButton({
+  regionTitle,
+  testId,
+  state,
+  onRefresh,
+}: {
+  regionTitle: string;
+  testId: string;
+  state?: PartitionRefreshState;
+  onRefresh: () => void;
+}) {
+  const isRunning = state?.kind === "running";
+  const buttonClass = [
+    "panel-title-link",
+    "partition-refresh-btn",
+    isRunning ? "running" : "",
+    state?.kind === "success" ? "success" : "",
+    state?.kind === "error" ? "error" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const label = isRunning
+    ? `刷新 ${regionTitle} 中`
+    : state?.kind === "success"
+      ? `已刷新 ${regionTitle}`
+      : state?.kind === "error"
+        ? `刷新 ${regionTitle} 失败`
+        : `刷新 ${regionTitle}`;
+
+  return (
+    <button
+      type="button"
+      className={buttonClass}
+      data-testid={testId}
+      aria-label={label}
+      title={state?.kind === "error" ? state.message : label}
+      onClick={onRefresh}
+      disabled={isRunning}
+    >
+      <span
+        className={`sync-icon ${isRunning ? "spin" : ""} ${state?.kind === "success" ? "ok" : ""} ${state?.kind === "error" ? "err" : ""}`.trim()}
+        aria-hidden="true"
+      >
+        {isRunning ? (
+          <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+            <path
+              fill="currentColor"
+              d="M12 4a8 8 0 0 1 7.9 6.7a1 1 0 1 1-2 .3A6 6 0 1 0 18 12a1 1 0 1 1 2 0a8 8 0 1 1-8-8"
+            />
+          </svg>
+        ) : state?.kind === "success" ? (
+          <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+            <path
+              fill="currentColor"
+              d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2m-1 14l-4-4l1.4-1.4L11 13.2l5.6-5.6L18 9z"
+            />
+          </svg>
+        ) : state?.kind === "error" ? (
+          <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+            <path fill="currentColor" d="M1 21h22L12 2zm12-3h-2v-2h2zm0-4h-2v-4h2z" />
+          </svg>
+        ) : (
+          <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+            <path fill="currentColor" d="M12 6V3L8 7l4 4V8a4 4 0 1 1-4 4H6a6 6 0 1 0 6-6" />
+          </svg>
+        )}
+      </span>
+    </button>
+  );
+}
+
 function ProductCountrySection({
   country,
   countriesById,
   orderBaseUrl,
   onTogglePartition,
+  onRefreshPartition,
   onToggle,
   onOpenOrder,
+  partitionRefreshStates,
   historyWindow = null,
   historyById = EMPTY_HISTORY_BY_ID,
 }: {
@@ -2805,8 +2998,10 @@ function ProductCountrySection({
   countriesById: Map<string, Country>;
   orderBaseUrl: string;
   onTogglePartition: (countryId: string, regionId: string | null, enabled: boolean) => void;
+  onRefreshPartition: (countryId: string, regionId: string) => Promise<void>;
   onToggle: (cfgId: string, enabled: boolean) => void;
   onOpenOrder: (cfg: Config, orderLink: OrderLink) => void;
+  partitionRefreshStates: Record<string, PartitionRefreshState>;
   historyWindow?: InventoryHistoryResponse["window"] | null;
   historyById?: Map<string, InventoryHistoryPoint[]>;
 }) {
@@ -2933,6 +3128,23 @@ ${countryCatalogLink}`}
                         </div>
                       </div>
                       <div className="panel-title-actions">
+                        {group.refreshAvailable ? (
+                          <PartitionRefreshButton
+                            regionTitle={group.title}
+                            testId={`region-refresh-${buildScopedRegionDomKey(
+                              country.countryId,
+                              group.regionId,
+                            )}`}
+                            state={
+                              partitionRefreshStates[
+                                buildPartitionKey(country.countryId, group.regionId)
+                              ]
+                            }
+                            onRefresh={() =>
+                              void onRefreshPartition(country.countryId, group.regionId)
+                            }
+                          />
+                        ) : null}
                         <MonitorToggle
                           labelledBy={`products-region-heading-${buildScopedRegionDomKey(
                             country.countryId,
@@ -2955,6 +3167,26 @@ ${countryCatalogLink}`}
                     </div>
                   </div>
                   <div className="product-region-content">
+                    {partitionRefreshStates[buildPartitionKey(country.countryId, group.regionId)]
+                      ?.kind === "success" ? (
+                      <div className="product-region-refresh-feedback success">
+                        {
+                          partitionRefreshStates[
+                            buildPartitionKey(country.countryId, group.regionId)
+                          ]?.message
+                        }
+                      </div>
+                    ) : null}
+                    {partitionRefreshStates[buildPartitionKey(country.countryId, group.regionId)]
+                      ?.kind === "error" ? (
+                      <div className="product-region-refresh-feedback error">
+                        {
+                          partitionRefreshStates[
+                            buildPartitionKey(country.countryId, group.regionId)
+                          ]?.message
+                        }
+                      </div>
+                    ) : null}
                     {group.notice ? (
                       <div className="panel-subtitle group-notice">{group.notice}</div>
                     ) : null}

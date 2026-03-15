@@ -1,5 +1,5 @@
 use axum::{
-    body::Body,
+    body::{to_bytes, Body},
     http::{Request, StatusCode},
 };
 use catnap::{build_app, AppState, RuntimeConfig};
@@ -252,6 +252,149 @@ async fn catalog_refresh_job_runs_and_persists_url_cache() {
     assert_eq!(post_refresh(t2.app.clone(), "u_4").await, StatusCode::OK);
     assert_eq!(wait_refresh_done(t2.app.clone()).await, "success");
     assert!(hits.load(Ordering::SeqCst) > baseline_hits);
+}
+
+#[tokio::test]
+async fn partition_refresh_forces_real_fetch_and_rejects_invalid_scope() {
+    #[derive(serde::Deserialize)]
+    struct CartQuery {
+        fid: Option<String>,
+        gid: Option<String>,
+    }
+
+    let hits = Arc::new(AtomicUsize::new(0));
+    let hits_for_handler = hits.clone();
+    let upstream = axum::Router::new().route(
+        "/cart",
+        axum::routing::get(
+            move |axum::extract::Query(q): axum::extract::Query<CartQuery>| {
+                let hits_for_handler = hits_for_handler.clone();
+                async move {
+                    match (q.fid.as_deref(), q.gid.as_deref()) {
+                        (Some("2"), Some("56")) => {
+                            hits_for_handler.fetch_add(1, Ordering::SeqCst);
+                            (
+                                StatusCode::OK,
+                                include_str!("fixtures/cart-fid-2-gid-56.html"),
+                            )
+                        }
+                        _ => (StatusCode::NOT_FOUND, "not found"),
+                    }
+                }
+            },
+        ),
+    );
+    let base = spawn_stub_server(upstream).await;
+
+    let mut cfg = base_test_config();
+    cfg.upstream_cart_url = format!("{base}/cart");
+    let t = make_app_with_config(cfg).await;
+
+    catnap::db::replace_catalog_topology(
+        &t.db,
+        &format!("{base}/cart"),
+        &[catnap::models::Country {
+            id: "2".to_string(),
+            name: "China".to_string(),
+        }],
+        &[catnap::models::Region {
+            id: "56".to_string(),
+            country_id: "2".to_string(),
+            name: "Shanghai".to_string(),
+            location_name: Some("CN-East".to_string()),
+        }],
+    )
+    .await
+    .unwrap();
+
+    async fn post_partition_refresh(
+        app: axum::Router,
+        country_id: &str,
+        region_id: &str,
+    ) -> StatusCode {
+        app.oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/catalog/refresh/partition")
+                .header("host", "example.com")
+                .header("origin", "http://example.com")
+                .header("content-type", "application/json")
+                .header("x-user", "u_1")
+                .body(Body::from(
+                    serde_json::json!({
+                        "countryId": country_id,
+                        "regionId": region_id,
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+        .status()
+    }
+
+    async fn post_partition_refresh_raw(
+        app: axum::Router,
+        body: serde_json::Value,
+    ) -> axum::response::Response {
+        app.oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/catalog/refresh/partition")
+                .header("host", "example.com")
+                .header("origin", "http://example.com")
+                .header("content-type", "application/json")
+                .header("x-user", "u_1")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+    }
+
+    assert_eq!(
+        post_partition_refresh(t.app.clone(), "2", "56").await,
+        StatusCode::OK
+    );
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
+
+    assert_eq!(
+        post_partition_refresh(t.app.clone(), "2", "56").await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        hits.load(Ordering::SeqCst),
+        2,
+        "partition refresh should bypass fresh url cache and fetch again",
+    );
+
+    assert_eq!(
+        post_partition_refresh(t.app.clone(), "2", "999").await,
+        StatusCode::BAD_REQUEST
+    );
+
+    let missing_region = post_partition_refresh_raw(
+        t.app.clone(),
+        serde_json::json!({
+            "countryId": "2",
+        }),
+    )
+    .await;
+    assert_eq!(missing_region.status(), StatusCode::BAD_REQUEST);
+    let bytes = to_bytes(missing_region.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(json["error"]["code"], "INVALID_ARGUMENT");
+
+    catnap::db::replace_catalog_topology(&t.db, &format!("{base}/cart"), &[], &[])
+        .await
+        .unwrap();
+    assert_eq!(
+        post_partition_refresh(t.app.clone(), "2", "56").await,
+        StatusCode::BAD_REQUEST
+    );
 }
 
 #[tokio::test]
