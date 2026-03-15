@@ -193,6 +193,11 @@ def validate_rules(declaration: dict[str, Any], rules: list[dict[str, Any]], bra
         raise ValidationError("live_transition.allowed_extra_required_checks must be a list of non-empty strings")
     allowed_extra_required_checks = sorted(set(allowed_extra_required_checks))
 
+    allowed_review_approval_counts = live_transition.get("allowed_review_approval_counts", [])
+    if not isinstance(allowed_review_approval_counts, list) or not all(isinstance(item, int) for item in allowed_review_approval_counts):
+        raise ValidationError("live_transition.allowed_review_approval_counts must be a list of integers")
+    allowed_review_approval_counts = sorted(set(allowed_review_approval_counts))
+
     require_signed_commits = bool(policy.get("require_signed_commits", False))
     require_pull_request = bool(branch_policy.get("require_pull_request", False))
     require_merge_queue = bool(branch_policy.get("require_merge_queue", False))
@@ -241,7 +246,7 @@ def validate_rules(declaration: dict[str, Any], rules: list[dict[str, Any]], bra
                 allowed_merge_methods = parameters.get("allowed_merge_methods")
                 if isinstance(allowed_merge_methods, list) and allowed_merge_methods:
                     merge_method_block = merge_method_block or ("merge" not in allowed_merge_methods)
-            if max_approvals != expected_native_approvals:
+            if max_approvals != expected_native_approvals and max_approvals not in allowed_review_approval_counts:
                 errors.append(
                     f"{branch}: required_approving_review_count={max_approvals} expected={expected_native_approvals}"
                 )

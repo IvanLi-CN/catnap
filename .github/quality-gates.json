@@ -43,6 +43,9 @@
   "live_transition": {
     "allowed_extra_required_checks": [
       "Review Policy Gate"
+    ],
+    "allowed_review_approval_counts": [
+      0
     ]
   },
   "waivers": [],

@@ -74,6 +74,10 @@ def validate_quality_gates(path: Path) -> None:
         live_transition.get("allowed_extra_required_checks") == ["Review Policy Gate"],
         "quality-gates.json: live transition must tolerate Review Policy Gate as an extra required check",
     )
+    require(
+        live_transition.get("allowed_review_approval_counts") == [0],
+        "quality-gates.json: live transition must tolerate the current zero-approval branch rule until GitHub settings are updated",
+    )
 
     expected = {
         (entry.get("workflow"), tuple(entry.get("jobs", [])))
