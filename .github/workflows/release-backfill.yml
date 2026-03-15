@@ -62,6 +62,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Allow an explicit manual tag repair when the requested ref already has a release tag.
           plan_json="$(python3 ./.github/scripts/release_plan.py plan \
             --repo "${GITHUB_REPOSITORY}" \
             --repo-root "$PWD" \
