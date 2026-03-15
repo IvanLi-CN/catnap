@@ -219,4 +219,3 @@ jobs:
 
       - name: Run cargo test
         run: cargo test --locked --all-features
-

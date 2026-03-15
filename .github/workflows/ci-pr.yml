@@ -481,4 +481,3 @@ jobs:
             echo "- docker_build_primary(outcome=${{ steps.docker-build.outcome }}): $(fmt_sec '${{ steps.docker-build-timing.outputs.duration_sec }}')"
             echo "- docker_build_fallback(conclusion=${docker_fallback_status}): $(fmt_sec '${{ steps.docker-build-fallback-timing.outputs.duration_sec }}')"
           } >> "${GITHUB_STEP_SUMMARY}"
-
