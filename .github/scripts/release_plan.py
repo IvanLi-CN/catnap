@@ -362,9 +362,7 @@ def resolve_single_pull(
         number = item.get("number")
         if not isinstance(number, int) or number <= 0:
             continue
-        if item.get("merged_at") is False:
-            continue
-        if item.get("merged_at") in (None, "") and item.get("state") not in (None, "closed"):
+        if not item.get("merged_at"):
             continue
         base = item.get("base") or {}
         base_ref = normalize_ref(str(base.get("ref", "")))

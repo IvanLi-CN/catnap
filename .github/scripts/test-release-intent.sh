@@ -79,7 +79,7 @@ payload = {
 }
 
 if mode == "api":
-    payload["commits_pulls"][commit_sha] = [{"number": 60}]
+    payload["commits_pulls"][commit_sha] = [{"number": 60, "merged_at": "2026-03-15T00:00:00Z", "base": {"ref": "main"}}]
 elif mode == "merge-fallback":
     payload["closed_pulls"].append(
         {

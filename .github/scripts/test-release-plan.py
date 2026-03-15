@@ -155,7 +155,7 @@ def test_rc_candidate() -> None:
         fixture_path.write_text(
             json.dumps(
                 {
-                    "commits_pulls": {sha: [{"number": 71}]},
+                    "commits_pulls": {sha: [{"number": 71, "merged_at": "2026-03-15T05:00:00Z", "base": {"ref": "main"}}]},
                     "closed_pulls": [],
                     "issues": {
                         "71": ["type:patch", "channel:rc"],
@@ -266,6 +266,37 @@ def test_issue_reference_in_direct_push_does_not_release() -> None:
         assert_equal(payload["pr_number"], None, "direct push issue reference pr number")
 
 
+def test_commits_api_ignores_unmerged_closed_pull() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        repo, _ = init_repo(Path(tmp))
+        sha = commit(repo, "feature-api-closed.txt", "closed\n", "feat: closed-but-unmerged api record")
+        fixture_path = Path(tmp) / "fixtures.json"
+        fixture_path.write_text(
+            json.dumps(
+                {
+                    "commits_pulls": {
+                        sha: [
+                            {
+                                "number": 60,
+                                "state": "closed",
+                                "merged_at": None,
+                                "base": {"ref": "main"},
+                            }
+                        ]
+                    },
+                    "closed_pulls": [],
+                    "issues": {
+                        "60": ["type:minor", "channel:stable"],
+                    },
+                }
+            )
+        )
+        payload = inspect(repo, fixture_path, sha)
+        assert_equal(payload["should_release"], False, "closed but unmerged commits api record must not release")
+        assert_equal(payload["resolution_source"], "unresolved", "closed but unmerged commits api source")
+        assert_equal(payload["pr_number"], None, "closed but unmerged commits api pr number")
+
+
 def test_commits_api_filters_non_main_pulls() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         repo, _ = init_repo(Path(tmp))
@@ -342,6 +373,7 @@ def main() -> int:
     test_unresolved_subject_skips()
     test_subject_fallback_requires_real_merged_pull()
     test_issue_reference_in_direct_push_does_not_release()
+    test_commits_api_ignores_unmerged_closed_pull()
     test_commits_api_filters_non_main_pulls()
     test_manual_tag_repair_preserves_latest_pointer()
     print("test-release-plan: all cases passed")
