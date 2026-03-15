@@ -215,6 +215,57 @@ def test_unresolved_subject_skips() -> None:
 
 
 
+def test_subject_fallback_requires_real_merged_pull() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        repo, _ = init_repo(Path(tmp))
+        sha = commit(repo, "feature-squash.txt", "squash\n", "feat: shipped via squash merge (#80)")
+        fixture_path = Path(tmp) / "fixtures.json"
+        fixture_path.write_text(
+            json.dumps(
+                {
+                    "commits_pulls": {},
+                    "closed_pulls": [],
+                    "pulls": {
+                        "80": {
+                            "number": 80,
+                            "merged_at": "2026-03-15T09:00:00Z",
+                            "base": {"ref": "main"},
+                        }
+                    },
+                    "issues": {
+                        "80": ["type:patch", "channel:stable"],
+                    },
+                }
+            )
+        )
+        payload = inspect(repo, fixture_path, sha)
+        assert_equal(payload["should_release"], True, "validated squash merge should release")
+        assert_equal(payload["resolution_source"], "subject_fallback", "validated squash merge fallback source")
+        assert_equal(payload["pr_number"], 80, "validated squash merge pr number")
+
+
+def test_issue_reference_in_direct_push_does_not_release() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        repo, _ = init_repo(Path(tmp))
+        sha = commit(repo, "feature-issue.txt", "issue\n", "docs: follow-up note (#60)")
+        fixture_path = Path(tmp) / "fixtures.json"
+        fixture_path.write_text(
+            json.dumps(
+                {
+                    "commits_pulls": {},
+                    "closed_pulls": [],
+                    "issues": {
+                        "60": ["type:minor", "channel:stable"],
+                    },
+                }
+            )
+        )
+        payload = inspect(repo, fixture_path, sha)
+        assert_equal(payload["should_release"], False, "direct push issue reference must not release")
+        assert_equal(payload["resolution_source"], "unresolved", "direct push issue reference source")
+        assert_equal(payload["pr_number"], None, "direct push issue reference pr number")
+
+
 def test_commits_api_filters_non_main_pulls() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         repo, _ = init_repo(Path(tmp))
@@ -289,6 +340,8 @@ def main() -> int:
     test_rc_candidate()
     test_merge_commit_sha_inspect()
     test_unresolved_subject_skips()
+    test_subject_fallback_requires_real_merged_pull()
+    test_issue_reference_in_direct_push_does_not_release()
     test_commits_api_filters_non_main_pulls()
     test_manual_tag_repair_preserves_latest_pointer()
     print("test-release-plan: all cases passed")

@@ -53,6 +53,9 @@ class GitHubClient:
     def get_closed_pulls(self) -> list[dict[str, Any]]:
         raise NotImplementedError
 
+    def get_pull(self, pull_number: int) -> dict[str, Any] | None:
+        raise NotImplementedError
+
     def get_issue_labels(self, pull_number: int) -> list[str]:
         raise NotImplementedError
 
@@ -128,6 +131,17 @@ class ApiGitHubClient(GitHubClient):
             )
         return self._closed_pulls
 
+    def get_pull(self, pull_number: int) -> dict[str, Any] | None:
+        try:
+            payload = self._request_json(f"/repos/{self.owner}/{self.repo}/pulls/{pull_number}")
+        except PlanError as exc:
+            if "(404)" in str(exc):
+                return None
+            raise
+        if not isinstance(payload, dict):
+            raise PlanError(f"Expected PR payload for #{pull_number}, got {type(payload).__name__}")
+        return payload
+
     def get_issue_labels(self, pull_number: int) -> list[str]:
         payload = self._request_json(f"/repos/{self.owner}/{self.repo}/issues/{pull_number}")
         labels = payload.get("labels") or []
@@ -144,6 +158,7 @@ class FixtureGitHubClient(GitHubClient):
             raise PlanError("fixtures payload must be a JSON object")
         self.commit_pulls = payload.get("commits_pulls", {})
         self.closed_pulls = payload.get("closed_pulls", [])
+        self.pulls = payload.get("pulls", {})
         self.issue_labels = payload.get("issues", {})
 
     def get_commit_pulls(self, commit_sha: str) -> list[dict[str, Any]]:
@@ -156,6 +171,17 @@ class FixtureGitHubClient(GitHubClient):
         if not isinstance(self.closed_pulls, list):
             raise PlanError("fixtures.closed_pulls must be a list")
         return [item for item in self.closed_pulls if isinstance(item, dict)]
+
+    def get_pull(self, pull_number: int) -> dict[str, Any] | None:
+        payload = self.pulls.get(str(pull_number))
+        if payload is None:
+            for item in self.get_closed_pulls():
+                if item.get("number") == pull_number:
+                    return item
+            return None
+        if not isinstance(payload, dict):
+            raise PlanError(f"fixtures.pulls[{pull_number}] must be an object")
+        return payload
 
     def get_issue_labels(self, pull_number: int) -> list[str]:
         payload = self.issue_labels.get(str(pull_number), [])
@@ -370,7 +396,11 @@ def resolve_single_pull(
 
     subject_pull = parse_pull_number_from_subject(commit_subject)
     if subject_pull is not None:
-        return subject_pull, "subject_fallback"
+        pull = client.get_pull(subject_pull)
+        if pull and pull.get("merged_at"):
+            base = pull.get("base") or {}
+            if normalize_ref(str(base.get("ref", ""))) == base_branch:
+                return subject_pull, "subject_fallback"
     return None, "unresolved"
 
 

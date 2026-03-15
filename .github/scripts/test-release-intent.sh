@@ -72,6 +72,7 @@ issues = {
 payload = {
     "commits_pulls": {},
     "closed_pulls": [],
+    "pulls": {},
     "issues": {
         "60": issues,
     },
@@ -89,7 +90,11 @@ elif mode == "merge-fallback":
         }
     )
 elif mode == "subject":
-    pass
+    payload["pulls"]["60"] = {
+        "number": 60,
+        "merged_at": "2026-03-15T00:00:00Z",
+        "base": {"ref": "main"},
+    }
 else:
     raise SystemExit(f"unexpected mode: {mode}")
 
