@@ -25,8 +25,8 @@
         "admin"
       ],
       "enforcement": {
-        "mode": "required-check",
-        "check_name": "Review Policy Gate"
+        "mode": "github-native",
+        "bypass_mode": "pull-request-only"
       }
     }
   },
@@ -35,14 +35,23 @@
     "Path Gate",
     "Lint & Checks",
     "Backend Tests",
-    "Release Chain Smoke (PR)",
+    "Release Chain Smoke (PR)"
+  ],
+  "informational_checks": [
     "Review Policy Gate"
   ],
-  "informational_checks": [],
+  "live_transition": {
+    "allowed_extra_required_checks": [
+      "Review Policy Gate"
+    ],
+    "allowed_review_approval_counts": [
+      0
+    ]
+  },
   "waivers": [],
   "expected_pr_workflows": [
     {
-      "workflow": "CI Pipeline",
+      "workflow": "PR CI",
       "jobs": [
         "Path Gate",
         "Lint & Checks",

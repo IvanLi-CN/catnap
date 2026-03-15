@@ -1,23 +1,14 @@
-name: Release Reconcile
+name: Release Pipeline
 
 on:
-  workflow_dispatch:
-    inputs:
-      target_ref:
-        description: Branch, tag, or commit SHA to reconcile up to
-        required: true
-        type: string
-      legacy_missing_channel:
-        description: How to classify historical merged PRs without channel labels
-        required: false
-        default: stable
-        type: choice
-        options:
-          - stable
-          - error
+  workflow_run:
+    workflows:
+      - Main CI
+    types:
+      - completed
 
 concurrency:
-  group: release-reconcile-${{ inputs.target_ref }}
+  group: release-main
   cancel-in-progress: false
 
 permissions:
@@ -25,7 +16,11 @@ permissions:
 
 jobs:
   plan:
-    name: Release Plan (manual)
+    name: Release Plan
+    if: |
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.event == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -38,56 +33,52 @@ jobs:
       release_matrix: ${{ steps.plan.outputs.release_matrix }}
       release_plan: ${{ steps.plan.outputs.release_plan }}
       target_sha: ${{ steps.meta.outputs.target_sha }}
+      should_publish: ${{ steps.meta.outputs.should_publish }}
     steps:
       - name: Checkout target history
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
           fetch-tags: true
-          ref: ${{ inputs.target_ref }}
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Resolve target metadata
         id: meta
         shell: bash
         run: |
           set -euo pipefail
-          echo "target_sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
+          target_sha="$(git rev-parse HEAD)"
+          git fetch --no-tags --depth=1 origin main
+          current_main_sha="$(git rev-parse FETCH_HEAD)"
+          run_attempt='${{ github.event.workflow_run.run_attempt || 1 }}'
+          should_publish="true"
+          if [[ "${target_sha}" != "${current_main_sha}" ]]; then
+            should_publish="false"
+          fi
+          if [[ "${run_attempt}" != "1" ]]; then
+            should_publish="false"
+          fi
+          {
+            echo "target_sha=${target_sha}"
+            echo "current_main_sha=${current_main_sha}"
+            echo "run_attempt=${run_attempt}"
+            echo "should_publish=${should_publish}"
+          } >> "${GITHUB_OUTPUT}"
 
       - name: Plan missing releases
+        if: steps.meta.outputs.should_publish == 'true'
         id: plan
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TARGET_REF: ${{ inputs.target_ref }}
-          TARGET_SHA: ${{ steps.meta.outputs.target_sha }}
         shell: bash
         run: |
           set -euo pipefail
-          # Allow an explicit manual tag repair when the requested ref already has a release tag.
-          plan_json="$(python3 ./.github/scripts/release_plan.py plan \
+          python3 ./.github/scripts/release_plan.py plan \
             --repo "${GITHUB_REPOSITORY}" \
             --repo-root "$PWD" \
-            --target-sha "${TARGET_SHA}" \
-            --target-ref "${TARGET_REF}" \
-            --allow-tag-repair \
-            --legacy-missing-channel "${{ inputs.legacy_missing_channel }}")"
-          PLAN_JSON="${plan_json}" python3 - <<'PY'
-          import json
-          import os
-          from pathlib import Path
-
-          plan = json.loads(os.environ["PLAN_JSON"])
-
-          output = Path(os.environ["GITHUB_OUTPUT"])
-          with output.open("a", encoding="utf-8") as handle:
-              handle.write(f"has_releases={'true' if plan['entries'] else 'false'}\n")
-              handle.write(f"release_count={plan['release_count']}\n")
-              handle.write("release_matrix<<EOF\n")
-              handle.write(json.dumps({"include": plan["entries"]}, separators=(",", ":")) + "\n")
-              handle.write("EOF\n")
-              handle.write("release_plan<<EOF\n")
-              handle.write(json.dumps(plan, separators=(",", ":")) + "\n")
-              handle.write("EOF\n")
-          PY
+            --target-sha "${{ steps.meta.outputs.target_sha }}" \
+            --target-ref "main" \
+            --github-output "${GITHUB_OUTPUT}"
 
       - name: Summary
         if: always()
@@ -103,9 +94,12 @@ jobs:
           summary = Path(os.environ["GITHUB_STEP_SUMMARY"])
           plan = json.loads(os.environ.get("RELEASE_PLAN_JSON") or "{}")
           lines = [
-              "### Manual release reconciliation",
-              f"- target_ref: ${{ inputs.target_ref }}",
+              "### Release reconciliation",
+              f"- workflow_run_id: ${{ github.event.workflow_run.id }}",
               f"- target_sha: ${{ steps.meta.outputs.target_sha }}",
+              f"- current_main_sha: ${{ steps.meta.outputs.current_main_sha }}",
+              f"- run_attempt: ${{ steps.meta.outputs.run_attempt }}",
+              f"- should_publish: ${{ steps.meta.outputs.should_publish }}",
               f"- release_count: ${{ steps.plan.outputs.release_count || '0' }}",
               "- plan:",
               "```json",
@@ -118,7 +112,7 @@ jobs:
 
   publish:
     name: Release Publish (${{ matrix.tag }})
-    if: needs.plan.outputs.has_releases == 'true'
+    if: needs.plan.outputs.should_publish == 'true' && needs.plan.outputs.has_releases == 'true'
     needs: [plan]
     runs-on: ubuntu-latest
     timeout-minutes: 180

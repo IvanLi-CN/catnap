@@ -1,0 +1,352 @@
+name: Release Publish
+description: Build and publish one Catnap release candidate.
+inputs:
+  target-ref:
+    description: Git ref or SHA to build from.
+    required: true
+  target-sha:
+    description: Commit SHA that the release tag must point at.
+    required: true
+  support-ref:
+    description: Ref to checkout for workflow support scripts.
+    required: false
+    default: main
+  release-tag:
+    description: Git tag to publish.
+    required: true
+  release-version:
+    description: Semver core version for planning metadata.
+    required: true
+  release-app-version:
+    description: Effective application version exposed to builds and assets.
+    required: true
+  prerelease:
+    description: Whether this is a prerelease.
+    required: false
+    default: 'false'
+  publish-latest:
+    description: Whether to also publish the latest container tag and latest release marker.
+    required: false
+    default: 'false'
+runs:
+  using: composite
+  steps:
+    - name: Checkout release target
+      uses: actions/checkout@v6
+      with:
+        fetch-depth: 0
+        fetch-tags: true
+        ref: ${{ inputs.target-ref }}
+
+    - name: Checkout workflow support files
+      uses: actions/checkout@v6
+      with:
+        path: .ci-support
+        ref: ${{ inputs.support-ref }}
+
+    - name: Initialize release metadata
+      shell: bash
+      run: |
+        set -euo pipefail
+        tag='${{ inputs.release-tag }}'
+        version='${{ inputs.release-version }}'
+        app_version='${{ inputs.release-app-version }}'
+        prerelease='${{ inputs.prerelease }}'
+        publish_latest='${{ inputs.publish-latest }}'
+
+        if [[ ! "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9a-f]{7})?$ ]]; then
+          echo "invalid release tag: ${tag}" >&2
+          exit 1
+        fi
+        if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          echo "invalid release version: ${version}" >&2
+          exit 1
+        fi
+        if [[ ! "${app_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9a-f]{7})?$ ]]; then
+          echo "invalid app version: ${app_version}" >&2
+          exit 1
+        fi
+        case "${prerelease}" in
+          true|false) ;;
+          *) echo "invalid prerelease flag: ${prerelease}" >&2; exit 1 ;;
+        esac
+        case "${publish_latest}" in
+          true|false) ;;
+          *) echo "invalid publish_latest flag: ${publish_latest}" >&2; exit 1 ;;
+        esac
+
+        {
+          echo "APP_EFFECTIVE_VERSION=${app_version}"
+          echo "RELEASE_TAG=${tag}"
+          echo "RELEASE_VERSION=${version}"
+          echo "RELEASE_TARGET_SHA=${{ inputs.target-sha }}"
+          echo "RELEASE_PRERELEASE=${prerelease}"
+          echo "RELEASE_PUBLISH_LATEST=${publish_latest}"
+        } >> "${GITHUB_ENV}"
+
+
+    - name: Set up Bun
+      uses: oven-sh/setup-bun@v2
+      with:
+        bun-version: 1
+
+    - name: Build web
+      shell: bash
+      run: |
+        set -euo pipefail
+        cd web
+        bun install --frozen-lockfile
+        VITE_APP_VERSION="${APP_EFFECTIVE_VERSION}" bun run build
+
+    - name: Set up Rust toolchain
+      uses: dtolnay/rust-toolchain@v1
+      with:
+        toolchain: stable
+
+    - name: Ensure vendored OpenSSL for linux targets
+      shell: bash
+      run: |
+        set -euo pipefail
+        changed="$(python3 - <<'PY'
+        from pathlib import Path
+
+        cargo_toml = Path('Cargo.toml')
+        text = cargo_toml.read_text()
+        additions = []
+        if '[target.\'cfg(target_env = "musl")\'.dependencies]' not in text:
+            additions.append('\n[target.\'cfg(target_env = "musl")\'.dependencies]\nopenssl = { version = "0.10", features = ["vendored"] }\n')
+        if '[target.\'cfg(all(target_os = "linux", target_env = "gnu"))\'.dependencies]' not in text:
+            additions.append('\n[target.\'cfg(all(target_os = "linux", target_env = "gnu"))\'.dependencies]\nopenssl = { version = "0.10", features = ["vendored"] }\n')
+        if additions:
+            cargo_toml.write_text(text + ''.join(additions))
+            print('true')
+        else:
+            print('false')
+        PY
+        )"
+
+        if [[ "${changed}" == "false" ]]; then
+          echo "vendored OpenSSL already configured"
+          exit 0
+        fi
+
+        CARGO_TARGET_DIR=target/host cargo check
+
+    - name: Build release assets
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 - <<'PY'
+        from pathlib import Path
+
+        Path('Cross.toml').write_text(
+            '''[target.x86_64-unknown-linux-gnu]
+        pre-build = [
+          "dpkg_arch=${CROSS_DEB_ARCH#musl-linux-} && dpkg --add-architecture ${dpkg_arch}",
+          "apt-get update && apt-get install --assume-yes --no-install-recommends pkg-config perl libssl-dev:${dpkg_arch}"
+        ]
+
+        [target.aarch64-unknown-linux-gnu]
+        pre-build = [
+          "dpkg_arch=${CROSS_DEB_ARCH#musl-linux-} && dpkg --add-architecture ${dpkg_arch}",
+          "apt-get update && apt-get install --assume-yes --no-install-recommends pkg-config perl libssl-dev:amd64 libssl-dev:${dpkg_arch}"
+        ]
+
+        [target.x86_64-unknown-linux-musl]
+        pre-build = [
+          "dpkg_arch=${CROSS_DEB_ARCH#musl-linux-} && dpkg --add-architecture ${dpkg_arch}",
+          "apt-get update && apt-get install --assume-yes --no-install-recommends pkg-config perl libssl-dev:${dpkg_arch}"
+        ]
+
+        [target.aarch64-unknown-linux-musl]
+        pre-build = [
+          "dpkg_arch=${CROSS_DEB_ARCH#musl-linux-} && dpkg --add-architecture ${dpkg_arch}",
+          "apt-get update && apt-get install --assume-yes --no-install-recommends pkg-config perl libssl-dev:amd64 libssl-dev:${dpkg_arch}"
+        ]
+        '''
+        )
+        PY
+
+        cargo install cross --locked
+
+        out_dir="dist/release-assets"
+        rm -rf "${out_dir}"
+        mkdir -p "${out_dir}"
+
+        build_one() {
+          local target="$1"
+          local arch="$2"
+          local abi="$3"
+
+          rm -rf target/release
+          cross build --release --locked --target "${target}"
+
+          local bin="target/${target}/release/catnap"
+          if [[ ! -f "${bin}" ]]; then
+            echo "missing binary: ${bin}" >&2
+            exit 1
+          fi
+
+          local base="catnap_${APP_EFFECTIVE_VERSION}_linux_${arch}_${abi}"
+          local tgz="${out_dir}/${base}.tar.gz"
+          tar -C "$(dirname "${bin}")" -czf "${tgz}" catnap
+          sha256sum "${tgz}" | awk '{print $1}' > "${tgz}.sha256"
+        }
+
+        build_one x86_64-unknown-linux-gnu amd64 gnu
+        build_one aarch64-unknown-linux-gnu arm64 gnu
+        build_one x86_64-unknown-linux-musl amd64 musl
+        build_one aarch64-unknown-linux-musl arm64 musl
+
+    - name: Smoke test (linux/amd64 gnu binary)
+      shell: bash
+      run: |
+        bash ./.github/scripts/smoke-test.sh ./target/x86_64-unknown-linux-gnu/release/catnap
+
+    - name: Prepare Docker runtime binaries
+      shell: bash
+      run: |
+        set -euo pipefail
+        CATNAP_DOCKER_BINARY_SOURCE_ROOT="$PWD/target" \
+        CATNAP_DOCKER_BINARY_OUTPUT_ROOT="$PWD/dist/docker" \
+          bash ./.ci-support/.github/scripts/prepare-docker-binaries.sh
+
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v3
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to GHCR
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
+
+    - name: Compute image tags
+      id: image-tags
+      shell: bash
+      run: |
+        set -euo pipefail
+        owner_lower="$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
+        image="ghcr.io/${owner_lower}/catnap"
+        {
+          echo "image=${image}"
+          echo "current_tag=${RELEASE_TAG}"
+          echo "publish_latest=${RELEASE_PUBLISH_LATEST}"
+          echo "tags<<EOF"
+          echo "${image}:${RELEASE_TAG}"
+          if [[ "${RELEASE_PUBLISH_LATEST}" == "true" ]]; then
+            echo "${image}:latest"
+          fi
+          echo "EOF"
+        } >> "${GITHUB_OUTPUT}"
+
+    - name: Build and push Docker image
+      id: docker-push
+      uses: docker/build-push-action@v6
+      continue-on-error: true
+      with:
+        context: ./dist/docker
+        file: ./dist/docker/Dockerfile.release
+        platforms: linux/amd64,linux/arm64
+        push: true
+        tags: ${{ steps.image-tags.outputs.tags }}
+        labels: |
+          org.opencontainers.image.version=${{ env.APP_EFFECTIVE_VERSION }}
+          org.opencontainers.image.revision=${{ inputs.target-sha }}
+          org.opencontainers.image.source=https://github.com/${{ github.repository }}
+        build-args: |
+          APP_EFFECTIVE_VERSION=${{ env.APP_EFFECTIVE_VERSION }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+    - name: Warn on Docker cache export failure (retrying without cache-to)
+      if: steps.docker-push.outcome == 'failure'
+      shell: bash
+      run: |
+        echo "WARN: Docker push step failed with GHA cache enabled; retrying without cache-to. If the retry succeeds, this is treated as a cache export/transient issue; real build errors must still fail the job." >&2
+
+    - name: Build and push Docker image (fallback without cache-to)
+      if: steps.docker-push.outcome == 'failure'
+      id: docker-push-fallback
+      uses: docker/build-push-action@v6
+      with:
+        context: ./dist/docker
+        file: ./dist/docker/Dockerfile.release
+        platforms: linux/amd64,linux/arm64
+        push: true
+        tags: ${{ steps.image-tags.outputs.tags }}
+        labels: |
+          org.opencontainers.image.version=${{ env.APP_EFFECTIVE_VERSION }}
+          org.opencontainers.image.revision=${{ inputs.target-sha }}
+          org.opencontainers.image.source=https://github.com/${{ github.repository }}
+        build-args: |
+          APP_EFFECTIVE_VERSION=${{ env.APP_EFFECTIVE_VERSION }}
+        cache-from: type=gha
+
+    - name: Verify docker push gate (must pass before release publish)
+      shell: bash
+      run: |
+        set -euo pipefail
+        primary_outcome='${{ steps.docker-push.outcome }}'
+        fallback_conclusion='${{ steps.docker-push-fallback.conclusion || 'skipped' }}'
+
+        release_gate_passed="false"
+        if [[ "${primary_outcome}" == "success" ]]; then
+          release_gate_passed="true"
+        elif [[ "${primary_outcome}" == "failure" && "${fallback_conclusion}" == "success" ]]; then
+          release_gate_passed="true"
+        fi
+
+        {
+          echo "### Release publish gate"
+          echo "- current_tag: ${RELEASE_TAG}"
+          echo "- prerelease: ${RELEASE_PRERELEASE}"
+          echo "- publish_latest: ${RELEASE_PUBLISH_LATEST}"
+          echo "- docker_primary_outcome: ${primary_outcome}"
+          echo "- docker_fallback_conclusion: ${fallback_conclusion}"
+          echo "- release_gate_passed: ${release_gate_passed}"
+        } >> "${GITHUB_STEP_SUMMARY}"
+
+        if [[ "${release_gate_passed}" != "true" ]]; then
+          echo "Docker image push did not complete successfully; blocking release publish." >&2
+          exit 1
+        fi
+
+    - name: Ensure release tag points at target commit
+      shell: bash
+      run: |
+        set -euo pipefail
+        target_sha='${{ inputs.target-sha }}'
+        tag='${{ inputs.release-tag }}'
+
+        existing_sha="$(git rev-list -n1 "refs/tags/${tag}" 2>/dev/null || true)"
+        if [[ -n "${existing_sha}" ]]; then
+          if [[ "${existing_sha}" != "${target_sha}" ]]; then
+            echo "tag ${tag} already exists at ${existing_sha}, expected ${target_sha}" >&2
+            exit 1
+          fi
+          echo "tag already exists: ${tag} -> ${existing_sha}"
+          exit 0
+        fi
+
+        git config user.name "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git tag -a "${tag}" "${target_sha}" -m "${tag}"
+        git push origin "refs/tags/${tag}"
+
+    - name: Create/Update GitHub Release and upload assets
+      uses: ncipollo/release-action@v1
+      with:
+        tag: ${{ inputs.release-tag }}
+        name: ${{ inputs.release-tag }}
+        generateReleaseNotes: true
+        allowUpdates: true
+        omitBodyDuringUpdate: true
+        artifacts: dist/release-assets/*
+        artifactErrorsFailBuild: true
+        replacesArtifacts: true
+        prerelease: ${{ inputs.prerelease == 'true' }}
+        makeLatest: ${{ inputs.publish-latest == 'true' && 'true' || 'false' }}

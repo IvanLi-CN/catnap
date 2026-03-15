@@ -181,6 +181,23 @@ def validate_rules(declaration: dict[str, Any], rules: list[dict[str, Any]], bra
         raise ValidationError("required_checks must be a list of non-empty strings")
     required_checks = sorted(set(required_checks))
 
+    live_transition = declaration.get("live_transition", {})
+    if live_transition is None:
+        live_transition = {}
+    if not isinstance(live_transition, dict):
+        raise ValidationError("live_transition must be a JSON object when provided")
+    allowed_extra_required_checks = live_transition.get("allowed_extra_required_checks", [])
+    if not isinstance(allowed_extra_required_checks, list) or not all(
+        isinstance(item, str) and item for item in allowed_extra_required_checks
+    ):
+        raise ValidationError("live_transition.allowed_extra_required_checks must be a list of non-empty strings")
+    allowed_extra_required_checks = sorted(set(allowed_extra_required_checks))
+
+    allowed_review_approval_counts = live_transition.get("allowed_review_approval_counts", [])
+    if not isinstance(allowed_review_approval_counts, list) or not all(isinstance(item, int) for item in allowed_review_approval_counts):
+        raise ValidationError("live_transition.allowed_review_approval_counts must be a list of integers")
+    allowed_review_approval_counts = sorted(set(allowed_review_approval_counts))
+
     require_signed_commits = bool(policy.get("require_signed_commits", False))
     require_pull_request = bool(branch_policy.get("require_pull_request", False))
     require_merge_queue = bool(branch_policy.get("require_merge_queue", False))
@@ -229,7 +246,7 @@ def validate_rules(declaration: dict[str, Any], rules: list[dict[str, Any]], bra
                 allowed_merge_methods = parameters.get("allowed_merge_methods")
                 if isinstance(allowed_merge_methods, list) and allowed_merge_methods:
                     merge_method_block = merge_method_block or ("merge" not in allowed_merge_methods)
-            if max_approvals != expected_native_approvals:
+            if max_approvals != expected_native_approvals and max_approvals not in allowed_review_approval_counts:
                 errors.append(
                     f"{branch}: required_approving_review_count={max_approvals} expected={expected_native_approvals}"
                 )
@@ -255,14 +272,20 @@ def validate_rules(declaration: dict[str, Any], rules: list[dict[str, Any]], bra
             errors.append(f"{branch}: review_policy.enforcement.check_name must be set for required-check mode")
 
     live_required_checks = normalize_status_contexts(grouped.get("required_status_checks", []))
-    if live_required_checks != required_checks:
-        missing = sorted(set(required_checks) - set(live_required_checks))
-        unexpected = sorted(set(live_required_checks) - set(required_checks))
+    live_required_set = set(live_required_checks)
+    expected_required_set = set(required_checks)
+    allowed_extra_set = set(allowed_extra_required_checks)
+    missing = sorted(expected_required_set - live_required_set)
+    unexpected = sorted(live_required_set - expected_required_set - allowed_extra_set)
+    tolerated = sorted((live_required_set - expected_required_set) & allowed_extra_set)
+    if missing or unexpected:
         details: list[str] = []
         if missing:
             details.append(f"missing={', '.join(missing)}")
         if unexpected:
             details.append(f"unexpected={', '.join(unexpected)}")
+        if tolerated:
+            details.append(f"tolerated_extra={', '.join(tolerated)}")
         if not details:
             details.append("required status check order/content drifted")
         errors.append(f"{branch}: required_status_checks drift ({'; '.join(details)})")

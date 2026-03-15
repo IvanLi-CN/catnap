@@ -221,33 +221,47 @@ docker compose up -d --build
 
 ### Versioning（版本号）
 
-- Tag：`v<semver>`（例如 `v0.1.0`）
-- CI 会计算并注入 `APP_EFFECTIVE_VERSION=<semver>`（Docker env + `/api/health.version`）
+- stable tag：`v<semver>`（例如 `v0.10.0`）
+- rc tag：`v<semver>-rc.<sha7>`（例如 `v0.10.1-rc.a1b2c3d`）
+- CI 会计算并注入 `APP_EFFECTIVE_VERSION=<release-version>`（Docker env + `/api/health.version`）
 - `/api/health`：
   - `status=ok`
-  - `version=<semver>`
+  - `version=<release-version>`
 
 ### Release intent（发版意图标签）
 
-合并到 `main` 的 PR 必须且只能选择一个标签（CI 会强制）：
+合并到 `main` 的 PR 必须且只能选择以下两类标签（CI 会强制）：
 
-- `type:docs` / `type:skip`：不允许自动发版
-- `type:patch` / `type:minor` / `type:major`：允许自动发版，并按标签 bump 版本号
+- `type:*`：
+  - `type:docs` / `type:skip`：不自动发版
+  - `type:patch` / `type:minor` / `type:major`：允许自动发版，并决定 semver bump
+- `channel:*`：
+  - `channel:stable`：发布 stable release
+  - `channel:rc`：发布 prerelease，不更新 `latest`
 
-> `release-intent` 优先通过 GitHub `commits/{sha}/pulls` 解析 PR；若 API 返回空集合，仍可对 subject 尾缀严格匹配 ` (#<pr>)` 的 squash merge 启用保守 fallback。若两条路径都无法可靠判定 PR，则继续跳过自动发版（仍会跑 lint/tests）。
+> 自动发布不会再只看“当前 head 对应的单个 PR”。`release_plan.py` 会从最新 stable tag 向前扫描 main 的 first-parent 历史，按顺序对账每个未发布候选提交；commit 到 PR 的解析顺序为 `commits/{sha}/pulls` -> `merge_commit_sha` fallback -> commit subject fallback。若仍无法可靠判定 PR，则继续保守 skip。
+
+### Workflow topology（发布拓扑）
+
+- `PR CI`：`pull_request` / `merge_group` 触发，可取消旧 run；只负责 PR 质量门与 release smoke。
+- `Main CI`：`push main` 触发，不取消在途 run；只负责 main 上的验证。
+- `Release Pipeline`：监听成功完成的 `Main CI`，先规划 release matrix，再逐个发布 stable / rc candidates。
+- `Release Reconcile`：手动输入 `target_ref`，按 planner 结果顺序补发缺口版本。
 
 ### GHCR images（镜像）
 
 - 镜像：`ghcr.io/<owner>/catnap`
 - Tags（最低集合）：
-  - `v<semver>`
-  - `latest`（跟随仓库“最高 stable semver tag”的发布结果）
+  - stable：`v<semver>`
+  - rc：`v<semver>-rc.<sha7>`
+  - `latest`：仅跟随 planner 标记为 `publish_latest=true` 的最后一个 stable candidate
 - 发布链路会复用已产出的 linux gnu release binaries 来封装 GHCR 镜像，避免在多架构 Docker build 中重复编译 Rust。
 
 示例：
 
 ```bash
-docker pull ghcr.io/<owner>/catnap:v0.1.0
+docker pull ghcr.io/<owner>/catnap:v0.10.0
+docker pull ghcr.io/<owner>/catnap:v0.10.1-rc.a1b2c3d
 docker pull ghcr.io/<owner>/catnap:latest
 ```
 
@@ -255,26 +269,31 @@ docker pull ghcr.io/<owner>/catnap:latest
 
 每个 Release 会附带可复用的二进制 tarball + sha256（共 8 个文件）：
 
-- `catnap_<semver>_linux_amd64_gnu.tar.gz`
-- `catnap_<semver>_linux_arm64_gnu.tar.gz`
-- `catnap_<semver>_linux_amd64_musl.tar.gz`
-- `catnap_<semver>_linux_arm64_musl.tar.gz`
+- `catnap_<release-version>_linux_amd64_gnu.tar.gz`
+- `catnap_<release-version>_linux_arm64_gnu.tar.gz`
+- `catnap_<release-version>_linux_amd64_musl.tar.gz`
+- `catnap_<release-version>_linux_arm64_musl.tar.gz`
 - 以及对应的 `.sha256`
 
 校验示例：
 
 ```bash
-sha256sum -c catnap_<semver>_linux_amd64_gnu.tar.gz.sha256
+sha256sum -c catnap_<release-version>_linux_amd64_gnu.tar.gz.sha256
 ```
 
-### Manual publish（workflow_dispatch）
+### Manual reconcile（workflow_dispatch）
 
-在 GitHub Actions 手动触发 `workflow_dispatch`：
+在 GitHub Actions 手动触发 `Release Reconcile`：
 
-- ref=`main`：完整发布链路（tag/release/assets/GHCR）；必须提供 `bump_level=major|minor|patch`，也作为自动发版漏触发时的补发入口
-- ref=`refs/tags/v<semver>`：重跑/补齐该版本（assets/GHCR）
-- `latest` 更新规则：仅当“当前发布 tag == 仓库最高 stable semver tag”时更新（适用于 main 发布与 backfill）
-- backfill 多 tag 建议按时间顺序执行（例如 `v0.2.0 -> v0.2.1 -> v0.2.2`），最终 `latest` 应指向最高 stable tag
+- `target_ref=<branch|tag|sha>`：规划并补发“该 ref 之前仍缺失的 release candidates”
+- `legacy_missing_channel=stable|error`：历史已合并但未带 `channel:*` 标签的 PR，默认按 `stable` 兼容；若要强制显式报错可选 `error`
+- planner 会沿用与自动发布相同的 `release_plan.py` 路径；默认建议按时间顺序补发缺口，让 `latest` 最终落在最高 stable release
+- 当前这次漏发修复合并后，直接对 `target_ref=main` 运行一次 reconcile，就会顺序补齐 `#70 -> v0.9.0`、`#69 -> v0.10.0`
+
+### Review policy（质量门）
+
+- repo-local quality gates 已切到 GitHub-native review 目标态；`Review Policy Gate` 只保留为过渡期诊断 workflow。
+- 合并本次发布链路重构后，还需要在 GitHub 仓库的 branch rules / ruleset 里手动移除 `Review Policy Gate` required status check，并保留 native approvals=`1`。
 
 ### Smoke test（本地/CI）
 
