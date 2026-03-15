@@ -71,18 +71,30 @@ jobs:
 
       - name: Summary
         if: always()
+        env:
+          RELEASE_PLAN_JSON: ${{ steps.plan.outputs.release_plan || '{}' }}
         shell: bash
         run: |
-          {
-            echo "### Manual release reconciliation"
-            echo "- target_ref: ${{ inputs.target_ref }}"
-            echo "- target_sha: ${{ steps.meta.outputs.target_sha }}"
-            echo "- release_count: ${{ steps.plan.outputs.release_count || '0' }}"
-            echo '- plan:'
-            echo '```json'
-            echo '${{ steps.plan.outputs.release_plan || "{}" }}'
-            echo '```'
-          } >> "${GITHUB_STEP_SUMMARY}"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          summary = Path(os.environ["GITHUB_STEP_SUMMARY"])
+          plan = json.loads(os.environ.get("RELEASE_PLAN_JSON") or "{}")
+          lines = [
+              "### Manual release reconciliation",
+              f"- target_ref: ${{ inputs.target_ref }}",
+              f"- target_sha: ${{ steps.meta.outputs.target_sha }}",
+              f"- release_count: ${{ steps.plan.outputs.release_count || '0' }}",
+              "- plan:",
+              "```json",
+              json.dumps(plan, indent=2, sort_keys=True),
+              "```",
+          ]
+          with summary.open("a", encoding="utf-8") as handle:
+              handle.write("\n".join(lines) + "\n")
+          PY
 
   publish:
     name: Release Publish (${{ matrix.tag }})

@@ -124,6 +124,8 @@ def validate_release_workflow(path: Path) -> None:
     require_text(text, "./.github/scripts/release_plan.py plan", "release.yml")
     require_text(text, "./.github/actions/release-publish", "release.yml")
     require_text(text, "max-parallel: 1", "release.yml")
+    require_text(text, "RELEASE_PLAN_JSON", "release.yml")
+    forbid_text(text, "echo '${{ steps.plan.outputs.release_plan", "release.yml")
     forbid_text(text, "workflow_dispatch:", "release.yml")
 
 
@@ -134,7 +136,22 @@ def validate_release_reconcile(path: Path) -> None:
     require_text(text, "legacy_missing_channel:", "release-backfill.yml")
     require_text(text, "./.github/scripts/release_plan.py plan", "release-backfill.yml")
     require_text(text, "./.github/actions/release-publish", "release-backfill.yml")
+    require_text(text, "RELEASE_PLAN_JSON", "release-backfill.yml")
+    forbid_text(text, "echo '${{ steps.plan.outputs.release_plan", "release-backfill.yml")
 
+
+
+def validate_release_publish_action(path: Path) -> None:
+    text = path.read_text()
+    require_text(text, "Ensure release tag points at target commit", "release-publish action")
+    require_text(text, "Verify docker push gate (must pass before release publish)", "release-publish action")
+    require_text(text, "Create/Update GitHub Release and upload assets", "release-publish action")
+    require(
+        text.index("Verify docker push gate (must pass before release publish)")
+        < text.index("Ensure release tag points at target commit")
+        < text.index("Create/Update GitHub Release and upload assets"),
+        "release-publish action: tag creation must happen after the docker gate and before release publish",
+    )
 
 def validate_label_gate(path: Path) -> None:
     text = path.read_text()
@@ -229,6 +246,7 @@ def main() -> int:
         validate_main_ci(repo_root / ".github" / "workflows" / "ci-main.yml")
         validate_release_workflow(repo_root / ".github" / "workflows" / "release.yml")
         validate_release_reconcile(repo_root / ".github" / "workflows" / "release-backfill.yml")
+        validate_release_publish_action(repo_root / ".github" / "actions" / "release-publish" / "action.yml")
         validate_label_gate(repo_root / ".github" / "workflows" / "label-gate.yml")
         validate_review_policy(repo_root / ".github" / "workflows" / "review-policy.yml")
         validate_merge_group_helpers(module, fixtures_dir)

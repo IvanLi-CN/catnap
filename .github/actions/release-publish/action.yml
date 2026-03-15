@@ -84,27 +84,6 @@ runs:
           echo "RELEASE_PUBLISH_LATEST=${publish_latest}"
         } >> "${GITHUB_ENV}"
 
-    - name: Ensure release tag points at target commit
-      shell: bash
-      run: |
-        set -euo pipefail
-        target_sha='${{ inputs.target-sha }}'
-        tag='${{ inputs.release-tag }}'
-
-        existing_sha="$(git rev-list -n1 "refs/tags/${tag}" 2>/dev/null || true)"
-        if [[ -n "${existing_sha}" ]]; then
-          if [[ "${existing_sha}" != "${target_sha}" ]]; then
-            echo "tag ${tag} already exists at ${existing_sha}, expected ${target_sha}" >&2
-            exit 1
-          fi
-          echo "tag already exists: ${tag} -> ${existing_sha}"
-          exit 0
-        fi
-
-        git config user.name "github-actions[bot]"
-        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-        git tag -a "${tag}" "${target_sha}" -m "${tag}"
-        git push origin "refs/tags/${tag}"
 
     - name: Set up Bun
       uses: oven-sh/setup-bun@v2
@@ -335,6 +314,28 @@ runs:
           echo "Docker image push did not complete successfully; blocking release publish." >&2
           exit 1
         fi
+
+    - name: Ensure release tag points at target commit
+      shell: bash
+      run: |
+        set -euo pipefail
+        target_sha='${{ inputs.target-sha }}'
+        tag='${{ inputs.release-tag }}'
+
+        existing_sha="$(git rev-list -n1 "refs/tags/${tag}" 2>/dev/null || true)"
+        if [[ -n "${existing_sha}" ]]; then
+          if [[ "${existing_sha}" != "${target_sha}" ]]; then
+            echo "tag ${tag} already exists at ${existing_sha}, expected ${target_sha}" >&2
+            exit 1
+          fi
+          echo "tag already exists: ${tag} -> ${existing_sha}"
+          exit 0
+        fi
+
+        git config user.name "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git tag -a "${tag}" "${target_sha}" -m "${tag}"
+        git push origin "refs/tags/${tag}"
 
     - name: Create/Update GitHub Release and upload assets
       uses: ncipollo/release-action@v1

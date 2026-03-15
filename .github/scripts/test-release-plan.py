@@ -204,11 +204,47 @@ def test_unresolved_subject_skips() -> None:
         assert_equal(payload["pr_number"], None, "unresolved pr number")
 
 
+
+def test_commits_api_filters_non_main_pulls() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        repo, _ = init_repo(Path(tmp))
+        sha = commit(repo, "feature-filter.txt", "filter\n", "feat: only the merged main pull should count")
+        fixture_path = Path(tmp) / "fixtures.json"
+        fixture_path.write_text(
+            json.dumps(
+                {
+                    "commits_pulls": {
+                        sha: [
+                            {
+                                "number": 10,
+                                "merged_at": "2026-03-15T08:00:00Z",
+                                "base": {"ref": "main"},
+                            },
+                            {
+                                "number": 20,
+                                "state": "open",
+                                "base": {"ref": "release/0.8"},
+                            },
+                        ]
+                    },
+                    "closed_pulls": [],
+                    "issues": {
+                        "10": ["type:patch", "channel:stable"],
+                    },
+                }
+            )
+        )
+        payload = inspect(repo, fixture_path, sha)
+        assert_equal(payload["pr_number"], 10, "commits api should ignore unrelated pulls")
+        assert_equal(payload["resolution_source"], "commits_api", "commits api resolution source")
+        assert_equal(payload["should_release"], True, "filtered commits api release")
+
 def main() -> int:
     test_sequential_stable_reconciliation()
     test_rc_candidate()
     test_merge_commit_sha_inspect()
     test_unresolved_subject_skips()
+    test_commits_api_filters_non_main_pulls()
     print("test-release-plan: all cases passed")
     return 0
 

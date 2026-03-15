@@ -303,7 +303,20 @@ def resolve_single_pull(
     base_branch: str,
     commit_subject: str,
 ) -> tuple[int | None, str]:
-    pulls = [item for item in client.get_commit_pulls(commit_sha) if isinstance(item.get("number"), int)]
+    pulls = []
+    for item in client.get_commit_pulls(commit_sha):
+        number = item.get("number")
+        if not isinstance(number, int) or number <= 0:
+            continue
+        if item.get("merged_at") is False:
+            continue
+        if item.get("merged_at") in (None, "") and item.get("state") not in (None, "closed"):
+            continue
+        base = item.get("base") or {}
+        base_ref = normalize_ref(str(base.get("ref", "")))
+        if base_ref and base_ref != base_branch:
+            continue
+        pulls.append(item)
     if len(pulls) == 1:
         return int(pulls[0]["number"]), "commits_api"
     if len(pulls) > 1:
