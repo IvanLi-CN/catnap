@@ -484,14 +484,7 @@ function encodeGitRefForPath(ref: string): string {
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, { cache: "no-store", ...init });
   const text = await res.text();
-  const tryJson = () => {
-    if (!text) return null;
-    try {
-      return JSON.parse(text) as unknown;
-    } catch {
-      return null;
-    }
-  };
+  const tryJson = () => parseJsonText(text);
 
   if (!res.ok) {
     const body = tryJson() as ApiError | null;
@@ -502,6 +495,29 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const body = tryJson() as T | null;
   if (body === null) throw new Error("Invalid JSON response");
   return body;
+}
+
+function parseJsonText(text: string): unknown | null {
+  if (!text) return null;
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+function formatResponseErrorMessage(res: Response, text: string, parsed: unknown): string {
+  if (parsed && typeof parsed === "object" && "error" in parsed) {
+    const maybeError = parsed as ApiError;
+    if (maybeError.error?.message) return maybeError.error.message;
+  }
+
+  const trimmed = text.trim();
+  if (trimmed) {
+    return res.statusText ? `${res.status} ${res.statusText}: ${trimmed}` : trimmed;
+  }
+
+  return res.statusText ? `${res.status} ${res.statusText}` : `HTTP ${res.status}`;
 }
 
 function formatMoney(m: Money): string {
@@ -3702,9 +3718,7 @@ export function SettingsViewPanel({
         : tgTestResult?.status === "partial_success"
           ? "neutral"
           : "success";
-    const children = errorMessage ? (
-      <span>{errorMessage}</span>
-    ) : tgTestResult ? (
+    const children = tgTestResult ? (
       <div className="settings-feedback-content">
         <div className="settings-feedback-title">
           {tgTestResult.status === "success"
@@ -3729,9 +3743,9 @@ export function SettingsViewPanel({
       <SettingsFeedbackBubble
         anchorRef={tgTestButtonRef}
         inline
-        message={null}
+        message={errorMessage ?? null}
         onClose={errorMessage ? () => setFieldError("tgTestAction", null) : clearTgTestStatus}
-        open={Boolean(children)}
+        open={Boolean(errorMessage || children)}
         testId="settings-feedback-tg-test"
         tone={tone}
       >
@@ -4015,10 +4029,10 @@ export function SettingsViewPanel({
         </div>
 
         <div className="settings-row" style={{ marginTop: "16px" }}>
-          <div>Targets（chat id / @channel）</div>
+          <div>Targets</div>
           <div className="settings-input-wrap">
             <div className="settings-tag-editor">
-              <div className="settings-tag-list">
+              <div className="settings-tag-field">
                 {tgTargets.map((target) => (
                   <button
                     className="settings-tag-chip"
@@ -4029,33 +4043,35 @@ export function SettingsViewPanel({
                     type="button"
                   >
                     <span>{target}</span>
-                    <span aria-hidden="true">×</span>
+                    <span className="settings-tag-chip-close" aria-hidden="true">
+                      ×
+                    </span>
                   </button>
                 ))}
-                <div className="pill settings-tag-input-pill">
-                  <input
-                    placeholder="@channel 或 -1001234567890"
-                    value={tgTargetDraftInput}
-                    onChange={(e) => {
-                      clearTgTestStatus();
-                      setTgTargetDraftInput(e.target.value);
-                      setFieldError("tgTargets", null);
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === ",") {
-                        e.preventDefault();
-                        void commitTelegramTargetDraft();
-                      }
-                    }}
-                    onBlur={() => {
+                <input
+                  className="settings-tag-inline-input"
+                  placeholder="@channel 或 -1001234567890"
+                  value={tgTargetDraftInput}
+                  onChange={(e) => {
+                    clearTgTestStatus();
+                    setTgTargetDraftInput(e.target.value);
+                    setFieldError("tgTargets", null);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === ",") {
+                      e.preventDefault();
                       void commitTelegramTargetDraft();
-                    }}
-                  />
-                </div>
+                    }
+                  }}
+                  onBlur={() => {
+                    void commitTelegramTargetDraft();
+                  }}
+                />
               </div>
               <div className="settings-tag-actions">
+                <span className="hint">回车或逗号添加；点击目标可删除</span>
                 <button
-                  className="pill sm center"
+                  className="settings-tag-add-button"
                   onClick={() => {
                     void commitTelegramTargetDraft();
                   }}
@@ -4063,7 +4079,6 @@ export function SettingsViewPanel({
                 >
                   添加目标
                 </button>
-                <span className="hint">回车或逗号添加；点击目标可删除</span>
               </div>
             </div>
             {renderFieldError("tgTargets")}
@@ -4093,19 +4108,18 @@ export function SettingsViewPanel({
                     }),
                   });
                   const bodyText = await res.text();
-                  const parsed = bodyText
-                    ? (JSON.parse(bodyText) as TelegramTestResponse | ApiError)
-                    : null;
+                  const parsed = parseJsonText(bodyText) as TelegramTestResponse | ApiError | null;
                   if (!res.ok) {
                     if (parsed && "results" in parsed) {
                       setTgTestResult(parsed as TelegramTestResponse);
                       setFieldError("tgTestAction", null);
                     } else {
-                      throw new Error(
-                        (parsed as ApiError | null)?.error?.message ?? `HTTP ${res.status}`,
-                      );
+                      throw new Error(formatResponseErrorMessage(res, bodyText, parsed));
                     }
                   } else {
+                    if (!parsed || !("results" in parsed)) {
+                      throw new Error("测试接口返回了无效响应");
+                    }
                     showTgTestStatus(parsed as TelegramTestResponse);
                     setFieldError("tgTestAction", null);
                   }

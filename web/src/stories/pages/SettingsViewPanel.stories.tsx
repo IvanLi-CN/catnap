@@ -353,6 +353,107 @@ export const TelegramSuccessBubbleDismissible: Story = {
   },
 };
 
+export const TelegramErrorBubble: Story = {
+  args: { about: aboutOk },
+  play: async ({ canvasElement }) => {
+    const restoreFetch = installFetchMock((url) => {
+      if (url.endsWith("/api/notifications/telegram/test")) {
+        return new Response("Not Found", {
+          status: 404,
+          statusText: "Not Found",
+          headers: { "content-type": "text/plain; charset=utf-8" },
+        });
+      }
+      throw new Error(`Unexpected fetch in TelegramErrorBubble: ${url}`);
+    });
+
+    try {
+      const canvas = within(canvasElement);
+      const button = await canvas.findByRole("button", { name: "测试 Telegram" });
+      await userEvent.click(button);
+      const bubble = await canvas.findByTestId("settings-feedback-tg-test");
+      await waitFor(() => {
+        expect(bubble).toBeVisible();
+      });
+      expect(bubble).toHaveTextContent("404 Not Found: Not Found");
+    } finally {
+      restoreFetch();
+    }
+  },
+};
+
+export const TelegramErrorBubbleMultiline: Story = {
+  args: { about: aboutOk },
+  play: async ({ canvasElement }) => {
+    const restoreFetch = installFetchMock((url) => {
+      if (url.endsWith("/api/notifications/telegram/test")) {
+        return new Response(
+          "Telegram upstream rejected one or more targets because the bot is missing permission to post in the destination chat. Please recheck bot membership and channel admin rights.",
+          {
+            status: 403,
+            statusText: "Forbidden",
+            headers: { "content-type": "text/plain; charset=utf-8" },
+          },
+        );
+      }
+      throw new Error(`Unexpected fetch in TelegramErrorBubbleMultiline: ${url}`);
+    });
+
+    try {
+      const canvas = within(canvasElement);
+      const button = await canvas.findByRole("button", { name: "测试 Telegram" });
+      await userEvent.click(button);
+      const bubble = await canvas.findByTestId("settings-feedback-tg-test");
+      await waitFor(() => {
+        expect(bubble).toBeVisible();
+      });
+      expect(bubble).toHaveTextContent("403 Forbidden:");
+      expect(bubble).toHaveTextContent("bot is missing permission");
+      expect(bubble).toHaveTextContent("channel admin rights");
+    } finally {
+      restoreFetch();
+    }
+  },
+};
+
+export const TelegramErrorBubbleNarrow: Story = {
+  args: { about: aboutOk },
+  render: (args) => (
+    <div style={{ width: "560px", maxWidth: "100%" }}>
+      <SettingsViewPanelDemo about={args.about ?? null} bootstrap={args.bootstrap} />
+    </div>
+  ),
+  play: async ({ canvasElement }) => {
+    const restoreFetch = installFetchMock((url) => {
+      if (url.endsWith("/api/notifications/telegram/test")) {
+        return new Response(
+          "Telegram upstream rejected one or more targets because the bot is missing permission to post in the destination chat. Please recheck bot membership and channel admin rights.",
+          {
+            status: 403,
+            statusText: "Forbidden",
+            headers: { "content-type": "text/plain; charset=utf-8" },
+          },
+        );
+      }
+      throw new Error(`Unexpected fetch in TelegramErrorBubbleNarrow: ${url}`);
+    });
+
+    try {
+      const canvas = within(canvasElement);
+      const button = await canvas.findByRole("button", { name: "测试 Telegram" });
+      await userEvent.click(button);
+      const bubble = await canvas.findByTestId("settings-feedback-tg-test");
+      await waitFor(() => {
+        expect(bubble).toBeVisible();
+      });
+      expect(bubble).toHaveTextContent("403 Forbidden:");
+      expect(bubble).toHaveTextContent("bot is missing permission");
+    } finally {
+      restoreFetch();
+    }
+  },
+};
+
 export const WebPushSuccessBubble: Story = {
   args: { about: aboutOk },
   render: (args) => (

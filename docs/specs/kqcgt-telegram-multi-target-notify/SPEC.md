@@ -168,7 +168,19 @@
 
 ## Visual Evidence (PR)
 
-- None yet.
+- source_type: storybook_docs
+  story_id_or_title: Components/SettingsFeedbackBubble Docs
+  state: dark-theme compact docs page
+  evidence_note: 验证 `SettingsFeedbackBubble` 的 Storybook Docs 页面已切到暗色主题；文档顶部示例与 Stories 列表都保持紧凑布局，不再出现白底文档壳或超高空白画布。
+  image:
+  ![SettingsFeedbackBubble docs dark compact](./assets/settings-feedback-bubble-docs-dark-compact.png)
+
+- source_type: storybook_canvas
+  story_id_or_title: Pages/SettingsViewPanel / Telegram Success Bubble
+  state: telegram multi-target settings panel
+  evidence_note: 验证设置页中的 Telegram 区域已经切换为多目标标签输入，支持已存在 targets、输入占位、添加按钮与测试按钮的整体布局展示。
+  image:
+  ![Telegram multi-target settings panel](./assets/settings-view-telegram-ui-focused.png)
 
 ## 资产晋升（Asset promotion）
 
