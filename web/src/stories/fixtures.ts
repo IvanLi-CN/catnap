@@ -252,7 +252,7 @@ export const demoBootstrap: BootstrapResponse = {
       siteRegionChangeEnabled: true,
     },
     notifications: {
-      telegram: { enabled: true, configured: true, target: "@catnap" },
+      telegram: { enabled: true, configured: true, targets: ["@catnap", "-1002233445566"] },
       webPush: { enabled: false, vapidPublicKey: "demo-vapid-public-key" },
     },
   },
@@ -311,6 +311,10 @@ export const demoNotificationRecords: NotificationRecord[] = [
     partitionLabel: "中国香港 / HKG",
     telegramStatus: "success",
     webPushStatus: "skipped",
+    telegramDeliveries: [
+      { channel: "telegram", target: "@catnap", status: "success" },
+      { channel: "telegram", target: "-1002233445566", status: "success" },
+    ],
     items: [
       {
         configId: "lc:hkg:pro",
@@ -337,8 +341,17 @@ export const demoNotificationRecords: NotificationRecord[] = [
     title: "已下架",
     summary: "HKG-Pro.TRFC Plus · 最近状态：库存 1｜¥54.00 / 月",
     partitionLabel: "中国香港 / HKG",
-    telegramStatus: "error",
+    telegramStatus: "partial_success",
     webPushStatus: "skipped",
+    telegramDeliveries: [
+      { channel: "telegram", target: "@catnap", status: "success" },
+      {
+        channel: "telegram",
+        target: "-1002233445566",
+        status: "error",
+        error: "telegram http 400: chat not found",
+      },
+    ],
     items: [
       {
         configId: "lc:hkg:plus",
@@ -367,6 +380,7 @@ export const demoNotificationRecords: NotificationRecord[] = [
     partitionLabel: "格陵兰 / 格陵兰",
     telegramStatus: "success",
     webPushStatus: "success",
+    telegramDeliveries: [{ channel: "telegram", target: "@catnap", status: "success" }],
     items: [
       {
         configId: "lc:gl:probe",

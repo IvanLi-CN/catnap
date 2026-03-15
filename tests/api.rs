@@ -176,7 +176,7 @@ async fn save_telegram_settings(t: &TestApp, user_id: &str, bot_token: &str, tar
         "poll": { "intervalMinutes": 1, "jitterPct": 0.1 },
         "siteBaseUrl": null,
         "notifications": {
-            "telegram": { "enabled": true, "botToken": bot_token, "target": target },
+            "telegram": { "enabled": true, "botToken": bot_token, "targets": [target] },
             "webPush": { "enabled": false }
         }
     }))
@@ -332,6 +332,52 @@ async fn bootstrap_returns_catalog_and_settings() {
             .map(Vec::len),
         Some(0)
     );
+    assert_eq!(
+        json["settings"]["notifications"]["telegram"]["targets"]
+            .as_array()
+            .map(Vec::len),
+        Some(0)
+    );
+}
+
+#[tokio::test]
+async fn bootstrap_falls_back_to_legacy_telegram_target() {
+    let t = make_app().await;
+    ensure_user_exists(&t, "u_1").await;
+    sqlx::query(
+        "UPDATE settings SET telegram_enabled = 1, telegram_bot_token = ?, telegram_target = ?, telegram_targets_json = NULL WHERE user_id = ?",
+    )
+    .bind("token")
+    .bind("@legacy_target")
+    .bind("u_1")
+    .execute(&t.db)
+    .await
+    .unwrap();
+
+    let res = t
+        .app
+        .oneshot(
+            Request::builder()
+                .uri("/api/bootstrap")
+                .header("host", "example.com")
+                .header("x-user", "u_1")
+                .header("origin", "http://example.com")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        json["settings"]["notifications"]["telegram"]["targets"][0].as_str(),
+        Some("@legacy_target")
+    );
+    assert_eq!(
+        json["settings"]["notifications"]["telegram"]["configured"].as_bool(),
+        Some(true)
+    );
 }
 
 #[tokio::test]
@@ -356,7 +402,7 @@ async fn put_settings_ignores_catalog_refresh_overrides() {
             "siteRegionChangeEnabled": false
         },
         "notifications": {
-            "telegram": { "enabled": false, "botToken": null, "target": null },
+            "telegram": { "enabled": false, "botToken": null, "targets": [] },
             "webPush": { "enabled": false }
         }
     }))
@@ -1250,13 +1296,47 @@ async fn telegram_test_returns_400_when_missing_token_or_target() {
         "u_1",
         serde_json::json!({
             "botToken": null,
-            "target": null,
+            "targets": null,
             "text": null,
         }),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(json["error"]["code"], "INVALID_ARGUMENT");
+}
+
+#[tokio::test]
+async fn telegram_test_does_not_fall_back_when_request_targets_are_explicitly_empty() {
+    let t = make_app().await;
+    ensure_user_exists(&t, "u_1").await;
+    sqlx::query(
+        "UPDATE settings SET telegram_enabled = 1, telegram_bot_token = ?, telegram_target = ?, telegram_targets_json = ? WHERE user_id = ?",
+    )
+    .bind("saved-token")
+    .bind("@saved-target")
+    .bind("[\"@saved-target\"]")
+    .bind("u_1")
+    .execute(&t.db)
+    .await
+    .unwrap();
+
+    let (status, json) = post_telegram_test(
+        &t,
+        "u_1",
+        serde_json::json!({
+            "botToken": "request-token",
+            "targets": [],
+            "text": null,
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(json["error"]["code"], "INVALID_ARGUMENT");
+    assert_eq!(
+        json["error"]["message"].as_str(),
+        Some("缺少 targets（可在本次请求提供或先在设置中保存）")
+    );
 }
 
 #[tokio::test]
@@ -1286,11 +1366,11 @@ async fn telegram_test_returns_5xx_when_upstream_fails() {
     let (status, json) = post_telegram_test(
         &t,
         "u_1",
-        serde_json::json!({ "botToken": null, "target": null, "text": "hi" }),
+        serde_json::json!({ "botToken": null, "targets": null, "text": "hi" }),
     )
     .await;
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-    let msg = json["error"]["message"].as_str().unwrap_or_default();
+    let msg = json["results"][0]["error"].as_str().unwrap_or_default();
     assert!(msg.contains("chat not found"));
 }
 
@@ -1320,7 +1400,7 @@ async fn telegram_test_uses_friendly_default_text() {
     let (status, json) = post_telegram_test(
         &t,
         "u_1",
-        serde_json::json!({ "botToken": null, "target": null, "text": null }),
+        serde_json::json!({ "botToken": null, "targets": null, "text": null }),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -1339,6 +1419,58 @@ async fn telegram_test_uses_friendly_default_text() {
     ));
     assert!(!text.contains("user="));
     assert!(!text.contains("catnap 测试消息"));
+}
+
+#[tokio::test]
+async fn telegram_test_returns_partial_success_for_multi_targets() {
+    let tg = axum::Router::new().route(
+        "/*path",
+        axum::routing::post(|body: axum::Json<serde_json::Value>| async move {
+            let chat_id = body["chat_id"].as_str().unwrap_or_default();
+            if chat_id == "@ok" {
+                return (
+                    StatusCode::OK,
+                    axum::Json(serde_json::json!({ "ok": true, "result": { "chat_id": chat_id } })),
+                );
+            }
+            (
+                StatusCode::BAD_REQUEST,
+                axum::Json(serde_json::json!({
+                    "ok": false,
+                    "error_code": 400,
+                    "description": "Bad Request: chat not found"
+                })),
+            )
+        }),
+    );
+    let base = spawn_stub_server(tg).await;
+
+    let mut cfg = test_config();
+    cfg.telegram_api_base_url = base;
+    let t = make_app_with_config(cfg).await;
+
+    let (status, json) = post_telegram_test(
+        &t,
+        "u_1",
+        serde_json::json!({
+            "botToken": "t",
+            "targets": ["@ok", "@bad"],
+            "text": "hi",
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["status"].as_str(), Some("partial_success"));
+    let results = json["results"].as_array().unwrap();
+    assert_eq!(results.len(), 2);
+    assert_eq!(results[0]["target"].as_str(), Some("@ok"));
+    assert_eq!(results[0]["status"].as_str(), Some("success"));
+    assert_eq!(results[1]["target"].as_str(), Some("@bad"));
+    assert_eq!(results[1]["status"].as_str(), Some("error"));
+    assert!(results[1]["error"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("chat not found"));
 }
 
 #[tokio::test]
@@ -1369,11 +1501,11 @@ async fn telegram_test_surfaces_migrate_to_chat_id_hint() {
     let (status, json) = post_telegram_test(
         &t,
         "u_1",
-        serde_json::json!({ "botToken": null, "target": null, "text": "hi" }),
+        serde_json::json!({ "botToken": null, "targets": null, "text": "hi" }),
     )
     .await;
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-    let msg = json["error"]["message"].as_str().unwrap_or_default();
+    let msg = json["results"][0]["error"].as_str().unwrap_or_default();
     assert!(msg.contains("migrate_to_chat_id=-1002233445566"));
 }
 
@@ -1405,11 +1537,11 @@ async fn telegram_test_surfaces_retry_after_hint() {
     let (status, json) = post_telegram_test(
         &t,
         "u_1",
-        serde_json::json!({ "botToken": null, "target": null, "text": "hi" }),
+        serde_json::json!({ "botToken": null, "targets": null, "text": "hi" }),
     )
     .await;
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-    let msg = json["error"]["message"].as_str().unwrap_or_default();
+    let msg = json["results"][0]["error"].as_str().unwrap_or_default();
     assert!(msg.contains("retry_after=17s"));
 }
 
@@ -1436,11 +1568,11 @@ async fn telegram_test_surfaces_plain_text_error_body() {
     let (status, json) = post_telegram_test(
         &t,
         "u_1",
-        serde_json::json!({ "botToken": null, "target": null, "text": "hi" }),
+        serde_json::json!({ "botToken": null, "targets": null, "text": "hi" }),
     )
     .await;
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-    let msg = json["error"]["message"].as_str().unwrap_or_default();
+    let msg = json["results"][0]["error"].as_str().unwrap_or_default();
     assert!(msg.contains("upstream returned non-json error body"));
 }
 
@@ -1466,11 +1598,11 @@ async fn telegram_test_marks_truncated_upstream_body() {
     let (status, json) = post_telegram_test(
         &t,
         "u_1",
-        serde_json::json!({ "botToken": null, "target": null, "text": "hi" }),
+        serde_json::json!({ "botToken": null, "targets": null, "text": "hi" }),
     )
     .await;
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-    let msg = json["error"]["message"].as_str().unwrap_or_default();
+    let msg = json["results"][0]["error"].as_str().unwrap_or_default();
     assert!(msg.contains("upstream_body_truncated"));
 }
 
@@ -1505,11 +1637,11 @@ async fn telegram_test_redacts_token_from_upstream_description() {
     let (status, json) = post_telegram_test(
         &t,
         "u_1",
-        serde_json::json!({ "botToken": null, "target": null, "text": "hi" }),
+        serde_json::json!({ "botToken": null, "targets": null, "text": "hi" }),
     )
     .await;
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-    let msg = json["error"]["message"].as_str().unwrap_or_default();
+    let msg = json["results"][0]["error"].as_str().unwrap_or_default();
     assert!(!msg.contains(token));
     assert!(msg.contains("[REDACTED]"));
 }
@@ -1542,11 +1674,11 @@ async fn telegram_test_redacts_token_with_newline_after_bot_prefix() {
     let (status, json) = post_telegram_test(
         &t,
         "u_1",
-        serde_json::json!({ "botToken": null, "target": null, "text": "hi" }),
+        serde_json::json!({ "botToken": null, "targets": null, "text": "hi" }),
     )
     .await;
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-    let msg = json["error"]["message"].as_str().unwrap_or_default();
+    let msg = json["results"][0]["error"].as_str().unwrap_or_default();
     assert!(!msg.contains(token));
     assert!(msg.contains("bot [REDACTED]/sendMessage"));
 }
@@ -1586,11 +1718,11 @@ async fn telegram_test_redacts_url_encoded_token() {
     let (status, json) = post_telegram_test(
         &t,
         "u_1",
-        serde_json::json!({ "botToken": null, "target": null, "text": "hi" }),
+        serde_json::json!({ "botToken": null, "targets": null, "text": "hi" }),
     )
     .await;
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-    let msg = json["error"]["message"].as_str().unwrap_or_default();
+    let msg = json["results"][0]["error"].as_str().unwrap_or_default();
     assert!(!msg.contains(token));
     assert!(!msg.contains(&token_encoded));
     assert!(msg.contains("bot[REDACTED]/sendMessage"));
@@ -1625,11 +1757,11 @@ async fn telegram_test_redacts_token_with_uppercase_bot_prefix() {
     let (status, json) = post_telegram_test(
         &t,
         "u_1",
-        serde_json::json!({ "botToken": null, "target": null, "text": "hi" }),
+        serde_json::json!({ "botToken": null, "targets": null, "text": "hi" }),
     )
     .await;
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-    let msg = json["error"]["message"].as_str().unwrap_or_default();
+    let msg = json["results"][0]["error"].as_str().unwrap_or_default();
     assert!(!msg.contains(token));
     assert!(msg.contains("BOT[REDACTED]/sendMessage"));
 }
@@ -1662,11 +1794,11 @@ async fn telegram_test_redacts_token_after_whitespace_boundary() {
     let (status, json) = post_telegram_test(
         &t,
         "u_1",
-        serde_json::json!({ "botToken": null, "target": null, "text": "hi" }),
+        serde_json::json!({ "botToken": null, "targets": null, "text": "hi" }),
     )
     .await;
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-    let msg = json["error"]["message"].as_str().unwrap_or_default();
+    let msg = json["results"][0]["error"].as_str().unwrap_or_default();
     assert!(!msg.contains(token));
     assert!(msg.contains("token [REDACTED]"));
 }
@@ -2058,6 +2190,138 @@ async fn notification_records_api_lists_and_fetches_detail() {
     let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(json["id"].as_str(), Some(newer_id.as_str()));
     assert_eq!(json["items"][0]["name"].as_str(), Some(item.name.as_str()));
+}
+
+#[tokio::test]
+async fn notification_records_api_includes_telegram_deliveries() {
+    let t = make_app().await;
+    ensure_user_exists(&t, "u_1").await;
+
+    let config_id = sqlx::query("SELECT id FROM catalog_configs ORDER BY id LIMIT 1")
+        .fetch_one(&t.db)
+        .await
+        .unwrap()
+        .get::<String, _>(0);
+    let item = catnap::db::load_notification_record_item_snapshot(&t.db, &config_id)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let record_id = catnap::db::insert_notification_record(
+        &t.db,
+        "u_1",
+        &catnap::models::NotificationRecordDraft {
+            kind: "monitoring.config".to_string(),
+            title: "【配置更新】Partial".to_string(),
+            summary: "库存 1｜¥1.00 / 月".to_string(),
+            partition_label: item.partition_label.clone(),
+            telegram_status: "pending".to_string(),
+            web_push_status: "skipped".to_string(),
+            items: vec![item.clone()],
+        },
+    )
+    .await
+    .unwrap();
+    catnap::db::replace_notification_record_deliveries(
+        &t.db,
+        &record_id,
+        "telegram",
+        &[
+            catnap::models::NotificationRecordDeliveryView {
+                channel: "telegram".to_string(),
+                target: "@ok".to_string(),
+                status: "success".to_string(),
+                error: None,
+            },
+            catnap::models::NotificationRecordDeliveryView {
+                channel: "telegram".to_string(),
+                target: "@bad".to_string(),
+                status: "error".to_string(),
+                error: Some("telegram http 400: chat not found".to_string()),
+            },
+        ],
+    )
+    .await
+    .unwrap();
+    sqlx::query(
+        r#"
+INSERT INTO notification_record_deliveries (
+  id,
+  record_id,
+  channel,
+  position,
+  target,
+  status,
+  error_message,
+  created_at,
+  updated_at
+)
+VALUES (?, ?, 'webPush', 0, ?, 'success', NULL, ?, ?)
+"#,
+    )
+    .bind("delivery-web-push")
+    .bind(&record_id)
+    .bind("https://push.example.com/subscriptions/demo")
+    .bind("2026-03-14T00:00:00Z")
+    .bind("2026-03-14T00:00:00Z")
+    .execute(&t.db)
+    .await
+    .unwrap();
+    catnap::db::update_notification_record_channel_status(
+        &t.db,
+        &record_id,
+        "telegram",
+        "partial_success",
+    )
+    .await
+    .unwrap();
+
+    let res = t
+        .app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/notifications/records/{record_id}"))
+                .header("host", "example.com")
+                .header("x-user", "u_1")
+                .header("origin", "http://example.com")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(json["telegramStatus"].as_str(), Some("partial_success"));
+    let deliveries = json["telegramDeliveries"].as_array().unwrap();
+    assert_eq!(deliveries.len(), 2);
+    assert_eq!(deliveries[0]["target"].as_str(), Some("@ok"));
+    assert_eq!(deliveries[1]["target"].as_str(), Some("@bad"));
+    let by_target = deliveries
+        .iter()
+        .map(|item| {
+            (
+                item["target"].as_str().unwrap_or_default().to_string(),
+                (
+                    item["status"].as_str().unwrap_or_default().to_string(),
+                    item["error"].as_str().map(str::to_string),
+                ),
+            )
+        })
+        .collect::<std::collections::HashMap<_, _>>();
+    assert_eq!(
+        by_target.get("@ok").map(|(status, _)| status.as_str()),
+        Some("success")
+    );
+    assert_eq!(
+        by_target.get("@bad").map(|(status, _)| status.as_str()),
+        Some("error")
+    );
+    assert!(by_target
+        .get("@bad")
+        .and_then(|(_, error)| error.as_deref())
+        .unwrap_or_default()
+        .contains("chat not found"));
 }
 
 #[tokio::test]

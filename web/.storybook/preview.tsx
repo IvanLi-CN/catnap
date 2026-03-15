@@ -1,4 +1,5 @@
 import type { Decorator, Preview } from "@storybook/react";
+import { themes } from "storybook/theming";
 import { applyThemeMode, coerceThemeMode, saveThemeMode } from "../src/app/theme";
 import { RESPONSIVE_BREAKPOINTS, RESPONSIVE_BREAKPOINTS_BY_ID } from "../src/stories/breakpoints";
 import "../src/app.css";
@@ -12,7 +13,16 @@ const withTheme: Decorator = (Story, context) => {
   const mode = coerceThemeMode(context.globals.theme);
   saveThemeMode(mode);
   applyThemeMode(mode);
+  const isDocs = context.viewMode === "docs";
   const viewportPreset = String(context.globals.viewportPreset ?? "auto");
+  if (isDocs) {
+    return (
+      <div style={{ ...CONTAINER_STYLE, background: "var(--bg)" }}>
+        <Story />
+      </div>
+    );
+  }
+
   if (viewportPreset === "auto") {
     return (
       <div style={{ ...CONTAINER_STYLE, minHeight: "100vh" }}>
@@ -54,6 +64,11 @@ const withTheme: Decorator = (Story, context) => {
 };
 
 const preview: Preview = {
+  parameters: {
+    docs: {
+      theme: themes.dark,
+    },
+  },
   globalTypes: {
     viewportPreset: {
       name: "Viewport",

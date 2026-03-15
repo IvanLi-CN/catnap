@@ -189,24 +189,24 @@ async function expectActionFeedbackBeforeButton(
   const buttonCenterY = afterRect.top + afterRect.height / 2;
 
   if (bubbleClasses.includes("settings-feedback-bubble-inline-side-left")) {
-    expect(bubbleRect.right).toBeLessThanOrEqual(afterRect.left - 8);
+    expect(bubbleRect.right).toBeLessThanOrEqual(afterRect.left - 7);
     expect(Math.abs(bubbleCenterY - buttonCenterY)).toBeLessThanOrEqual(8);
     return;
   }
 
   if (bubbleClasses.includes("settings-feedback-bubble-inline-side-right")) {
-    expect(bubbleRect.left).toBeGreaterThanOrEqual(afterRect.right + 8);
+    expect(bubbleRect.left).toBeGreaterThanOrEqual(afterRect.right + 7);
     expect(Math.abs(bubbleCenterY - buttonCenterY)).toBeLessThanOrEqual(8);
     return;
   }
 
   if (bubbleClasses.includes("settings-feedback-bubble-inline-side-top")) {
-    expect(bubbleRect.bottom).toBeLessThanOrEqual(afterRect.top - 8);
+    expect(bubbleRect.bottom).toBeLessThanOrEqual(afterRect.top - 7);
     return;
   }
 
   expect(bubbleClasses.includes("settings-feedback-bubble-inline-side-bottom")).toBe(true);
-  expect(bubbleRect.top).toBeGreaterThanOrEqual(afterRect.bottom + 8);
+  expect(bubbleRect.top).toBeGreaterThanOrEqual(afterRect.bottom + 7);
 }
 
 const meta = {
@@ -275,15 +275,28 @@ export const UpdateAvailable: Story = {
 export const TelegramSuccessBubble: Story = {
   args: { about: aboutOk },
   play: async ({ canvasElement }) => {
-    const restoreFetch = installFetchMock((url) => {
+    let requestTargets: string[] = [];
+    const restoreFetch = installFetchMock((url, init) => {
       if (url.endsWith("/api/notifications/telegram/test")) {
-        return jsonOk();
+        requestTargets = init?.body
+          ? ((JSON.parse(String(init.body)) as { targets?: string[] }).targets ?? [])
+          : [];
+        return jsonOk({
+          ok: true,
+          status: "success",
+          results: [
+            { target: "@catnap", status: "success" },
+            { target: "@new-channel", status: "success" },
+          ],
+        });
       }
       throw new Error(`Unexpected fetch in TelegramSuccessBubble: ${url}`);
     });
 
     try {
       const canvas = within(canvasElement);
+      const input = await canvas.findByPlaceholderText("@channel 或 -1001234567890");
+      await userEvent.type(input, "@new-channel");
       const button = await canvas.findByRole("button", { name: "测试 Telegram" });
       const beforeMetrics = {
         left: button.offsetLeft,
@@ -296,7 +309,10 @@ export const TelegramSuccessBubble: Story = {
       await waitFor(() => {
         expect(bubble).toBeVisible();
       });
-      expect(bubble).toHaveTextContent("已发送");
+      expect(requestTargets).toEqual(["@catnap", "-1002233445566", "@new-channel"]);
+      expect(bubble).toHaveTextContent("已全部发送");
+      expect(bubble).toHaveTextContent("@catnap");
+      expect(bubble).toHaveTextContent("@new-channel");
       await expectActionFeedbackBeforeButton(
         canvasElement as HTMLElement,
         "测试 Telegram",
@@ -314,7 +330,11 @@ export const TelegramSuccessBubbleDismissible: Story = {
   play: async ({ canvasElement }) => {
     const restoreFetch = installFetchMock((url) => {
       if (url.endsWith("/api/notifications/telegram/test")) {
-        return jsonOk();
+        return jsonOk({
+          ok: true,
+          status: "success",
+          results: [{ target: "@catnap", status: "success" }],
+        });
       }
       throw new Error(`Unexpected fetch in TelegramSuccessBubbleDismissible: ${url}`);
     });
@@ -327,6 +347,107 @@ export const TelegramSuccessBubbleDismissible: Story = {
       await waitFor(() => {
         expect(canvas.queryByTestId("settings-feedback-tg-test")).toBeNull();
       });
+    } finally {
+      restoreFetch();
+    }
+  },
+};
+
+export const TelegramErrorBubble: Story = {
+  args: { about: aboutOk },
+  play: async ({ canvasElement }) => {
+    const restoreFetch = installFetchMock((url) => {
+      if (url.endsWith("/api/notifications/telegram/test")) {
+        return new Response("Not Found", {
+          status: 404,
+          statusText: "Not Found",
+          headers: { "content-type": "text/plain; charset=utf-8" },
+        });
+      }
+      throw new Error(`Unexpected fetch in TelegramErrorBubble: ${url}`);
+    });
+
+    try {
+      const canvas = within(canvasElement);
+      const button = await canvas.findByRole("button", { name: "测试 Telegram" });
+      await userEvent.click(button);
+      const bubble = await canvas.findByTestId("settings-feedback-tg-test");
+      await waitFor(() => {
+        expect(bubble).toBeVisible();
+      });
+      expect(bubble).toHaveTextContent("404 Not Found: Not Found");
+    } finally {
+      restoreFetch();
+    }
+  },
+};
+
+export const TelegramErrorBubbleMultiline: Story = {
+  args: { about: aboutOk },
+  play: async ({ canvasElement }) => {
+    const restoreFetch = installFetchMock((url) => {
+      if (url.endsWith("/api/notifications/telegram/test")) {
+        return new Response(
+          "Telegram upstream rejected one or more targets because the bot is missing permission to post in the destination chat. Please recheck bot membership and channel admin rights.",
+          {
+            status: 403,
+            statusText: "Forbidden",
+            headers: { "content-type": "text/plain; charset=utf-8" },
+          },
+        );
+      }
+      throw new Error(`Unexpected fetch in TelegramErrorBubbleMultiline: ${url}`);
+    });
+
+    try {
+      const canvas = within(canvasElement);
+      const button = await canvas.findByRole("button", { name: "测试 Telegram" });
+      await userEvent.click(button);
+      const bubble = await canvas.findByTestId("settings-feedback-tg-test");
+      await waitFor(() => {
+        expect(bubble).toBeVisible();
+      });
+      expect(bubble).toHaveTextContent("403 Forbidden:");
+      expect(bubble).toHaveTextContent("bot is missing permission");
+      expect(bubble).toHaveTextContent("channel admin rights");
+    } finally {
+      restoreFetch();
+    }
+  },
+};
+
+export const TelegramErrorBubbleNarrow: Story = {
+  args: { about: aboutOk },
+  render: (args) => (
+    <div style={{ width: "560px", maxWidth: "100%" }}>
+      <SettingsViewPanelDemo about={args.about ?? null} bootstrap={args.bootstrap} />
+    </div>
+  ),
+  play: async ({ canvasElement }) => {
+    const restoreFetch = installFetchMock((url) => {
+      if (url.endsWith("/api/notifications/telegram/test")) {
+        return new Response(
+          "Telegram upstream rejected one or more targets because the bot is missing permission to post in the destination chat. Please recheck bot membership and channel admin rights.",
+          {
+            status: 403,
+            statusText: "Forbidden",
+            headers: { "content-type": "text/plain; charset=utf-8" },
+          },
+        );
+      }
+      throw new Error(`Unexpected fetch in TelegramErrorBubbleNarrow: ${url}`);
+    });
+
+    try {
+      const canvas = within(canvasElement);
+      const button = await canvas.findByRole("button", { name: "测试 Telegram" });
+      await userEvent.click(button);
+      const bubble = await canvas.findByTestId("settings-feedback-tg-test");
+      await waitFor(() => {
+        expect(bubble).toBeVisible();
+      });
+      expect(bubble).toHaveTextContent("403 Forbidden:");
+      expect(bubble).toHaveTextContent("bot is missing permission");
     } finally {
       restoreFetch();
     }

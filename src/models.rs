@@ -185,8 +185,8 @@ pub struct SettingsNotificationsView {
 pub struct TelegramSettingsView {
     pub enabled: bool,
     pub configured: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub target: Option<String>,
+    #[serde(default)]
+    pub targets: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -321,7 +321,18 @@ pub struct SettingsNotificationsUpdate {
 pub struct TelegramSettingsUpdate {
     pub enabled: bool,
     pub bot_token: Option<String>,
-    pub target: Option<String>,
+    #[serde(default)]
+    pub targets: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotificationRecordDeliveryView {
+    pub channel: String,
+    pub target: String,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -472,6 +483,8 @@ pub struct NotificationRecordView {
     pub partition_label: Option<String>,
     pub telegram_status: String,
     pub web_push_status: String,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub telegram_deliveries: Vec<NotificationRecordDeliveryView>,
     pub items: Vec<NotificationRecordItemView>,
 }
 

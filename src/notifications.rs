@@ -1,3 +1,4 @@
+use crate::models::NotificationRecordDeliveryView;
 use anyhow::anyhow;
 use serde::Deserialize;
 use std::net::IpAddr;
@@ -50,6 +51,33 @@ pub async fn send_telegram(
     }
 
     Ok(())
+}
+
+pub async fn send_telegram_to_targets(
+    api_base_url: &str,
+    token: &str,
+    targets: &[String],
+    text: &str,
+) -> Vec<NotificationRecordDeliveryView> {
+    let mut deliveries = Vec::with_capacity(targets.len());
+    for target in targets {
+        let result = match send_telegram(api_base_url, token, target, text).await {
+            Ok(()) => NotificationRecordDeliveryView {
+                channel: "telegram".to_string(),
+                target: target.clone(),
+                status: "success".to_string(),
+                error: None,
+            },
+            Err(err) => NotificationRecordDeliveryView {
+                channel: "telegram".to_string(),
+                target: target.clone(),
+                status: "error".to_string(),
+                error: Some(err.to_string()),
+            },
+        };
+        deliveries.push(result);
+    }
+    deliveries
 }
 
 fn build_telegram_error(

@@ -1005,7 +1005,8 @@ async fn post_web_push_subscription(
 #[serde(rename_all = "camelCase")]
 struct TelegramTestRequest {
     bot_token: Option<String>,
-    target: Option<String>,
+    #[serde(default)]
+    targets: Option<Vec<String>>,
     text: Option<String>,
 }
 
@@ -1022,87 +1023,123 @@ struct OkResponse {
     ok: bool,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TelegramTestResult {
+    target: String,
+    status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TelegramTestResponse {
+    ok: bool,
+    status: String,
+    results: Vec<TelegramTestResult>,
+}
+
 async fn post_telegram_test(
     State(state): State<AppState>,
     user: axum::extract::Extension<UserView>,
     Json(req): Json<TelegramTestRequest>,
-) -> Result<Json<OkResponse>, (StatusCode, Json<ErrorResponse>)> {
+) -> Response {
     let user_id = user.0.id.clone();
-    let settings = db::ensure_user(&state.db, &state.config, &user_id)
-        .await
-        .map_err(|_| json_invalid_argument())?;
+    let settings = match db::ensure_user(&state.db, &state.config, &user_id).await {
+        Ok(settings) => settings,
+        Err(_) => return json_invalid_argument().into_response(),
+    };
 
     let req_bot_token = req
         .bot_token
         .as_deref()
         .map(str::trim)
         .filter(|v| !v.is_empty());
-    let req_target = req
-        .target
-        .as_deref()
-        .map(str::trim)
-        .filter(|v| !v.is_empty());
+    let req_targets = req.targets.map(db::normalize_telegram_targets);
     let saved_bot_token = settings
         .telegram_bot_token
         .as_deref()
         .map(str::trim)
         .filter(|v| !v.is_empty());
-    let saved_target = settings
-        .telegram_target
-        .as_deref()
-        .map(str::trim)
-        .filter(|v| !v.is_empty());
+    let saved_targets = settings.telegram_targets;
 
-    let bot_token = req_bot_token.or(saved_bot_token).ok_or_else(|| {
-        json_invalid_argument_with_message("缺少 bot token（可在本次请求提供或先在设置中保存）")
-    })?;
-    let target = req_target.or(saved_target).ok_or_else(|| {
-        json_invalid_argument_with_message("缺少 target（可在本次请求提供或先在设置中保存）")
-    })?;
+    let bot_token = match req_bot_token.or(saved_bot_token) {
+        Some(bot_token) => bot_token,
+        None => {
+            return json_invalid_argument_with_message(
+                "缺少 bot token（可在本次请求提供或先在设置中保存）",
+            )
+            .into_response();
+        }
+    };
+    let targets = if let Some(req_targets) = req_targets {
+        req_targets
+    } else {
+        saved_targets
+    };
+    if targets.is_empty() {
+        return json_invalid_argument_with_message(
+            "缺少 targets（可在本次请求提供或先在设置中保存）",
+        )
+        .into_response();
+    }
 
     let text = crate::notification_content::build_telegram_test_text(
         req.text.as_deref().map(str::trim).filter(|v| !v.is_empty()),
         OffsetDateTime::now_utc(),
     );
-
-    match crate::notifications::send_telegram(
+    let deliveries = crate::notifications::send_telegram_to_targets(
         &state.config.telegram_api_base_url,
         bot_token,
-        target,
+        &targets,
         &text,
     )
-    .await
-    {
-        Ok(()) => {
-            db::insert_log(
-                &state.db,
-                Some(&user_id),
-                "info",
-                "notify.telegram.test",
-                "telegram test sent",
-                None,
-            )
-            .await
-            .map_err(|_| json_internal_error())?;
-            Ok(Json(OkResponse { ok: true }))
-        }
-        Err(err) => {
-            warn!(user_id, error = %err, "telegram test failed");
-            let _ = db::insert_log(
-                &state.db,
-                Some(&user_id),
-                "warn",
-                "notify.telegram.test",
-                "telegram test failed",
-                Some(serde_json::json!({ "error": err.to_string() })),
-            )
-            .await;
-            Err(json_internal_error_with_message(format!(
-                "Telegram: {}",
-                err
-            )))
-        }
+    .await;
+    let status = db::aggregate_telegram_status(true, &deliveries);
+    let response = TelegramTestResponse {
+        ok: status == "success",
+        status: status.clone(),
+        results: deliveries
+            .iter()
+            .map(|delivery| TelegramTestResult {
+                target: delivery.target.clone(),
+                status: delivery.status.clone(),
+                error: delivery.error.clone(),
+            })
+            .collect(),
+    };
+
+    let log_level = if status == "success" { "info" } else { "warn" };
+    let log_message = if status == "success" {
+        "telegram test sent"
+    } else {
+        "telegram test finished with failures"
+    };
+    let log_meta = if status == "success" {
+        None
+    } else {
+        Some(serde_json::json!({
+            "status": response.status.clone(),
+            "results": response.results.clone(),
+        }))
+    };
+    let _ = db::insert_log(
+        &state.db,
+        Some(&user_id),
+        log_level,
+        "notify.telegram.test",
+        log_message,
+        log_meta,
+    )
+    .await;
+
+    if status == "error" {
+        warn!(user_id, results = ?response.results, "telegram test failed");
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(response)).into_response();
     }
+
+    (StatusCode::OK, Json(response)).into_response()
 }
 
 async fn post_web_push_test(

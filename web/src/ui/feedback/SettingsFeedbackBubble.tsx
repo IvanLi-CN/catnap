@@ -5,6 +5,7 @@ import {
   flip,
   offset,
   shift,
+  size,
   useFloating,
 } from "@floating-ui/react";
 import {
@@ -132,9 +133,11 @@ export function SettingsFeedbackBubble({
   tone,
 }: SettingsFeedbackBubbleProps) {
   const arrowRef = useRef<HTMLSpanElement | null>(null);
+  const innerRef = useRef<HTMLDivElement | null>(null);
   const textRef = useRef<HTMLSpanElement | null>(null);
   const exitTimerRef = useRef<number | null>(null);
   const enterFrameRef = useRef<number | null>(null);
+  const [contentMinHeight, setContentMinHeight] = useState<number>(40);
   const [isMultiline, setIsMultiline] = useState(false);
   const [renderState, setRenderState] = useState<BubbleRenderState>(
     open && (message || children) ? "entering" : "hidden",
@@ -161,6 +164,12 @@ export function SettingsFeedbackBubble({
           offset(10),
           flip({ fallbackPlacements: fallbackPlacementsFor(placement), padding: 16 }),
           shift({ padding: 16 }),
+          size({
+            padding: 16,
+            apply({ availableWidth, elements }) {
+              elements.floating.style.maxWidth = `${Math.max(0, Math.min(420, availableWidth))}px`;
+            },
+          }),
           arrow({ element: arrowRef, padding: 14 }),
         ]
       : [],
@@ -233,15 +242,38 @@ export function SettingsFeedbackBubble({
     refs.setReference(anchorRef?.current ?? null);
   }, [anchorRef, floatingOpen, refs]);
 
+  useLayoutEffect(() => {
+    const innerEl = innerRef.current;
+    if (!innerEl || renderState === "hidden") return;
+
+    const update = () => {
+      const nextHeight = Math.max(40, Math.ceil(innerEl.getBoundingClientRect().height + 20));
+      setContentMinHeight(nextHeight);
+    };
+
+    update();
+    if (typeof ResizeObserver !== "undefined") {
+      const observer = new ResizeObserver(update);
+      observer.observe(innerEl);
+      return () => observer.disconnect();
+    }
+
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, [renderState]);
+
   if (renderState === "hidden" || (!renderedChildren && !renderedMessage)) return null;
 
   const inlineSide = inline ? resolvedPlacement.split("-")[0] : null;
   const bubbleStyle = inline
     ? ({
         ...floatingStyles,
+        minHeight: `${contentMinHeight}px`,
         visibility: isPositioned ? "visible" : "hidden",
       } as CSSProperties)
-    : undefined;
+    : ({
+        minHeight: `${contentMinHeight}px`,
+      } as CSSProperties);
   const arrowStyle =
     inline && inlineSide
       ? ({
@@ -272,28 +304,30 @@ export function SettingsFeedbackBubble({
       role={resolvedRole}
       style={bubbleStyle}
     >
-      {showIcon ? (
-        <span className={`settings-feedback-badge settings-feedback-badge-${renderedTone}`}>
-          <SettingsFeedbackIcon tone={renderedTone} />
-        </span>
-      ) : null}
-      {renderedChildren ? (
-        <div className="settings-feedback-content">{renderedChildren}</div>
-      ) : (
-        <span className="settings-feedback-text" ref={textRef}>
-          {renderedMessage}
-        </span>
-      )}
-      {dismissible ? (
-        <button
-          aria-label="关闭提示"
-          className="settings-feedback-close"
-          onClick={onClose}
-          type="button"
-        >
-          ×
-        </button>
-      ) : null}
+      <div className="settings-feedback-inner" ref={innerRef}>
+        {showIcon ? (
+          <span className={`settings-feedback-badge settings-feedback-badge-${renderedTone}`}>
+            <SettingsFeedbackIcon tone={renderedTone} />
+          </span>
+        ) : null}
+        {renderedChildren ? (
+          <div className="settings-feedback-content">{renderedChildren}</div>
+        ) : (
+          <span className="settings-feedback-text" ref={textRef}>
+            {renderedMessage}
+          </span>
+        )}
+        {dismissible ? (
+          <button
+            aria-label="关闭提示"
+            className="settings-feedback-close"
+            onClick={onClose}
+            type="button"
+          >
+            ×
+          </button>
+        ) : null}
+      </div>
       {inline && inlineSide ? (
         <span
           aria-hidden="true"
