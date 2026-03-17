@@ -407,19 +407,22 @@ jobs:
           done
 
       - name: Create or update GitHub Release and upload assets
-        uses: ncipollo/release-action@v1
-        with:
-          token: ${{ steps.release-auth.outputs.token }}
-          tag: ${{ needs.release-meta.outputs.release_tag }}
-          commit: ${{ needs.release-meta.outputs.target_sha }}
-          name: ${{ needs.release-meta.outputs.release_tag }}
-          generateReleaseNotes: true
-          allowUpdates: true
-          omitBodyDuringUpdate: true
-          prerelease: ${{ needs.release-meta.outputs.release_prerelease }}
-          artifacts: dist/release-assets/*
-          artifactErrorsFailBuild: true
-          replacesArtifacts: true
+        shell: bash
+        env:
+          RELEASE_PUBLISH_TOKEN: ${{ steps.release-auth.outputs.token }}
+          RELEASE_TAG: ${{ needs.release-meta.outputs.release_tag }}
+          TARGET_SHA: ${{ needs.release-meta.outputs.target_sha }}
+          RELEASE_PRERELEASE: ${{ needs.release-meta.outputs.release_prerelease }}
+        run: |
+          set -euo pipefail
+          python3 "${RELEASE_TOOLING_ROOT}/.github/scripts/publish_github_release.py" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --token "${RELEASE_PUBLISH_TOKEN}" \
+            --tag "${RELEASE_TAG}" \
+            --target-sha "${TARGET_SHA}" \
+            --name "${RELEASE_TAG}" \
+            --prerelease "${RELEASE_PRERELEASE}" \
+            --artifacts-dir dist/release-assets
 
       - name: Verify release tag points to target commit
         shell: bash

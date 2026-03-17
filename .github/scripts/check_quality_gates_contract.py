@@ -110,8 +110,9 @@ def validate_release(path: Path) -> None:
     require_text(text, "Resolve GitHub release auth token", "release.yml")
     require_text(text, "RELEASE_WORKFLOW_TOKEN", "release.yml")
     require_text(text, "Require workflow-capable token for workflow commits", "release.yml")
-    require_text(text, "commit: ${{ needs.release-meta.outputs.target_sha }}", "release.yml")
-    require_text(text, "token: ${{ steps.release-auth.outputs.token }}", "release.yml")
+    require_text(text, "publish_github_release.py", "release.yml")
+    require_text(text, "--target-sha \"${TARGET_SHA}\"", "release.yml")
+    require_text(text, "--artifacts-dir dist/release-assets", "release.yml")
     require_text(text, "Verify release tag points to target commit", "release.yml")
     require_text(text, "issues: write", "release.yml")
     require_text(text, "pull-requests: write", "release.yml")
@@ -120,6 +121,7 @@ def validate_release(path: Path) -> None:
     forbid_text(text, "bump_level", "release.yml")
     forbid_text(text, "release-intent.sh", "release.yml")
     forbid_text(text, "git push origin \"${tag}\"", "release.yml")
+    forbid_text(text, "ncipollo/release-action@v1", "release.yml")
 
 
 def validate_label_gate(path: Path) -> None:
