@@ -110,6 +110,8 @@ def validate_release(path: Path) -> None:
     require_text(text, "Resolve GitHub release auth token", "release.yml")
     require_text(text, "RELEASE_WORKFLOW_TOKEN", "release.yml")
     require_text(text, "Require workflow-capable token for workflow commits", "release.yml")
+    require_text(text, "Probe workflow-commit tag permission", "release.yml")
+    require_text(text, "Configured RELEASE_WORKFLOW_TOKEN still cannot tag workflow-changing commit", "release.yml")
     require_text(text, "persist-credentials: false", "release.yml")
     require_text(text, "publish_github_release.py", "release.yml")
     require_text(text, "Ensure release tag exists on target commit", "release.yml")

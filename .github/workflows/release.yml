@@ -266,6 +266,35 @@ jobs:
           echo "Configure secret RELEASE_WORKFLOW_TOKEN with workflow-capable GitHub credentials before backfilling this release." >&2
           exit 1
 
+      - name: Probe workflow-commit tag permission
+        shell: bash
+        env:
+          TARGET_SHA: ${{ needs.release-meta.outputs.target_sha }}
+          RELEASE_PUBLISH_TOKEN: ${{ steps.release-auth.outputs.token }}
+        run: |
+          set -euo pipefail
+          if ! git diff-tree --no-commit-id --name-only -r "${TARGET_SHA}" | grep -Eq '^\.github/workflows/'; then
+            exit 0
+          fi
+
+          probe_tag="__release_probe_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
+          auth_header="$(printf 'x-access-token:%s' "${RELEASE_PUBLISH_TOKEN}" | base64 | tr -d '\n')"
+
+          cleanup() {
+            git tag -d "${probe_tag}" >/dev/null 2>&1 || true
+            git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${auth_header}" \
+              push origin ":refs/tags/${probe_tag}" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          git tag "${probe_tag}" "${TARGET_SHA}"
+          if ! git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${auth_header}" \
+            push origin "refs/tags/${probe_tag}:refs/tags/${probe_tag}"; then
+            echo "Configured RELEASE_WORKFLOW_TOKEN still cannot tag workflow-changing commit ${TARGET_SHA}." >&2
+            echo "Provide a token with workflows permission or create tag ${probe_tag} manually to verify access." >&2
+            exit 1
+          fi
+
       - name: Build web (optional, for embedded UI)
         if: hashFiles('web/package.json') != ''
         uses: oven-sh/setup-bun@v2
