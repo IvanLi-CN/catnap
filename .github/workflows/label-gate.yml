@@ -35,12 +35,16 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const allowedIntentLabels = new Set([
+            const allowedTypeLabels = new Set([
               'type:docs',
               'type:skip',
               'type:patch',
               'type:minor',
               'type:major',
+            ]);
+            const allowedChannelLabels = new Set([
+              'channel:stable',
+              'channel:rc',
             ]);
 
             const normalizeRef = (ref) => String(ref || '').replace(/^refs\/heads\//, '');
@@ -129,14 +133,23 @@ jobs:
 
             const evaluateLabels = (labels) => {
               const typeLabels = [...new Set(labels.filter((label) => label.startsWith('type:')))].sort();
-              const unknownTypeLabels = typeLabels.filter((label) => !allowedIntentLabels.has(label));
-              const selectedTypeLabels = typeLabels.filter((label) => allowedIntentLabels.has(label));
+              const channelLabels = [...new Set(labels.filter((label) => label.startsWith('channel:')))].sort();
+              const unknownTypeLabels = typeLabels.filter((label) => !allowedTypeLabels.has(label));
+              const unknownChannelLabels = channelLabels.filter((label) => !allowedChannelLabels.has(label));
+              const selectedTypeLabels = typeLabels.filter((label) => allowedTypeLabels.has(label));
+              const selectedChannelLabels = channelLabels.filter((label) => allowedChannelLabels.has(label));
               const problems = [];
               if (unknownTypeLabels.length > 0) {
                 problems.push(`Unknown type label(s): ${unknownTypeLabels.join(', ')}`);
               }
+              if (unknownChannelLabels.length > 0) {
+                problems.push(`Unknown channel label(s): ${unknownChannelLabels.join(', ')}`);
+              }
               if (selectedTypeLabels.length !== 1) {
                 problems.push(`PR must have exactly one type:* label; found ${selectedTypeLabels.length}`);
+              }
+              if (selectedChannelLabels.length !== 1) {
+                problems.push(`PR must have exactly one channel:* label; found ${selectedChannelLabels.length}`);
               }
               if (problems.length > 0) {
                 return {
@@ -146,7 +159,7 @@ jobs:
               }
               return {
                 passed: true,
-                description: `Labels OK: ${selectedTypeLabels[0]}`,
+                description: `Labels OK: ${selectedTypeLabels[0]} + ${selectedChannelLabels[0]}`,
               };
             };
 

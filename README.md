@@ -221,33 +221,48 @@ docker compose up -d --build
 
 ### Versioning（版本号）
 
-- Tag：`v<semver>`（例如 `v0.1.0`）
-- CI 会计算并注入 `APP_EFFECTIVE_VERSION=<semver>`（Docker env + `/api/health.version`）
+- stable tag：`v<semver>`（例如 `v0.10.0`）
+- rc tag：`v<semver>-rc.<sha7>`（例如 `v0.11.0-rc.1a2b3c4`）
+- `APP_EFFECTIVE_VERSION` 由 immutable release snapshot 冻结，并注入 Docker env + `/api/health.version`
 - `/api/health`：
   - `status=ok`
-  - `version=<semver>`
+  - `version=<APP_EFFECTIVE_VERSION>`
 
-### Release intent（发版意图标签）
+### Release labels（发版标签）
 
-合并到 `main` 的 PR 必须且只能选择一个标签（CI 会强制）：
+合并到 `main` 的 PR 必须同时且只能拥有以下两类标签（`PR Label Gate` 会强制）：
 
-- `type:docs` / `type:skip`：不允许自动发版
-- `type:patch` / `type:minor` / `type:major`：允许自动发版，并按标签 bump 版本号
+- 一个 `type:*`：`type:docs` / `type:skip` / `type:patch` / `type:minor` / `type:major`
+- 一个 `channel:*`：`channel:stable` / `channel:rc`
 
-> `release-intent` 优先通过 GitHub `commits/{sha}/pulls` 解析 PR；若 API 返回空集合，仍可对 subject 尾缀严格匹配 ` (#<pr>)` 的 squash merge 启用保守 fallback。若两条路径都无法可靠判定 PR，则继续跳过自动发版（仍会跑 lint/tests）。
+语义：
+
+- `type:docs` / `type:skip`：会生成 snapshot，但不会正式发版
+- `type:patch` / `type:minor` / `type:major` + `channel:stable`：发布 stable 版本
+- `type:patch` / `type:minor` / `type:major` + `channel:rc`：发布 rc 版本，tag 带 `-rc.<sha7>` 后缀
+
+### Release workflows（发布工作流）
+
+发布链路已经拆分为三段：
+
+- `CI PR`：PR / merge queue 校验，只负责 required checks
+- `CI Main`：`push main` 后固化 immutable release snapshot，不直接发布
+- `Release`：只消费 snapshot 发版，并自动 drain pending backlog
+
+snapshot 使用 git notes `refs/notes/release-snapshots` 保存 `target_sha`、PR 编号、标签、版本号、release tag 与镜像 tags。发布阶段不会再重新猜测 bump level 或关联 PR。
 
 ### GHCR images（镜像）
 
 - 镜像：`ghcr.io/<owner>/catnap`
 - Tags（最低集合）：
-  - `v<semver>`
-  - `latest`（跟随仓库“最高 stable semver tag”的发布结果）
+  - `v<semver>` 或 `v<semver>-rc.<sha7>`
+  - `latest`：仅在当前 stable snapshot 没有被更新的 stable snapshot 超车时发布
 - 发布链路会复用已产出的 linux gnu release binaries 来封装 GHCR 镜像，避免在多架构 Docker build 中重复编译 Rust。
 
 示例：
 
 ```bash
-docker pull ghcr.io/<owner>/catnap:v0.1.0
+docker pull ghcr.io/<owner>/catnap:v0.10.0
 docker pull ghcr.io/<owner>/catnap:latest
 ```
 
@@ -267,14 +282,29 @@ docker pull ghcr.io/<owner>/catnap:latest
 sha256sum -c catnap_<semver>_linux_amd64_gnu.tar.gz.sha256
 ```
 
-### Manual publish（workflow_dispatch）
+### Manual backfill（workflow_dispatch）
 
-在 GitHub Actions 手动触发 `workflow_dispatch`：
+在 GitHub Actions 手动触发 `Release` workflow 的 `workflow_dispatch`：
 
-- ref=`main`：完整发布链路（tag/release/assets/GHCR）；必须提供 `bump_level=major|minor|patch`，也作为自动发版漏触发时的补发入口
-- ref=`refs/tags/v<semver>`：重跑/补齐该版本（assets/GHCR）
-- `latest` 更新规则：仅当“当前发布 tag == 仓库最高 stable semver tag”时更新（适用于 main 发布与 backfill）
-- backfill 多 tag 建议按时间顺序执行（例如 `v0.2.0 -> v0.2.1 -> v0.2.2`），最终 `latest` 应指向最高 stable tag
+- 只接受 `commit_sha=<main 上的 commit SHA>`
+- 用途：补发漏掉的版本，或重跑已冻结 snapshot 对应的发布链路
+- 手动补发会先校验该 commit 曾经通过 `CI Main`，或在迁移期通过过旧 `CI Pipeline` 的 `push main` 校验
+- 历史上没有 `channel:*` 的已合并未发布 PR，仅在这条手动 backfill 路径上允许一次性默认映射为 `channel:stable`
+
+旧入口已经退役：
+
+- 不再使用 `workflow_dispatch ref=main + bump_level=*`
+- 不再使用 tag 输入型 `release-backfill.yml`
+
+### PR release comment（PR 版本评论）
+
+发布成功后，`Release` 会自动在对应 PR 的 timeline upsert 一条版本评论，内容包含：
+
+- release tag
+- `APP_EFFECTIVE_VERSION`
+- channel
+- target commit
+- GitHub Release 链接
 
 ### Smoke test（本地/CI）
 

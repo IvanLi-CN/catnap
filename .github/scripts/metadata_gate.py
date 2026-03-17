@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 API_VERSION = "2022-11-28"
-ALLOWED_INTENT_LABELS = frozenset(
+ALLOWED_TYPE_LABELS = frozenset(
     {
         "type:docs",
         "type:skip",
@@ -23,6 +23,7 @@ ALLOWED_INTENT_LABELS = frozenset(
         "type:major",
     }
 )
+ALLOWED_CHANNEL_LABELS = frozenset({"channel:stable", "channel:rc"})
 REVIEW_REQUIRED_APPROVALS = 1
 REVIEW_EXEMPT_PERMISSIONS = frozenset({"admin", "maintain"})
 REVIEW_ALLOWED_PERMISSIONS = frozenset({"write", "maintain", "admin"})
@@ -255,16 +256,23 @@ def describe_labels(labels: list[str]) -> str:
 
 def evaluate_labels_from_names(labels: list[str]) -> tuple[bool, str]:
     type_labels = sorted({label for label in labels if label.startswith("type:")})
-    unknown_type_labels = [label for label in type_labels if label not in ALLOWED_INTENT_LABELS]
-    selected_type_labels = [label for label in type_labels if label in ALLOWED_INTENT_LABELS]
+    channel_labels = sorted({label for label in labels if label.startswith("channel:")})
+    unknown_type_labels = [label for label in type_labels if label not in ALLOWED_TYPE_LABELS]
+    unknown_channel_labels = [label for label in channel_labels if label not in ALLOWED_CHANNEL_LABELS]
+    selected_type_labels = [label for label in type_labels if label in ALLOWED_TYPE_LABELS]
+    selected_channel_labels = [label for label in channel_labels if label in ALLOWED_CHANNEL_LABELS]
     problems: list[str] = []
     if unknown_type_labels:
         problems.append(f"Unknown type label(s): {', '.join(unknown_type_labels)}")
+    if unknown_channel_labels:
+        problems.append(f"Unknown channel label(s): {', '.join(unknown_channel_labels)}")
     if len(selected_type_labels) != 1:
         problems.append(f"PR must have exactly one type:* label; found {len(selected_type_labels)}")
+    if len(selected_channel_labels) != 1:
+        problems.append(f"PR must have exactly one channel:* label; found {len(selected_channel_labels)}")
     if problems:
         return False, f"{'; '.join(problems)} | labels={describe_labels(labels)}"
-    return True, f"Labels OK: {selected_type_labels[0]}"
+    return True, f"Labels OK: {selected_type_labels[0]} + {selected_channel_labels[0]}"
 
 
 def fetch_issue_labels(client: GitHubClient, pull_number: int) -> list[str]:
