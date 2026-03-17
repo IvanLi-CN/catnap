@@ -103,6 +103,23 @@ with tempfile.TemporaryDirectory(prefix="release-snapshot-") as tmp:
         assert snapshot2["next_stable_version"] == "0.2.0"
         run("notes", f"--ref={module.DEFAULT_NOTES_REF}", "add", "-f", "-m", json.dumps(snapshot2), sha2, cwd=repo)
 
+        run("tag", "v0.2.0-manual", sha2, cwd=repo)
+        run("tag", "v0.2.0", sha2, cwd=repo)
+        tagged_backfill = module.build_snapshot(
+            target_sha=sha2,
+            repository="IvanLi-CN/catnap",
+            token="token",
+            notes_ref=module.DEFAULT_NOTES_REF,
+            registry="ghcr.io",
+            api_root="https://api.github.com",
+            snapshot_source="manual-backfill",
+            ignore_target_tags=True,
+            pr=make_pr(202, "Tagged backfill", sha2, ["type:minor", "channel:stable"]),
+        )
+        assert tagged_backfill["base_stable_version"] == "0.1.1"
+        assert tagged_backfill["next_stable_version"] == "0.2.0"
+        run("tag", "-d", "v0.2.0-manual", "v0.2.0", cwd=repo)
+
         snapshot3 = module.build_snapshot(
             target_sha=sha3,
             repository="IvanLi-CN/catnap",

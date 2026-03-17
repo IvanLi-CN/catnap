@@ -294,11 +294,18 @@ def cargo_base_version(target_sha: str) -> StableVersion:
     return StableVersion.parse(match.group(1))
 
 
-def stable_versions_from_tags(target_sha: str) -> list[StableVersion]:
+def stable_versions_from_tags(target_sha: str, *, exclude_commits: set[str] | None = None) -> list[StableVersion]:
     tags = git_output("tag", "--merged", target_sha, "-l", "v*").splitlines()
     versions: list[StableVersion] = []
+    excluded = exclude_commits or set()
     for tag in tags:
-        version = StableVersion.from_tag(tag.strip())
+        tag_name = tag.strip()
+        if not tag_name:
+            continue
+        tagged_commit = git_output("rev-list", "-n", "1", tag_name)
+        if tagged_commit in excluded:
+            continue
+        version = StableVersion.from_tag(tag_name)
         if version is not None:
             versions.append(version)
     return versions
@@ -331,8 +338,13 @@ def stable_versions_from_snapshots(notes_ref: str, target_sha: str) -> list[Stab
     return versions
 
 
-def compute_base_stable_version(notes_ref: str, target_sha: str) -> StableVersion:
-    candidates = stable_versions_from_tags(target_sha)
+def compute_base_stable_version(
+    notes_ref: str,
+    target_sha: str,
+    *,
+    exclude_tagged_commits: set[str] | None = None,
+) -> StableVersion:
+    candidates = stable_versions_from_tags(target_sha, exclude_commits=exclude_tagged_commits)
     candidates.extend(stable_versions_from_snapshots(notes_ref, target_sha))
     if not candidates:
         return cargo_base_version(target_sha)
@@ -536,6 +548,7 @@ def build_snapshot(
     snapshot_source: str,
     legacy_default_channel: str = "",
     pr: dict[str, Any] | None = None,
+    ignore_target_tags: bool = False,
 ) -> dict[str, Any]:
     if pr is None:
         pr = load_pr_for_commit(api_root, repository, token, target_sha)
@@ -573,7 +586,8 @@ def build_snapshot(
     }
 
     if snapshot["release_enabled"]:
-        base = compute_base_stable_version(notes_ref, target_sha)
+        excluded_tagged_commits = {target_sha} if ignore_target_tags else None
+        base = compute_base_stable_version(notes_ref, target_sha, exclude_tagged_commits=excluded_tagged_commits)
         next_stable = base.bump(release_bump)
         effective = next_stable.render()
         prerelease = False
@@ -696,6 +710,7 @@ def ensure_snapshot(args: argparse.Namespace) -> int:
                     snapshot_source=snapshot_source,
                     legacy_default_channel=args.legacy_default_channel,
                     pr=pr,
+                    ignore_target_tags=args.target_only and commit == target_sha,
                 )
                 write_json(temp_note, snapshot)
                 git("notes", f"--ref={args.notes_ref}", "add", "-f", "-F", str(temp_note), commit)

@@ -145,6 +145,7 @@ jobs:
             --registry "${REGISTRY}" \
             --snapshot-source manual-backfill \
             --legacy-default-channel stable \
+            --target-only \
             --output "$RUNNER_TEMP/release-snapshot.json"
 
       - name: Select pending release target

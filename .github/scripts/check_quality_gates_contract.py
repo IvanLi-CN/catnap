@@ -104,6 +104,7 @@ def validate_release(path: Path) -> None:
     require_text(text, "release_snapshot.py next-pending", "release.yml")
     require_text(text, "release_snapshot.py export", "release.yml")
     require_text(text, "release_snapshot.py ensure", "release.yml")
+    require_text(text, "--target-only", "release.yml")
     require_text(text, "RELEASE_TOOLING_ROOT: ${{ github.workspace }}/.release-tooling", "release.yml")
     require_text(text, "CATNAP_DOCKER_BINARY_SOURCE_ROOT: ${{ github.workspace }}/target", "release.yml")
     require_text(text, "CATNAP_DOCKER_BINARY_OUTPUT_ROOT: ${{ github.workspace }}/dist/docker", "release.yml")
