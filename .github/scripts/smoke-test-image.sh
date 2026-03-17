@@ -26,12 +26,14 @@ if ! docker image inspect "${tag}" >/dev/null 2>&1; then
   exit 1
 fi
 
-entry_args=(--rm --pull=never --entrypoint /app/catnap)
+entry_args=(--rm --pull=never --entrypoint /bin/sh)
 if [[ -n "${platform}" ]]; then
   entry_args+=(--platform "${platform}")
 fi
 
-docker run "${entry_args[@]}" "${tag}" --help >/dev/null
+# The catnap binary does not implement CLI help flags, so use the runtime shell
+# to verify the packaged executable exists instead of launching the server here.
+docker run "${entry_args[@]}" "${tag}" -lc 'test -x /app/catnap'
 
 port_args=("-p" "${host}::18080")
 host_port=""
