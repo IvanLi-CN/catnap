@@ -9,7 +9,7 @@
   "pr_head_sha": "47393e15e74cc38d8c199986f15d7092dd19a76d",
   "pr_number": 69,
   "pr_title": "feat: support telegram multi-target delivery",
-  "published_at": "",
+  "published_at": "2026-03-17T20:41:41Z",
   "registry": "ghcr.io",
   "release_bump": "minor",
   "release_channel": "stable",
