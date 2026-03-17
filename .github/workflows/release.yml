@@ -197,6 +197,8 @@ jobs:
       issues: write
       packages: write
       pull-requests: write
+    env:
+      RELEASE_TOOLING_ROOT: ${{ github.workspace }}/.release-tooling
     timeout-minutes: 180
     steps:
       - name: Checkout code
@@ -205,6 +207,13 @@ jobs:
           ref: ${{ needs.release-meta.outputs.target_sha }}
           fetch-depth: 0
           fetch-tags: true
+
+      - name: Checkout release tooling
+        uses: actions/checkout@v6
+        with:
+          path: .release-tooling
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 1
 
       - name: Build web (optional, for embedded UI)
         if: hashFiles('web/package.json') != ''
@@ -295,13 +304,13 @@ jobs:
         env:
           APP_EFFECTIVE_VERSION: ${{ needs.release-meta.outputs.app_effective_version }}
         run: |
-          bash ./.github/scripts/smoke-test.sh ./target/x86_64-unknown-linux-gnu/release/catnap
+          bash "${RELEASE_TOOLING_ROOT}/.github/scripts/smoke-test.sh" ./target/x86_64-unknown-linux-gnu/release/catnap
 
       - name: Prepare Docker runtime binaries
         shell: bash
         run: |
           set -euo pipefail
-          bash ./.github/scripts/prepare-docker-binaries.sh
+          bash "${RELEASE_TOOLING_ROOT}/.github/scripts/prepare-docker-binaries.sh"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -345,7 +354,7 @@ jobs:
           for tag in "${tags[@]}"; do
             [[ -z "${tag}" ]] && continue
             raw_json="$(docker buildx imagetools inspect "${tag}" --raw)"
-            RAW_JSON="${raw_json}" python3 ./.github/scripts/verify_manifest_platforms.py "${tag}"
+            RAW_JSON="${raw_json}" python3 "${RELEASE_TOOLING_ROOT}/.github/scripts/verify_manifest_platforms.py" "${tag}"
           done
 
       - name: Create and push git tag
