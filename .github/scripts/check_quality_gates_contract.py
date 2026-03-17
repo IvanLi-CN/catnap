@@ -67,21 +67,48 @@ def validate_quality_gates(path: Path) -> None:
         "quality-gates.json: expected_pr_workflows must include Review Policy workflow/job",
     )
     require(
-        ("CI Pipeline", ("Path Gate", "Lint & Checks", "Backend Tests", "Release Chain Smoke (PR)")) in expected,
-        "quality-gates.json: expected_pr_workflows must include CI Pipeline required jobs without PR Label Gate",
+        ("CI PR", ("Path Gate", "Lint & Checks", "Backend Tests", "Release Chain Smoke (PR)")) in expected,
+        "quality-gates.json: expected_pr_workflows must include CI PR required jobs",
     )
 
 
-def validate_ci(path: Path) -> None:
+def validate_ci_pr(path: Path) -> None:
     text = path.read_text()
-    require_text(text, "merge_group:", "ci.yml")
-    require_text(text, "checks_requested", "ci.yml")
-    require_text(text, "github.event_name == 'merge_group'", "ci.yml")
-    forbid_text(text, "bootstrap-label-gate:", "ci.yml")
-    forbid_text(text, "github.event.inputs.pull_number", "ci.yml")
-    forbid_text(text, "metadata_gate.py label", "ci.yml")
-    forbid_text(text, "pull_request_target:", "ci.yml")
-    forbid_text(text, ".github/scripts/label-gate.sh", "ci.yml")
+    require_text(text, "name: CI PR", "ci-pr.yml")
+    require_text(text, "merge_group:", "ci-pr.yml")
+    require_text(text, "checks_requested", "ci-pr.yml")
+    require_text(text, "Release Chain Smoke (PR)", "ci-pr.yml")
+    require_text(text, "test-release-snapshot.sh", "ci-pr.yml")
+    forbid_text(text, "release-intent.sh", "ci-pr.yml")
+    forbid_text(text, "workflow_dispatch:", "ci-pr.yml")
+    forbid_text(text, "pull_request_target:", "ci-pr.yml")
+
+
+def validate_ci_main(path: Path) -> None:
+    text = path.read_text()
+    require_text(text, "name: CI Main", "ci-main.yml")
+    require_text(text, "push:", "ci-main.yml")
+    require_text(text, "branches: [main]", "ci-main.yml")
+    require_text(text, "Release Snapshot", "ci-main.yml")
+    require_text(text, "release_snapshot.py ensure", "ci-main.yml")
+    forbid_text(text, "workflow_dispatch:", "ci-main.yml")
+    forbid_text(text, "release-intent.sh", "ci-main.yml")
+
+
+def validate_release(path: Path) -> None:
+    text = path.read_text()
+    require_text(text, "name: Release", "release.yml")
+    require_text(text, "workflow_run:", "release.yml")
+    require_text(text, "CI Main", "release.yml")
+    require_text(text, "commit_sha", "release.yml")
+    require_text(text, "release_snapshot.py next-pending", "release.yml")
+    require_text(text, "release_snapshot.py export", "release.yml")
+    require_text(text, "release_snapshot.py ensure", "release.yml")
+    require_text(text, "issues: write", "release.yml")
+    require_text(text, "pull-requests: write", "release.yml")
+    require_text(text, "codex-release-version-comment", "release.yml")
+    forbid_text(text, "bump_level", "release.yml")
+    forbid_text(text, "release-intent.sh", "release.yml")
 
 
 def validate_label_gate(path: Path) -> None:
@@ -89,15 +116,12 @@ def validate_label_gate(path: Path) -> None:
     require(re.search(r"(?m)^\s*pull_request:\s*$", text) is not None, "label-gate.yml: must trigger on pull_request")
     require(re.search(r"(?m)^\s*merge_group:\s*$", text) is not None, "label-gate.yml: must trigger on merge_group")
     require(re.search(r"(?m)^\s*pull_request_target:\s*$", text) is None, "label-gate.yml: must not trigger on pull_request_target")
-    require_text(text, "edited", "label-gate.yml")
-    require_text(text, "contents: read", "label-gate.yml")
-    require_text(text, "actions/github-script@v8", "label-gate.yml")
+    require_text(text, "channel:stable", "label-gate.yml")
+    require_text(text, "channel:rc", "label-gate.yml")
+    require_text(text, "PR must have exactly one channel:* label", "label-gate.yml")
     require_text(text, "GET /repos/{owner}/{repo}/commits/{commit_sha}/pulls", "label-gate.yml")
-    require_text(text, "issues.get", "label-gate.yml")
     forbid_text(text, "actions/checkout", "label-gate.yml")
     forbid_text(text, "metadata_gate.py", "label-gate.yml")
-    forbid_text(text, ".github/scripts/label-gate.sh", "label-gate.yml")
-    forbid_text(text, "createCommitStatus", "label-gate.yml")
 
 
 def validate_review_policy(path: Path) -> None:
@@ -106,16 +130,11 @@ def validate_review_policy(path: Path) -> None:
     require(re.search(r"(?m)^\s*pull_request_review:\s*$", text) is not None, "review-policy.yml: must trigger on pull_request_review")
     require(re.search(r"(?m)^\s*merge_group:\s*$", text) is not None, "review-policy.yml: must trigger on merge_group")
     require(re.search(r"(?m)^\s*pull_request_target:\s*$", text) is None, "review-policy.yml: must not trigger on pull_request_target")
-    require_text(text, "edited", "review-policy.yml")
-    require_text(text, "contents: read", "review-policy.yml")
-    require_text(text, "actions/github-script@v8", "review-policy.yml")
     require_text(text, "GET /repos/{owner}/{repo}/commits/{commit_sha}/pulls", "review-policy.yml")
     require_text(text, "GET /repos/{owner}/{repo}/collaborators/{username}/permission", "review-policy.yml")
     require_text(text, "GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews", "review-policy.yml")
     forbid_text(text, "actions/checkout", "review-policy.yml")
     forbid_text(text, "metadata_gate.py", "review-policy.yml")
-    forbid_text(text, "createCommitStatus", "review-policy.yml")
-    forbid_text(text, "statuses: write", "review-policy.yml")
 
 
 def validate_merge_group_helpers(module: Any, fixtures_dir: Path) -> None:
@@ -169,15 +188,19 @@ def main() -> int:
     fixtures_dir = scripts_dir / "fixtures" / "quality-gates"
 
     try:
-        module = load_module(scripts_dir / "metadata_gate.py")
-        validate_quality_gates(repo_root / ".github" / "quality-gates.json")
-        validate_ci(repo_root / ".github" / "workflows" / "ci.yml")
-        validate_label_gate(repo_root / ".github" / "workflows" / "label-gate.yml")
-        validate_review_policy(repo_root / ".github" / "workflows" / "review-policy.yml")
-        validate_merge_group_helpers(module, fixtures_dir)
+      module = load_module(scripts_dir / "metadata_gate.py")
+      validate_quality_gates(repo_root / ".github" / "quality-gates.json")
+      validate_ci_pr(repo_root / ".github" / "workflows" / "ci-pr.yml")
+      validate_ci_main(repo_root / ".github" / "workflows" / "ci-main.yml")
+      validate_release(repo_root / ".github" / "workflows" / "release.yml")
+      validate_label_gate(repo_root / ".github" / "workflows" / "label-gate.yml")
+      validate_review_policy(repo_root / ".github" / "workflows" / "review-policy.yml")
+      validate_merge_group_helpers(module, fixtures_dir)
+      require(not (repo_root / ".github" / "workflows" / "ci.yml").exists(), "ci.yml must be retired")
+      require(not (repo_root / ".github" / "workflows" / "release-backfill.yml").exists(), "release-backfill.yml must be retired")
     except ContractError as exc:
-        print(f"[quality-gates-contract] {exc}", file=sys.stderr)
-        return 1
+      print(f"[quality-gates-contract] {exc}", file=sys.stderr)
+      return 1
 
     print("[quality-gates-contract] metadata workflow contract checks passed")
     return 0

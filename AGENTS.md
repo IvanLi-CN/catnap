@@ -48,4 +48,4 @@ Deploy:
 
 - Commits follow Conventional Commits (examples in history: `fix(ci): ...`, `docs(plan): ...`). Subjects must be English, lower-case, ≤72 chars; keep body lines ≤100 chars (enforced by `commitlint`).
 - Hooks: `lefthook.yml` runs `cargo fmt`, `cargo clippy`, `cargo test`, and web linting pre-commit.
-- PRs: include a clear description, link the relevant plan/issue if applicable, and attach screenshots for UI changes. For merges to `main`, select exactly one release intent label: `type:docs|type:skip|type:patch|type:minor|type:major` (CI enforces this).
+- PRs: include a clear description, link the relevant plan/issue if applicable, and attach screenshots for UI changes. For merges to `main`, select exactly one `type:*` label (`type:docs|type:skip|type:patch|type:minor|type:major`) and exactly one `channel:*` label (`channel:stable|channel:rc`) (CI enforces both).

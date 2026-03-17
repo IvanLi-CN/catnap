@@ -1,0 +1,448 @@
+name: CI PR
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review, edited]
+  merge_group:
+    types:
+      - checks_requested
+
+concurrency:
+  group: ci-pr-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io
+  PLATFORMS: linux/amd64,linux/arm64
+
+jobs:
+  path-gate:
+    name: Path Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      frontend_changed: ${{ steps.gate.outputs.frontend_changed }}
+      backend_changed: ${{ steps.gate.outputs.backend_changed }}
+      docker_changed: ${{ steps.gate.outputs.docker_changed }}
+      reason: ${{ steps.gate.outputs.reason }}
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Compute change signals
+        id: gate
+        shell: bash
+        run: |
+          bash ./.github/scripts/ci-path-gate.sh
+
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### CI gating"
+            echo "- reason: ${{ steps.gate.outputs.reason }}"
+            echo "- frontend_changed: ${{ steps.gate.outputs.frontend_changed }}"
+            echo "- backend_changed: ${{ steps.gate.outputs.backend_changed }}"
+            echo "- docker_changed: ${{ steps.gate.outputs.docker_changed }}"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+  lint:
+    name: Lint & Checks
+    runs-on: ubuntu-latest
+    needs: [path-gate]
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Bun (optional)
+        if: hashFiles('web/package.json') != ''
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1
+
+      - name: Cache Bun install cache (optional)
+        if: hashFiles('web/package.json') != ''
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('web/bun.lock*') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+
+      - name: Build web dist (optional, required for Rust embed)
+        if: hashFiles('web/package.json') != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd web
+          bun install --frozen-lockfile
+          VITE_APP_VERSION="0.0.0" bun run build
+
+      - name: Cache Playwright browsers (gated)
+        if: hashFiles('web/package.json') != '' && needs.path-gate.outputs.frontend_changed == 'true'
+        id: cache-playwright
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('web/bun.lock*') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
+
+      - name: Front-end heavy checks (gated)
+        if: hashFiles('web/package.json') != '' && needs.path-gate.outputs.frontend_changed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd web
+          bun run lint
+          bun run typecheck
+          bun run build-storybook
+          bunx playwright install-deps chromium
+          if [[ "${{ steps.cache-playwright.outputs.cache-hit }}" != "true" ]]; then
+            bunx playwright install chromium
+          fi
+          bun run test:storybook
+
+      - name: Check release and quality-gates scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            .github/scripts/metadata_gate.py \
+            .github/scripts/check_live_quality_gates.py \
+            .github/scripts/check_quality_gates_contract.py \
+            .github/scripts/release_snapshot.py \
+            .github/scripts/verify_manifest_platforms.py
+
+      - name: Release snapshot regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash ./.github/scripts/test-release-snapshot.sh
+
+      - name: Docker binary packaging regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash ./.github/scripts/test-prepare-docker-binaries.sh
+
+      - name: Quality gates contract tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash ./.github/scripts/test-quality-gates-contract.sh
+          bash ./.github/scripts/test-live-quality-gates.sh
+
+      - name: Quality gates live rules check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          QUALITY_GATES_LIVE_RULES_MODE: require
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 ./.github/scripts/check_live_quality_gates.py \
+            --repo "${GITHUB_REPOSITORY}" \
+            --declaration ./.github/quality-gates.json \
+            --branch main
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Install Rust components
+        run: rustup component add rustfmt clippy
+
+      - name: Cache cargo directories
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Cargo fmt check
+        run: cargo fmt --all -- --check
+
+      - name: Cargo clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Cargo check
+        run: cargo check --locked --all-targets --all-features
+
+  unit-tests:
+    name: Backend Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Bun (optional)
+        if: hashFiles('web/package.json') != ''
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1
+
+      - name: Cache Bun install cache (optional)
+        if: hashFiles('web/package.json') != ''
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('web/bun.lock*') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+
+      - name: Build web dist (optional, for embedded UI)
+        if: hashFiles('web/package.json') != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd web
+          bun install --frozen-lockfile
+          VITE_APP_VERSION="0.0.0" bun run build
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Cache cargo directories
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Run cargo test
+        run: cargo test --locked --all-features
+
+  pr-release-check:
+    name: Release Chain Smoke (PR)
+    if: |
+      needs.path-gate.outputs.frontend_changed == 'true' ||
+      needs.path-gate.outputs.backend_changed == 'true' ||
+      needs.path-gate.outputs.docker_changed == 'true'
+    runs-on: ubuntu-latest
+    needs: [path-gate, lint, unit-tests]
+    timeout-minutes: 45
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Mark job start
+        id: job-start
+        shell: bash
+        run: |
+          echo "ts=$(date +%s)" >> "${GITHUB_OUTPUT}"
+
+      - name: Set up Bun (optional)
+        if: hashFiles('web/package.json') != ''
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1
+
+      - name: Cache Bun install cache (optional)
+        id: cache-bun
+        if: hashFiles('web/package.json') != ''
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('web/bun.lock*') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+
+      - name: Build web dist (optional, for embedded UI)
+        if: hashFiles('web/package.json') != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd web
+          bun install --frozen-lockfile
+          VITE_APP_VERSION="0.0.0" bun run build
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Compute effective version
+        id: compute-version
+        shell: bash
+        env:
+          BUMP_LEVEL: patch
+        run: |
+          set -euo pipefail
+          start="$(date +%s)"
+          bash ./.github/scripts/compute-version.sh
+          echo "duration_sec=$(( $(date +%s) - start ))" >> "${GITHUB_OUTPUT}"
+
+      - name: Build backend (release)
+        id: build-backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          start="$(date +%s)"
+          cargo build --release --locked
+          echo "duration_sec=$(( $(date +%s) - start ))" >> "${GITHUB_OUTPUT}"
+
+      - name: Smoke test (binary)
+        id: smoke-binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          start="$(date +%s)"
+          bash ./.github/scripts/smoke-test.sh ./target/release/catnap
+          echo "duration_sec=$(( $(date +%s) - start ))" >> "${GITHUB_OUTPUT}"
+
+      - name: Prepare Docker runtime binaries
+        shell: bash
+        env:
+          CATNAP_DOCKER_BINARY_ARCHES: amd64
+          CATNAP_DOCKER_BINARY_AMD64_SOURCE: ${{ github.workspace }}/target/release/catnap
+        run: |
+          set -euo pipefail
+          bash ./.github/scripts/prepare-docker-binaries.sh
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Docker release packaging smoke (no push)
+        id: release-docker-smoke
+        uses: docker/build-push-action@v6
+        with:
+          context: ./dist/docker
+          file: ./dist/docker/Dockerfile.release
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: catnap:release-smoke-${{ github.sha }}
+          build-args: |
+            APP_EFFECTIVE_VERSION=${{ env.APP_EFFECTIVE_VERSION }}
+
+      - name: Smoke release image (linux/amd64)
+        shell: bash
+        env:
+          SMOKE_TAG: catnap:release-smoke-${{ github.sha }}
+          SMOKE_CONTAINER_NAME: smoke-catnap-pr-${{ github.sha }}
+          SMOKE_PLATFORM: linux/amd64
+        run: |
+          set -euo pipefail
+          bash ./.github/scripts/smoke-test-image.sh "${SMOKE_TAG}"
+
+      - name: Mark Docker build start
+        id: docker-build-start
+        shell: bash
+        run: |
+          echo "ts=$(date +%s)" >> "${GITHUB_OUTPUT}"
+
+      - name: Docker build (no push, GHA cache best-effort)
+        id: docker-build
+        uses: docker/build-push-action@v6
+        continue-on-error: true
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: catnap:pr-${{ github.sha }}
+          build-args: |
+            APP_EFFECTIVE_VERSION=${{ env.APP_EFFECTIVE_VERSION }}
+          labels: |
+            org.opencontainers.image.version=${{ env.APP_EFFECTIVE_VERSION }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Warn on Docker cache export failure (retrying without cache-to)
+        if: steps.docker-build.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "WARN: Docker build step failed with GHA cache enabled; retrying without cache-to. If the retry succeeds, this is treated as a cache export/transient issue; real build errors must still fail the job." >&2
+
+      - name: Docker build (no push, fallback without cache-to)
+        if: steps.docker-build.outcome == 'failure'
+        id: docker-build-fallback
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: catnap:pr-${{ github.sha }}
+          build-args: |
+            APP_EFFECTIVE_VERSION=${{ env.APP_EFFECTIVE_VERSION }}
+          labels: |
+            org.opencontainers.image.version=${{ env.APP_EFFECTIVE_VERSION }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          cache-from: type=gha
+
+      - name: Smoke test (docker compose)
+        id: smoke-compose
+        if: |
+          steps.docker-build.outcome == 'success' ||
+          steps.docker-build-fallback.conclusion == 'success'
+        shell: bash
+        env:
+          CATNAP_IMAGE: catnap:pr-${{ github.sha }}
+        run: |
+          set -euo pipefail
+          start="$(date +%s)"
+          bash ./.github/scripts/smoke-compose.sh
+          echo "duration_sec=$(( $(date +%s) - start ))" >> "${GITHUB_OUTPUT}"
+
+      - name: Summary (timings)
+        if: always()
+        shell: bash
+        run: |
+          fmt_sec() {
+            local v="$1"
+            if [[ -z "${v}" ]]; then
+              echo "n/a"
+            else
+              echo "${v}s"
+            fi
+          }
+
+          start_ts="${{ steps.job-start.outputs.ts }}"
+          if [[ -z "${start_ts}" ]]; then
+            total="n/a"
+          else
+            total="$(fmt_sec "$(( $(date +%s) - start_ts ))")"
+          fi
+
+          docker_fallback_status="${{ steps.docker-build-fallback.conclusion || 'skipped' }}"
+          {
+            echo "### PR release chain timings"
+            echo "- total: ${total}"
+            echo "- reason: ${{ needs.path-gate.outputs.reason }}"
+            echo "- effective_version: ${{ env.APP_EFFECTIVE_VERSION }}"
+            echo "- bun_cache_hit: ${{ steps.cache-bun.outputs.cache-hit || 'n/a' }}"
+            echo "- compute_version: $(fmt_sec '${{ steps.compute-version.outputs.duration_sec }}')"
+            echo "- cargo_build_release: $(fmt_sec '${{ steps.build-backend.outputs.duration_sec }}')"
+            echo "- smoke_test: $(fmt_sec '${{ steps.smoke-binary.outputs.duration_sec }}')"
+            echo "- smoke_compose: $(fmt_sec '${{ steps.smoke-compose.outputs.duration_sec }}')"
+            echo "- docker_build_primary(outcome=${{ steps.docker-build.outcome }}): n/a"
+            echo "- docker_build_fallback(conclusion=${docker_fallback_status}): n/a"
+          } >> "${GITHUB_STEP_SUMMARY}"

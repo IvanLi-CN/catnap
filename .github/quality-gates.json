@@ -42,7 +42,7 @@
   "waivers": [],
   "expected_pr_workflows": [
     {
-      "workflow": "CI Pipeline",
+      "workflow": "CI PR",
       "jobs": [
         "Path Gate",
         "Lint & Checks",
