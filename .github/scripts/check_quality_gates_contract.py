@@ -107,11 +107,14 @@ def validate_release(path: Path) -> None:
     require_text(text, "RELEASE_TOOLING_ROOT: ${{ github.workspace }}/.release-tooling", "release.yml")
     require_text(text, "CATNAP_DOCKER_BINARY_SOURCE_ROOT: ${{ github.workspace }}/target", "release.yml")
     require_text(text, "CATNAP_DOCKER_BINARY_OUTPUT_ROOT: ${{ github.workspace }}/dist/docker", "release.yml")
+    require_text(text, "commit: ${{ needs.release-meta.outputs.target_sha }}", "release.yml")
+    require_text(text, "Verify release tag points to target commit", "release.yml")
     require_text(text, "issues: write", "release.yml")
     require_text(text, "pull-requests: write", "release.yml")
     require_text(text, "codex-release-version-comment", "release.yml")
     forbid_text(text, "bump_level", "release.yml")
     forbid_text(text, "release-intent.sh", "release.yml")
+    forbid_text(text, "git push origin \"${tag}\"", "release.yml")
 
 
 def validate_label_gate(path: Path) -> None:

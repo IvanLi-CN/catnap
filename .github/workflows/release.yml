@@ -359,36 +359,11 @@ jobs:
             RAW_JSON="${raw_json}" python3 "${RELEASE_TOOLING_ROOT}/.github/scripts/verify_manifest_platforms.py" "${tag}"
           done
 
-      - name: Create and push git tag
-        shell: bash
-        env:
-          RELEASE_TAG: ${{ needs.release-meta.outputs.release_tag }}
-          APP_EFFECTIVE_VERSION: ${{ needs.release-meta.outputs.app_effective_version }}
-          TARGET_SHA: ${{ needs.release-meta.outputs.target_sha }}
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          tag="${RELEASE_TAG}"
-          sha="${TARGET_SHA}"
-
-          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
-            existing="$(git rev-list -n 1 "${tag}")"
-            if [[ "${existing}" != "${sha}" ]]; then
-              echo "Tag ${tag} already exists but points to ${existing} (expected ${sha})" >&2
-              exit 1
-            fi
-          else
-            git tag -a "${tag}" "${sha}" -m "release ${APP_EFFECTIVE_VERSION}"
-          fi
-
-          git push origin "${tag}"
-
       - name: Create or update GitHub Release and upload assets
         uses: ncipollo/release-action@v1
         with:
           tag: ${{ needs.release-meta.outputs.release_tag }}
+          commit: ${{ needs.release-meta.outputs.target_sha }}
           name: ${{ needs.release-meta.outputs.release_tag }}
           generateReleaseNotes: true
           allowUpdates: true
@@ -397,6 +372,20 @@ jobs:
           artifacts: dist/release-assets/*
           artifactErrorsFailBuild: true
           replacesArtifacts: true
+
+      - name: Verify release tag points to target commit
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.release-meta.outputs.release_tag }}
+          TARGET_SHA: ${{ needs.release-meta.outputs.target_sha }}
+        run: |
+          set -euo pipefail
+          git fetch --tags origin
+          actual="$(git rev-list -n 1 "${RELEASE_TAG}")"
+          if [[ "${actual}" != "${TARGET_SHA}" ]]; then
+            echo "Release tag ${RELEASE_TAG} points to ${actual} (expected ${TARGET_SHA})" >&2
+            exit 1
+          fi
 
       - name: Upsert PR release version comment
         uses: actions/github-script@v7
