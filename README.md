@@ -251,6 +251,8 @@ docker compose up -d --build
 
 snapshot 使用 git notes `refs/notes/release-snapshots` 保存 `target_sha`、PR 编号、标签、版本号、release tag 与镜像 tags。发布阶段不会再重新猜测 bump level 或关联 PR。
 
+如果需要对“曾修改 `.github/workflows/**` 的历史 commit”做补发，仓库还需要配置 `RELEASE_WORKFLOW_TOKEN` secret。原因是默认 `GITHUB_TOKEN` 无法为这类 commit 创建 tag / GitHub Release；该 override token 必须具备创建 release、写 PR 评论，以及处理 workflow commit 所需的权限。
+
 ### GHCR images（镜像）
 
 - 镜像：`ghcr.io/<owner>/catnap`
@@ -290,6 +292,7 @@ sha256sum -c catnap_<semver>_linux_amd64_gnu.tar.gz.sha256
 - 用途：补发漏掉的版本，或重跑已冻结 snapshot 对应的发布链路
 - 手动补发会先校验该 commit 曾经通过 `CI Main`，或在迁移期通过过旧 `CI Pipeline` 的 `push main` 校验
 - 历史上没有 `channel:*` 的已合并未发布 PR，仅在这条手动 backfill 路径上允许一次性默认映射为 `channel:stable`
+- 若目标 commit 修改过 `.github/workflows/**`，还必须先配置 `RELEASE_WORKFLOW_TOKEN`，否则 GitHub 会拒绝为该 commit 创建 release/tag
 
 旧入口已经退役：
 

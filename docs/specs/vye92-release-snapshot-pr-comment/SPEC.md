@@ -85,6 +85,7 @@
   - `latest` 仅允许由当前仍未被更新 stable snapshot 超车的 stable release 更新。
   - 自动 run 完成后若仍存在 pending snapshot，必须自动 dispatch 下一次 `Release` 直到队列清空。
   - 手动补发 `workflow_dispatch(commit_sha)` 必须拒绝未通过 `CI Main` 的 commit。
+  - 对曾修改 `.github/workflows/**` 的历史 commit，release 必须支持使用独立 override token 创建 tag / GitHub Release；默认 `GITHUB_TOKEN` 不足时要 fail fast 并明确指出需要 `RELEASE_WORKFLOW_TOKEN`。
 - PR 评论
   - 发布成功后以固定 marker upsert 对应 PR 评论，正文至少包含 `release_tag`、`app_effective_version`、`release_channel`、`target_sha` 与 release 链接。
   - job 权限显式声明 `issues: write` 与 `pull-requests: write`。
@@ -151,3 +152,4 @@
 
 - 2026-03-17: 新建规格，覆盖旧 `z7myy` 中“不迁移 release 架构”的限制，切换到全量对齐方案。
 - 2026-03-17: 已落地 split workflows、immutable release snapshot、queued release、`type:* + channel:*` 门禁与 PR 版本评论；待 fast-track PR 合并后补发 `v0.9.0` / `v0.10.0`。
+- 2026-03-17: 线上补发进一步暴露 GitHub 对 workflow commit 的 tag/release 权限限制；补充 `RELEASE_WORKFLOW_TOKEN` override 要求与 fail-fast 约束。
