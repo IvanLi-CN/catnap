@@ -590,7 +590,7 @@ jobs:
         run: |
           set -euo pipefail
           git fetch --no-tags origin "+${RELEASE_SNAPSHOT_NOTES_REF}:${RELEASE_SNAPSHOT_NOTES_REF}" || true
-          python3 .github/scripts/release_snapshot.py mark-published \
+          python3 "${RELEASE_TOOLING_ROOT}/.github/scripts/release_snapshot.py" mark-published \
             --target-sha "${TARGET_SHA}" \
             --notes-ref "${RELEASE_SNAPSHOT_NOTES_REF}"
 
@@ -603,7 +603,7 @@ jobs:
           git fetch --no-tags origin main
           git fetch --tags origin
           git fetch --no-tags origin "+${RELEASE_SNAPSHOT_NOTES_REF}:${RELEASE_SNAPSHOT_NOTES_REF}" || true
-          python3 .github/scripts/release_snapshot.py next-pending \
+          python3 "${RELEASE_TOOLING_ROOT}/.github/scripts/release_snapshot.py" next-pending \
             --notes-ref "${RELEASE_SNAPSHOT_NOTES_REF}" \
             --main-ref "origin/main" \
             --upper-bound "$(git rev-parse origin/main)" \
