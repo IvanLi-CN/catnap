@@ -112,6 +112,7 @@ def validate_release(path: Path) -> None:
     require_text(text, "Require workflow-capable token for workflow commits", "release.yml")
     require_text(text, "publish_github_release.py", "release.yml")
     require_text(text, "Ensure release tag exists on target commit", "release.yml")
+    require_text(text, "git config --local --unset-all http.https://github.com/.extraheader || true", "release.yml")
     require_text(text, "git tag \"${RELEASE_TAG}\" \"${TARGET_SHA}\"", "release.yml")
     require_text(text, "--artifacts-dir dist/release-assets", "release.yml")
     require_text(text, "Verify release tag points to target commit", "release.yml")

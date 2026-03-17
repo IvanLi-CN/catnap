@@ -426,6 +426,9 @@ jobs:
             exit 0
           fi
 
+          # actions/checkout leaves a GitHub auth header in local config; clear it so
+          # the workflow token can supply the only Authorization header for the tag push.
+          git config --local --unset-all http.https://github.com/.extraheader || true
           auth_header="$(printf 'x-access-token:%s' "${RELEASE_PUBLISH_TOKEN}" | base64 | tr -d '\n')"
           git tag "${RELEASE_TAG}" "${TARGET_SHA}"
           git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${auth_header}" \
