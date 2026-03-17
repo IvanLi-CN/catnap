@@ -9,7 +9,7 @@
   "pr_head_sha": "9164da151a3c67cfba507c9a52fde1f87bd528cd",
   "pr_number": 70,
   "pr_title": "feat(products): add manual region refresh",
-  "published_at": "",
+  "published_at": "2026-03-17T19:54:14Z",
   "registry": "ghcr.io",
   "release_bump": "minor",
   "release_channel": "stable",
