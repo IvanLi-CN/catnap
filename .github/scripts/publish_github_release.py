@@ -18,7 +18,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--repository", required=True, help="owner/repo")
     parser.add_argument("--token", required=True)
     parser.add_argument("--tag", required=True)
-    parser.add_argument("--target-sha", required=True)
+    parser.add_argument("--target-sha", default="")
     parser.add_argument("--name", required=True)
     parser.add_argument("--prerelease", choices=("true", "false"), required=True)
     parser.add_argument("--artifacts-dir", required=True)
@@ -99,36 +99,41 @@ def create_or_update_release(args: argparse.Namespace) -> dict[str, object]:
     base_url = f"{args.api_root.rstrip('/')}/repos/{owner}/{repo}/releases"
     existing = release_by_tag(args.api_root, args.repository, args.token, args.tag)
     prerelease = args.prerelease == "true"
+    create_payload: dict[str, object] = {
+        "tag_name": args.tag,
+        "name": args.name,
+        "prerelease": prerelease,
+        "generate_release_notes": True,
+        "make_latest": "legacy",
+    }
+    if args.target_sha:
+        create_payload["target_commitish"] = args.target_sha
+
     if existing is None:
         payload, _ = request_json(
             method="POST",
             url=base_url,
             token=args.token,
-            payload={
-                "tag_name": args.tag,
-                "target_commitish": args.target_sha,
-                "name": args.name,
-                "prerelease": prerelease,
-                "generate_release_notes": True,
-                "make_latest": "legacy",
-            },
+            payload=create_payload,
         )
         return payload
 
     release_id = existing.get("id")
     if not isinstance(release_id, int):
         raise ReleasePublishError("Existing release is missing numeric id")
+    update_payload: dict[str, object] = {
+        "tag_name": args.tag,
+        "name": args.name,
+        "prerelease": prerelease,
+        "make_latest": "legacy",
+    }
+    if args.target_sha:
+        update_payload["target_commitish"] = args.target_sha
     payload, _ = request_json(
         method="PATCH",
         url=f"{base_url}/{release_id}",
         token=args.token,
-        payload={
-            "tag_name": args.tag,
-            "target_commitish": args.target_sha,
-            "name": args.name,
-            "prerelease": prerelease,
-            "make_latest": "legacy",
-        },
+        payload=update_payload,
     )
     return payload
 

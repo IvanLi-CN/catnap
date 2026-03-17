@@ -406,12 +406,37 @@ jobs:
             RAW_JSON="${raw_json}" python3 "${RELEASE_TOOLING_ROOT}/.github/scripts/verify_manifest_platforms.py" "${tag}"
           done
 
-      - name: Create or update GitHub Release and upload assets
+      - name: Ensure release tag exists on target commit
         shell: bash
         env:
           RELEASE_PUBLISH_TOKEN: ${{ steps.release-auth.outputs.token }}
           RELEASE_TAG: ${{ needs.release-meta.outputs.release_tag }}
           TARGET_SHA: ${{ needs.release-meta.outputs.target_sha }}
+        run: |
+          set -euo pipefail
+          git fetch --tags origin
+
+          if git rev-parse -q --verify "refs/tags/${RELEASE_TAG}" >/dev/null; then
+            actual="$(git rev-list -n 1 "${RELEASE_TAG}")"
+            if [[ "${actual}" != "${TARGET_SHA}" ]]; then
+              echo "Release tag ${RELEASE_TAG} already points to ${actual} (expected ${TARGET_SHA})" >&2
+              exit 1
+            fi
+            echo "Release tag ${RELEASE_TAG} already exists on ${TARGET_SHA}."
+            exit 0
+          fi
+
+          auth_header="$(printf 'x-access-token:%s' "${RELEASE_PUBLISH_TOKEN}" | base64 | tr -d '\n')"
+          git tag "${RELEASE_TAG}" "${TARGET_SHA}"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${auth_header}" \
+            push origin "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+          git fetch --tags origin
+
+      - name: Create or update GitHub Release and upload assets
+        shell: bash
+        env:
+          RELEASE_PUBLISH_TOKEN: ${{ steps.release-auth.outputs.token }}
+          RELEASE_TAG: ${{ needs.release-meta.outputs.release_tag }}
           RELEASE_PRERELEASE: ${{ needs.release-meta.outputs.release_prerelease }}
         run: |
           set -euo pipefail
@@ -419,7 +444,6 @@ jobs:
             --repository "${GITHUB_REPOSITORY}" \
             --token "${RELEASE_PUBLISH_TOKEN}" \
             --tag "${RELEASE_TAG}" \
-            --target-sha "${TARGET_SHA}" \
             --name "${RELEASE_TAG}" \
             --prerelease "${RELEASE_PRERELEASE}" \
             --artifacts-dir dist/release-assets
