@@ -113,6 +113,13 @@ def parse_args() -> argparse.Namespace:
     next_pending.add_argument("--upper-bound", default="")
     next_pending.add_argument("--github-output", default=os.environ.get("GITHUB_OUTPUT", ""))
 
+    mark_published = subparsers.add_parser(
+        "mark-published",
+        help="Mark an immutable release snapshot as fully published after release assets and comments succeed.",
+    )
+    mark_published.add_argument("--target-sha", required=True)
+    mark_published.add_argument("--notes-ref", default=DEFAULT_NOTES_REF)
+
     return parser.parse_args()
 
 
@@ -335,6 +342,7 @@ def compute_base_stable_version(notes_ref: str, target_sha: str) -> StableVersio
 def validate_snapshot(payload: Any, *, expected_sha: str | None = None) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise SnapshotError("Release snapshot note must decode to an object")
+    payload = dict(payload)
     if payload.get("schema_version") != SNAPSHOT_SCHEMA_VERSION:
         raise SnapshotError(f"Unsupported release snapshot schema: {payload.get('schema_version')!r}")
 
@@ -357,6 +365,13 @@ def validate_snapshot(payload: Any, *, expected_sha: str | None = None) -> dict[
         value = payload.get(key)
         if not isinstance(value, str) or not value:
             raise SnapshotError(f"Release snapshot {key} must be a non-empty string")
+
+    published_at = payload.get("published_at", "")
+    if published_at is None:
+        published_at = ""
+    if not isinstance(published_at, str):
+        raise SnapshotError("Release snapshot published_at must be a string")
+    payload["published_at"] = published_at
 
     if payload["type_label"] not in ALLOWED_TYPE_LABELS:
         raise SnapshotError(f"Unknown type label in snapshot: {payload['type_label']}")
@@ -493,13 +508,18 @@ def release_tag_points_to_target(snapshot: dict[str, Any]) -> bool:
     return tagged_sha == target_sha
 
 
+def snapshot_is_published(snapshot: dict[str, Any]) -> bool:
+    published_at = snapshot.get("published_at")
+    return isinstance(published_at, str) and bool(published_at) and release_tag_points_to_target(snapshot)
+
+
 def pending_release_targets(notes_ref: str, upper_bound_sha: str) -> list[str]:
     pending: list[str] = []
     for commit in first_parent_commits(upper_bound_sha):
         snapshot = read_snapshot(notes_ref, commit)
         if not snapshot or not snapshot.get("release_enabled"):
             continue
-        if release_tag_points_to_target(snapshot):
+        if snapshot_is_published(snapshot):
             continue
         pending.append(commit)
     return pending
@@ -549,6 +569,7 @@ def build_snapshot(
         "notes_ref": notes_ref,
         "snapshot_source": snapshot_source,
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "published_at": "",
     }
 
     if snapshot["release_enabled"]:
@@ -665,7 +686,6 @@ def ensure_snapshot(args: argparse.Namespace) -> int:
                 if pr is None:
                     continue
 
-                legacy_default_channel = args.legacy_default_channel if commit == target_sha else ""
                 snapshot = build_snapshot(
                     target_sha=commit,
                     repository=args.github_repository,
@@ -674,7 +694,7 @@ def ensure_snapshot(args: argparse.Namespace) -> int:
                     registry=args.registry,
                     api_root=args.api_root,
                     snapshot_source=snapshot_source,
-                    legacy_default_channel=legacy_default_channel,
+                    legacy_default_channel=args.legacy_default_channel,
                     pr=pr,
                 )
                 write_json(temp_note, snapshot)
@@ -725,6 +745,56 @@ def export_next_pending(args: argparse.Namespace) -> int:
     return 0
 
 
+def push_snapshot_update(notes_ref: str, target_sha: str, snapshot: dict[str, Any], max_attempts: int = 6) -> None:
+    for attempt in range(1, max_attempts + 1):
+        fetch_notes_ref(notes_ref)
+        current = read_snapshot(notes_ref, target_sha)
+        if current is None:
+            raise SnapshotError(f"Missing immutable release snapshot for {target_sha}")
+
+        updated = dict(current)
+        updated.update(snapshot)
+        validate_snapshot(updated, expected_sha=target_sha)
+
+        with tempfile.TemporaryDirectory(prefix="release-snapshot-publish-") as tmp:
+            temp_note = Path(tmp) / "snapshot.json"
+            write_json(temp_note, updated)
+            git("notes", f"--ref={notes_ref}", "add", "-f", "-F", str(temp_note), target_sha)
+
+        push = git("push", "origin", notes_ref, check=False)
+        if push.returncode == 0:
+            return
+        if attempt == max_attempts:
+            detail = push.stderr.strip() or push.stdout.strip() or "git push origin notes ref failed"
+            raise SnapshotError(f"Failed to publish release snapshot update after {attempt} attempts: {detail}")
+        time.sleep(min(attempt, 3))
+
+
+def mark_snapshot_published(args: argparse.Namespace) -> int:
+    target_sha = normalize_sha(args.target_sha)
+    fetch_notes_ref(args.notes_ref)
+    snapshot = read_snapshot(args.notes_ref, target_sha)
+    if snapshot is None:
+        raise SnapshotError(f"Missing immutable release snapshot for {target_sha}")
+    if not snapshot.get("release_enabled"):
+        raise SnapshotError(f"Release snapshot for {target_sha} is not release-enabled")
+
+    release_tag = str(snapshot.get("release_tag") or "")
+    if not release_tag:
+        raise SnapshotError(f"Release snapshot for {target_sha} is missing release_tag")
+    if not release_tag_points_to_target(snapshot):
+        raise SnapshotError(f"Release tag {release_tag} does not point to {target_sha}")
+
+    push_snapshot_update(
+        args.notes_ref,
+        target_sha,
+        {
+            "published_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        },
+    )
+    return 0
+
+
 def main() -> int:
     args = parse_args()
     try:
@@ -734,6 +804,8 @@ def main() -> int:
             return export_existing_snapshot(args)
         if args.command == "next-pending":
             return export_next_pending(args)
+        if args.command == "mark-published":
+            return mark_snapshot_published(args)
         raise SnapshotError(f"Unsupported command: {args.command}")
     except SnapshotError as exc:
         print(f"release_snapshot.py: {exc}", file=sys.stderr)

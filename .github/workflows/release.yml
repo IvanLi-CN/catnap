@@ -145,7 +145,6 @@ jobs:
             --registry "${REGISTRY}" \
             --snapshot-source manual-backfill \
             --legacy-default-channel stable \
-            --target-only \
             --output "$RUNNER_TEMP/release-snapshot.json"
 
       - name: Select pending release target
@@ -472,6 +471,17 @@ jobs:
               core.error(`Failed to upsert PR release version comment: ${error.message} (status=${status}, accepted_permissions=${acceptedPermissions})`)
               throw error
             }
+
+      - name: Mark snapshot published
+        shell: bash
+        env:
+          TARGET_SHA: ${{ needs.release-meta.outputs.target_sha }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "+${RELEASE_SNAPSHOT_NOTES_REF}:${RELEASE_SNAPSHOT_NOTES_REF}" || true
+          python3 .github/scripts/release_snapshot.py mark-published \
+            --target-sha "${TARGET_SHA}" \
+            --notes-ref "${RELEASE_SNAPSHOT_NOTES_REF}"
 
       - name: Resolve next pending release target
         if: github.event_name != 'workflow_dispatch'
