@@ -217,6 +217,53 @@ jobs:
           ref: ${{ github.workflow_sha }}
           fetch-depth: 1
 
+      - name: Resolve GitHub release auth token
+        id: release-auth
+        shell: bash
+        env:
+          RELEASE_WORKFLOW_TOKEN: ${{ secrets.RELEASE_WORKFLOW_TOKEN }}
+          GITHUB_TOKEN_FALLBACK: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${RELEASE_WORKFLOW_TOKEN}" ]]; then
+            {
+              echo "token<<__CODEX__"
+              echo "${RELEASE_WORKFLOW_TOKEN}"
+              echo "__CODEX__"
+              echo "auth_mode=release_workflow_token"
+            } >> "${GITHUB_OUTPUT}"
+            echo "Using workflow-capable release token override."
+            exit 0
+          fi
+
+          {
+            echo "token<<__CODEX__"
+            echo "${GITHUB_TOKEN_FALLBACK}"
+            echo "__CODEX__"
+            echo "auth_mode=github_token"
+          } >> "${GITHUB_OUTPUT}"
+          echo "Using default GITHUB_TOKEN for release API calls."
+
+      - name: Require workflow-capable token for workflow commits
+        shell: bash
+        env:
+          TARGET_SHA: ${{ needs.release-meta.outputs.target_sha }}
+          RELEASE_AUTH_MODE: ${{ steps.release-auth.outputs.auth_mode }}
+        run: |
+          set -euo pipefail
+          if ! git diff-tree --no-commit-id --name-only -r "${TARGET_SHA}" | grep -Eq '^\\.github/workflows/'; then
+            exit 0
+          fi
+
+          if [[ "${RELEASE_AUTH_MODE}" == "release_workflow_token" ]]; then
+            echo "Workflow-changing target detected; release auth override is present."
+            exit 0
+          fi
+
+          echo "Target commit ${TARGET_SHA} changes .github/workflows/**." >&2
+          echo "Configure secret RELEASE_WORKFLOW_TOKEN with workflow-capable GitHub credentials before backfilling this release." >&2
+          exit 1
+
       - name: Build web (optional, for embedded UI)
         if: hashFiles('web/package.json') != ''
         uses: oven-sh/setup-bun@v2
@@ -362,6 +409,7 @@ jobs:
       - name: Create or update GitHub Release and upload assets
         uses: ncipollo/release-action@v1
         with:
+          token: ${{ steps.release-auth.outputs.token }}
           tag: ${{ needs.release-meta.outputs.release_tag }}
           commit: ${{ needs.release-meta.outputs.target_sha }}
           name: ${{ needs.release-meta.outputs.release_tag }}
@@ -396,6 +444,7 @@ jobs:
           RELEASE_PR_NUMBER: ${{ needs.release-meta.outputs.pr_number }}
           RELEASE_CHANNEL: ${{ needs.release-meta.outputs.release_channel }}
         with:
+          github-token: ${{ steps.release-auth.outputs.token }}
           script: |
             const { owner, repo } = context.repo
             const marker = '<!-- codex-release-version-comment -->'
