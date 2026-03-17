@@ -124,6 +124,16 @@ def validate_release(path: Path) -> None:
     require_text(text, "pull-requests: write", "release.yml")
     require_text(text, "github-token: ${{ steps.release-auth.outputs.token }}", "release.yml")
     require_text(text, "codex-release-version-comment", "release.yml")
+    require_text(
+        text,
+        'python3 "${RELEASE_TOOLING_ROOT}/.github/scripts/release_snapshot.py" mark-published',
+        "release.yml",
+    )
+    require_text(
+        text,
+        'python3 "${RELEASE_TOOLING_ROOT}/.github/scripts/release_snapshot.py" next-pending',
+        "release.yml",
+    )
     forbid_text(text, "bump_level", "release.yml")
     forbid_text(text, "release-intent.sh", "release.yml")
     forbid_text(text, "git push origin \"${tag}\"", "release.yml")
