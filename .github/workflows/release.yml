@@ -199,6 +199,8 @@ jobs:
       pull-requests: write
     env:
       RELEASE_TOOLING_ROOT: ${{ github.workspace }}/.release-tooling
+      CATNAP_DOCKER_BINARY_SOURCE_ROOT: ${{ github.workspace }}/target
+      CATNAP_DOCKER_BINARY_OUTPUT_ROOT: ${{ github.workspace }}/dist/docker
     timeout-minutes: 180
     steps:
       - name: Checkout code
