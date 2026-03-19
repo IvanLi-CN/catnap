@@ -2,14 +2,14 @@
   "status": 200,
   "data": {
     "host_data": {
-      "domain": "svcDemoEdge24",
+      "domain": "srvQ8L2M5R1P9K",
       "billingcycle": "monthly",
       "nextduedate": 1775910282,
-      "dedicatedip": "edge-demo.example.test",
+      "dedicatedip": "edge-node-24.example.net",
       "assignedips": [],
       "domainstatus": "Active",
       "os": "Alpine-3.20-amd64",
-      "productname": "Demo Edge Mini",
+      "productname": "港湾 Transit Mini",
       "domainstatus_desc": "已激活",
       "firstpaymentamount_desc": "¥9.34元",
       "amount_desc": "¥9.34元",

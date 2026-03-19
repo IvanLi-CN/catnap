@@ -1588,11 +1588,11 @@ mod tests {
         let raw = include_str!("../tests/fixtures/lazycat/host-detail-2312.json");
         let json: Value = serde_json::from_str(raw).unwrap();
         let parsed = parse_host_detail(2312, &json, "2026-03-19T14:00:00Z").unwrap();
-        assert_eq!(parsed.site.service_name, "Demo Edge Mini");
-        assert_eq!(parsed.site.service_code, "svcDemoEdge24");
+        assert_eq!(parsed.site.service_name, "港湾 Transit Mini");
+        assert_eq!(parsed.site.service_code, "srvQ8L2M5R1P9K");
         assert_eq!(
             parsed.site.primary_address.as_deref(),
-            Some("edge-demo.example.test")
+            Some("edge-node-24.example.net")
         );
         assert_eq!(parsed.site.billing_cycle.as_deref(), Some("monthly"));
         assert_eq!(parsed.site.renew_price.as_deref(), Some("¥9.34元/月付"));
@@ -1612,9 +1612,9 @@ mod tests {
         let panel = parse_container_panel_snapshot(html).unwrap();
         assert_eq!(
             panel.panel_url,
-            "https://edge-demo.example.test:8443/container/dashboard?hash=demo-hash-2312"
+            "https://edge-node-24.example.net:8443/container/dashboard?hash=8d1f0c27b4a9e3f2"
         );
-        assert_eq!(panel.panel_hash, "demo-hash-2312");
+        assert_eq!(panel.panel_hash, "8d1f0c27b4a9e3f2");
     }
 
     #[test]

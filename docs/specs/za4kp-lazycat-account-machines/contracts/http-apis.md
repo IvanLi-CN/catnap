@@ -130,11 +130,11 @@ Response body:
   "items": [
     {
       "serviceId": 2312,
-      "serviceName": "Demo Edge Mini",
-      "serviceCode": "svcDemoEdge24",
+      "serviceName": "港湾 Transit Mini",
+      "serviceCode": "srvQ8L2M5R1P9K",
       "status": "Active",
       "os": "Alpine-3.20-amd64",
-      "primaryAddress": "edge-demo.example.test",
+      "primaryAddress": "edge-node-24.example.net",
       "extraAddresses": [],
       "expiresAt": "2026-04-11T12:24:42Z",
       "billingCycle": "monthly",

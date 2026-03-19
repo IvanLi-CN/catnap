@@ -67,8 +67,8 @@ const disconnectedAccount: LazycatAccountView = {
 const healthyMachines: LazycatMachineView[] = [
   {
     serviceId: 2312,
-    serviceName: "模拟节点 Alpha",
-    serviceCode: "svc-demo-alpha",
+    serviceName: "港湾 Transit Basic",
+    serviceCode: "srvA7K2M4N8P1Q",
     status: "Active",
     os: "Debian 12",
     primaryAddress: "198.51.100.24",
@@ -93,7 +93,7 @@ const healthyMachines: LazycatMachineView[] = [
         privatePort: 8443,
         protocol: "tcp",
         status: "enabled",
-        description: "HTTPS 控制台",
+        description: "Web 面板",
       },
       {
         family: "v6",
@@ -103,7 +103,7 @@ const healthyMachines: LazycatMachineView[] = [
         privatePort: 8443,
         protocol: "tcp",
         status: "enabled",
-        description: "HTTPS 控制台 IPv6",
+        description: "Web 面板 IPv6",
       },
     ],
     lastSiteSyncAt: "2026-03-20T00:46:13Z",
@@ -113,11 +113,11 @@ const healthyMachines: LazycatMachineView[] = [
   },
   {
     serviceId: 2313,
-    serviceName: "模拟节点 Bravo",
-    serviceCode: "svc-demo-bravo",
+    serviceName: "都会 Fiber Mini",
+    serviceCode: "srvB6R9T2L5W3X",
     status: "Active",
     os: "Ubuntu 24.04",
-    primaryAddress: "node-bravo.example.test",
+    primaryAddress: "vm-bravo.edge.example.net",
     extraAddresses: [],
     expiresAt: "2026-04-11T12:24:42Z",
     billingCycle: "monthly",
@@ -133,7 +133,7 @@ const healthyMachines: LazycatMachineView[] = [
     portMappings: [
       {
         family: "v4",
-        publicIp: "node-bravo.example.test",
+        publicIp: "vm-bravo.edge.example.net",
         publicPort: 22,
         privateIp: "172.17.0.9",
         privatePort: 22,
@@ -149,8 +149,8 @@ const healthyMachines: LazycatMachineView[] = [
   },
   {
     serviceId: 2314,
-    serviceName: "模拟节点 Charlie",
-    serviceCode: "svc-demo-charlie",
+    serviceName: "Apex Compute Lite",
+    serviceCode: "srvC5H8J1D4Z6M",
     status: "Active",
     os: "Debian 12",
     primaryAddress: "203.0.113.88",
@@ -178,8 +178,8 @@ const degradedMachines: LazycatMachineView[] = [
   healthyMachines[0],
   {
     serviceId: 2315,
-    serviceName: "模拟节点 Delta",
-    serviceCode: "svc-demo-delta",
+    serviceName: "北湾 NAT 02",
+    serviceCode: "srvD4F7K0Q9V2N",
     status: "Active",
     os: "Debian 12",
     primaryAddress: "192.0.2.45",
@@ -198,7 +198,7 @@ const degradedMachines: LazycatMachineView[] = [
         privatePort: 8080,
         protocol: "tcp",
         status: "cached",
-        description: "缓存端口映射",
+        description: "最近成功缓存",
       },
     ],
     lastSiteSyncAt: "2026-03-20T00:46:13Z",
@@ -208,8 +208,8 @@ const degradedMachines: LazycatMachineView[] = [
   },
   {
     serviceId: 2316,
-    serviceName: "模拟节点 Echo",
-    serviceCode: "svc-demo-echo",
+    serviceName: "Sandbox Free IPv6",
+    serviceCode: "srvE3L6P9S1Y4R",
     status: "Active",
     os: "Alpine",
     primaryAddress: "[2001:db8:30::88]",
@@ -358,11 +358,11 @@ export const PartialFailure: Story = {
     await canvas.findByTestId("page-machines");
     expect(canvas.getByText("部分面板同步失败（2/3），已保留最近一次成功缓存")).toBeVisible();
 
-    const staleCard = findMachineCard(canvasElement as HTMLElement, "模拟节点 Delta");
+    const staleCard = findMachineCard(canvasElement as HTMLElement, "北湾 NAT 02");
     await userEvent.click(within(staleCard).getByRole("button", { name: "展开详情" }));
 
     await within(staleCard).findByText("端口映射");
-    expect(within(staleCard).getByText("缓存端口映射")).toBeVisible();
+    expect(within(staleCard).getByText("最近成功缓存")).toBeVisible();
     expect(
       within(staleCard).getByText("面板 TLS 校验失败，已保留最近一次成功缓存。"),
     ).toBeVisible();

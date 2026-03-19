@@ -542,8 +542,8 @@ async fn lazycat_machines_are_user_scoped_and_disconnect_cleans_current_user() {
         "u_1",
         2312,
         "first@example.com",
-        "Mock Edge Mini",
-        "edge-user-1.example.test",
+        "港湾 Transit Mini",
+        "edge-user-1.example.net",
     )
     .await;
     seed_lazycat_machine(
@@ -551,8 +551,8 @@ async fn lazycat_machines_are_user_scoped_and_disconnect_cleans_current_user() {
         "u_2",
         3875,
         "second@example.com",
-        "Mock NAT Lite",
-        "nat-user-2.example.test",
+        "北湾 NAT Lite",
+        "nat-user-2.example.net",
     )
     .await;
 

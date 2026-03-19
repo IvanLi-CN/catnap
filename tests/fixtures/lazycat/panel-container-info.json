@@ -3,7 +3,7 @@
   "msg": "success",
   "data": {
     "traffic": {
-      "ContainerName": "svcDemoEdge24",
+      "ContainerName": "srvQ8L2M5R1P9K",
       "TotalGB": 700.2235215594992,
       "LimitGB": 800,
       "ResetDay": 11,
