@@ -194,7 +194,7 @@
   target_program: mock-only
   capture_scope: element
   sensitive_exclusion: N/A
-  submission_gate: pending-owner-approval
+  submission_gate: approved
   story_id_or_title: Pages/MachinesView/Default
   state: default
   evidence_note: 验证机器资产页默认展示态，包含账号摘要卡、机器列表、支付周期、续费价格、流量与状态徽标的最终布局。
@@ -205,7 +205,7 @@
   target_program: mock-only
   capture_scope: element
   sensitive_exclusion: N/A
-  submission_gate: pending-owner-approval
+  submission_gate: approved
   story_id_or_title: Pages/MachinesView/Partial Failure
   state: partial failure expanded detail
   evidence_note: 验证面板失败降级态，证明 stale/error 汇总、展开详情、缓存端口映射与 TLS 失败提示会同时展示。
