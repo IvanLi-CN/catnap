@@ -256,6 +256,15 @@ export const demoBootstrap: BootstrapResponse = {
       webPush: { enabled: false, vapidPublicKey: "demo-vapid-public-key" },
     },
   },
+  lazycat: {
+    connected: true,
+    email: "demo@lazycat.example",
+    state: "ready",
+    machineCount: 2,
+    lastSiteSyncAt: new Date(demoNowMs - 1000 * 60 * 6).toISOString(),
+    lastPanelSyncAt: new Date(demoNowMs - 1000 * 60 * 2).toISOString(),
+    lastError: null,
+  },
 };
 
 export function countriesById() {

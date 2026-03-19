@@ -50,6 +50,14 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/monitoring/partitions", patch(patch_monitoring_partition))
         .route("/settings", get(get_settings).put(put_settings))
+        .route(
+            "/lazycat/account",
+            get(get_lazycat_account)
+                .post(post_lazycat_account_login)
+                .delete(delete_lazycat_account),
+        )
+        .route("/lazycat/sync", post(post_lazycat_sync))
+        .route("/lazycat/machines", get(get_lazycat_machines))
         .route("/logs", get(get_logs))
         .route("/notifications/records", get(get_notification_records))
         .route(
@@ -641,6 +649,9 @@ async fn get_bootstrap(
     };
 
     let settings_view = settings.to_view(state.config.web_push_vapid_public_key.clone());
+    let lazycat = crate::lazycat::get_account_view(&state, &user_id)
+        .await
+        .map_err(|_| json_internal_error())?;
 
     Ok(Json(BootstrapResponse {
         user: UserView {
@@ -659,6 +670,7 @@ async fn get_bootstrap(
         },
         monitoring,
         settings: settings_view,
+        lazycat,
     }))
 }
 
@@ -890,6 +902,72 @@ async fn put_settings(
     Ok(Json(
         settings.to_view(state.config.web_push_vapid_public_key.clone()),
     ))
+}
+
+async fn get_lazycat_account(
+    State(state): State<AppState>,
+    user: axum::extract::Extension<UserView>,
+) -> Result<Json<LazycatAccountView>, (StatusCode, Json<ErrorResponse>)> {
+    let _ = db::ensure_user(&state.db, &state.config, &user.0.id)
+        .await
+        .map_err(|_| json_invalid_argument())?;
+    crate::lazycat::get_account_view(&state, &user.0.id)
+        .await
+        .map(Json)
+        .map_err(|_| json_internal_error())
+}
+
+async fn post_lazycat_account_login(
+    State(state): State<AppState>,
+    user: axum::extract::Extension<UserView>,
+    Json(req): Json<LazycatLoginRequest>,
+) -> Result<Json<LazycatAccountView>, (StatusCode, Json<ErrorResponse>)> {
+    let _ = db::ensure_user(&state.db, &state.config, &user.0.id)
+        .await
+        .map_err(|_| json_invalid_argument())?;
+    crate::lazycat::login_account(&state, &user.0.id, &req.email, &req.password)
+        .await
+        .map(Json)
+        .map_err(|err| json_invalid_argument_with_message(err.to_string()))
+}
+
+async fn delete_lazycat_account(
+    State(state): State<AppState>,
+    user: axum::extract::Extension<UserView>,
+) -> Result<Json<OkResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let _ = db::ensure_user(&state.db, &state.config, &user.0.id)
+        .await
+        .map_err(|_| json_invalid_argument())?;
+    crate::lazycat::disconnect_account(&state, &user.0.id)
+        .await
+        .map_err(|_| json_internal_error())?;
+    Ok(Json(OkResponse { ok: true }))
+}
+
+async fn post_lazycat_sync(
+    State(state): State<AppState>,
+    user: axum::extract::Extension<UserView>,
+) -> Result<Json<LazycatAccountView>, (StatusCode, Json<ErrorResponse>)> {
+    let _ = db::ensure_user(&state.db, &state.config, &user.0.id)
+        .await
+        .map_err(|_| json_invalid_argument())?;
+    crate::lazycat::request_sync(&state, &user.0.id)
+        .await
+        .map(Json)
+        .map_err(|err| json_invalid_argument_with_message(err.to_string()))
+}
+
+async fn get_lazycat_machines(
+    State(state): State<AppState>,
+    user: axum::extract::Extension<UserView>,
+) -> Result<Json<LazycatMachinesResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let _ = db::ensure_user(&state.db, &state.config, &user.0.id)
+        .await
+        .map_err(|_| json_invalid_argument())?;
+    crate::lazycat::get_machines_response(&state, &user.0.id)
+        .await
+        .map(Json)
+        .map_err(|_| json_internal_error())
 }
 
 #[derive(Debug, Deserialize)]

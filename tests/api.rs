@@ -1,15 +1,17 @@
 use axum::{
     body::{to_bytes, Body},
-    http::{Request, StatusCode},
+    http::{Method, Request, StatusCode},
 };
 use catnap::{build_app, AppState, RuntimeConfig};
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::Row;
 use sqlx::SqlitePool;
+use std::collections::HashSet;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc, Mutex,
 };
+use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 use tower::ServiceExt;
 
@@ -24,6 +26,12 @@ fn test_config() -> RuntimeConfig {
         update_check_timeout_ms: 1500,
         github_api_base_url: "https://api.github.com".to_string(),
         upstream_cart_url: "https://lxc.lazycat.wiki/cart".to_string(),
+        lazycat_base_url: "https://lxc.lazycat.wiki".to_string(),
+        lazycat_site_sync_interval_minutes: 5,
+        lazycat_panel_sync_interval_minutes: 10,
+        lazycat_panel_concurrency: 2,
+        lazycat_panel_timeout_ms: 5_000,
+        lazycat_allow_invalid_tls: true,
         telegram_api_base_url: "https://api.telegram.org".to_string(),
         auth_user_header: Some("x-user".to_string()),
         dev_user_id: None,
@@ -49,6 +57,7 @@ fn test_config() -> RuntimeConfig {
 struct TestApp {
     app: axum::Router,
     db: SqlitePool,
+    state: AppState,
 }
 
 async fn make_app() -> TestApp {
@@ -136,11 +145,13 @@ async fn make_app_with_config(cfg: RuntimeConfig) -> TestApp {
         catalog_refresh: catnap::catalog_refresh::CatalogRefreshManager::new(),
         ops,
         update_cache: catnap::update_check::new_cache(),
+        lazycat_sync_users: Arc::new(tokio::sync::Mutex::new(HashSet::new())),
     };
 
     TestApp {
-        app: build_app(state),
+        app: build_app(state.clone()),
         db,
+        state,
     }
 }
 
@@ -228,6 +239,136 @@ async fn post_telegram_test(
     let bytes = to_bytes(res.into_body(), usize::MAX).await.unwrap();
     let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     (status, json)
+}
+
+async fn authed_json(
+    t: &TestApp,
+    user_id: &str,
+    method: Method,
+    uri: &str,
+    body: Option<serde_json::Value>,
+) -> (StatusCode, serde_json::Value) {
+    let mut builder = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("host", "example.com")
+        .header("x-user", user_id)
+        .header("origin", "http://example.com");
+    let request = if let Some(body) = body {
+        builder = builder.header("content-type", "application/json");
+        builder
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap()
+    } else {
+        builder.body(Body::empty()).unwrap()
+    };
+
+    let response = t.app.clone().oneshot(request).await.unwrap();
+    let status = response.status();
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let json = if bytes.is_empty() {
+        serde_json::json!({})
+    } else {
+        serde_json::from_slice(&bytes).unwrap()
+    };
+    (status, json)
+}
+
+async fn seed_lazycat_machine(
+    t: &TestApp,
+    user_id: &str,
+    service_id: i64,
+    email: &str,
+    service_name: &str,
+    primary_address: &str,
+) {
+    ensure_user_exists(t, user_id).await;
+    let now = OffsetDateTime::now_utc().format(&Rfc3339).unwrap();
+
+    let account = catnap::db::LazycatAccountRow {
+        user_id: user_id.to_string(),
+        email: email.to_string(),
+        password: "secret".to_string(),
+        cookies_json: Some(
+            serde_json::to_string(&vec![(
+                "PHPSESSID".to_string(),
+                format!("sess-{service_id}"),
+            )])
+            .unwrap(),
+        ),
+        state: "ready".to_string(),
+        last_error: None,
+        last_authenticated_at: Some(now.clone()),
+        last_site_sync_at: Some(now.clone()),
+        last_panel_sync_at: Some(now.clone()),
+        created_at: now.clone(),
+        updated_at: now.clone(),
+    };
+    catnap::db::put_lazycat_account(&t.db, &account)
+        .await
+        .unwrap();
+
+    let site = catnap::db::LazycatSiteMachineRecord {
+        service_id,
+        service_name: service_name.to_string(),
+        service_code: format!("svc-{service_id}"),
+        status: "Active".to_string(),
+        os: Some("Debian 12".to_string()),
+        primary_address: Some(primary_address.to_string()),
+        extra_addresses: vec![format!("10.0.{}.2", service_id % 200)],
+        billing_cycle: Some("monthly".to_string()),
+        renew_price: Some("¥9.34元/月付".to_string()),
+        first_price: Some("¥9.34元".to_string()),
+        expires_at: Some("2026-04-01T00:00:00Z".to_string()),
+        panel_kind: Some("container".to_string()),
+        panel_url: Some(format!(
+            "https://panel-{service_id}.example.test:8443/container/dashboard"
+        )),
+        panel_hash: Some(format!("hash-{service_id}")),
+        last_site_sync_at: now.clone(),
+    };
+    catnap::db::upsert_lazycat_site_machines(&t.db, user_id, &[site])
+        .await
+        .unwrap();
+
+    let detail = catnap::db::LazycatMachineDetailRecord {
+        service_id,
+        panel_kind: Some("container".to_string()),
+        panel_url: Some(format!(
+            "https://panel-{service_id}.example.test:8443/container/dashboard"
+        )),
+        panel_hash: Some(format!("hash-{service_id}")),
+        traffic_used_gb: Some(123.4),
+        traffic_limit_gb: Some(800.0),
+        traffic_reset_day: Some(11),
+        traffic_last_reset_at: Some("2026-03-11T00:00:00Z".to_string()),
+        traffic_display: Some("123.4 GB / 800 GB".to_string()),
+        detail_state: "ready".to_string(),
+        detail_error: None,
+        last_panel_sync_at: now.clone(),
+    };
+    catnap::db::update_lazycat_machine_detail(&t.db, user_id, &detail)
+        .await
+        .unwrap();
+
+    let mapping = catnap::db::LazycatPortMappingRecord {
+        family: "v4".to_string(),
+        mapping_key: format!("map-{service_id}"),
+        public_ip: Some(primary_address.to_string()),
+        public_port: Some(52000 + service_id),
+        public_port_end: None,
+        private_ip: Some("172.16.0.2".to_string()),
+        private_port: Some(22),
+        private_port_end: None,
+        protocol: Some("tcp".to_string()),
+        status: Some("enabled".to_string()),
+        description: Some("ssh".to_string()),
+        remote_created_at: Some(now.clone()),
+        remote_updated_at: Some(now.clone()),
+    };
+    catnap::db::replace_lazycat_port_mappings(&t.db, user_id, service_id, "v4", &[mapping], &now)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -337,6 +478,183 @@ async fn bootstrap_returns_catalog_and_settings() {
             .as_array()
             .map(Vec::len),
         Some(0)
+    );
+    assert_eq!(json["lazycat"]["connected"].as_bool(), Some(false));
+    assert_eq!(json["lazycat"]["machineCount"].as_i64(), Some(0));
+    assert_eq!(json["lazycat"]["state"].as_str(), Some("disconnected"));
+}
+
+#[tokio::test]
+async fn lazycat_login_rejects_empty_credentials() {
+    let t = make_app().await;
+    let (status, json) = authed_json(
+        &t,
+        "u_1",
+        Method::POST,
+        "/api/lazycat/account",
+        Some(serde_json::json!({
+            "email": " ",
+            "password": "",
+        })),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(json["error"]["code"].as_str(), Some("INVALID_ARGUMENT"));
+    assert!(json["error"]["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("不能为空")));
+}
+
+#[tokio::test]
+async fn lazycat_login_rejects_when_sync_is_already_running() {
+    let t = make_app().await;
+    t.state
+        .lazycat_sync_users
+        .lock()
+        .await
+        .insert("u_1".to_string());
+
+    let (status, json) = authed_json(
+        &t,
+        "u_1",
+        Method::POST,
+        "/api/lazycat/account",
+        Some(serde_json::json!({
+            "email": "user@example.com",
+            "password": "secret",
+        })),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(json["error"]["code"].as_str(), Some("INVALID_ARGUMENT"));
+    assert!(json["error"]["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("同步仍在进行")));
+}
+
+#[tokio::test]
+async fn lazycat_machines_are_user_scoped_and_disconnect_cleans_current_user() {
+    let t = make_app().await;
+    seed_lazycat_machine(
+        &t,
+        "u_1",
+        2312,
+        "first@example.com",
+        "港湾 Transit Mini",
+        "edge-user-1.example.net",
+    )
+    .await;
+    seed_lazycat_machine(
+        &t,
+        "u_2",
+        3875,
+        "second@example.com",
+        "北湾 NAT Lite",
+        "nat-user-2.example.net",
+    )
+    .await;
+
+    let (bootstrap_status, bootstrap_json) =
+        authed_json(&t, "u_1", Method::GET, "/api/bootstrap", None).await;
+    assert_eq!(bootstrap_status, StatusCode::OK);
+    assert_eq!(bootstrap_json["lazycat"]["connected"].as_bool(), Some(true));
+    assert_eq!(
+        bootstrap_json["lazycat"]["email"].as_str(),
+        Some("first@example.com")
+    );
+    assert_eq!(bootstrap_json["lazycat"]["machineCount"].as_i64(), Some(1));
+
+    let (status_u1, json_u1) =
+        authed_json(&t, "u_1", Method::GET, "/api/lazycat/machines", None).await;
+    assert_eq!(status_u1, StatusCode::OK);
+    assert_eq!(
+        json_u1["account"]["email"].as_str(),
+        Some("first@example.com")
+    );
+    assert_eq!(json_u1["items"].as_array().map(Vec::len), Some(1));
+    assert_eq!(json_u1["items"][0]["serviceId"].as_i64(), Some(2312));
+    assert_eq!(
+        json_u1["items"][0]["portMappings"].as_array().map(Vec::len),
+        Some(1)
+    );
+    assert_eq!(
+        json_u1["items"][0]["traffic"]["resetDay"].as_i64(),
+        Some(11)
+    );
+
+    let (status_u2, json_u2) =
+        authed_json(&t, "u_2", Method::GET, "/api/lazycat/machines", None).await;
+    assert_eq!(status_u2, StatusCode::OK);
+    assert_eq!(
+        json_u2["account"]["email"].as_str(),
+        Some("second@example.com")
+    );
+    assert_eq!(json_u2["items"][0]["serviceId"].as_i64(), Some(3875));
+
+    let (delete_status, delete_json) =
+        authed_json(&t, "u_1", Method::DELETE, "/api/lazycat/account", None).await;
+    assert_eq!(delete_status, StatusCode::OK);
+    assert_eq!(delete_json["ok"].as_bool(), Some(true));
+
+    let (account_status, account_json) =
+        authed_json(&t, "u_1", Method::GET, "/api/lazycat/account", None).await;
+    assert_eq!(account_status, StatusCode::OK);
+    assert_eq!(account_json["connected"].as_bool(), Some(false));
+    assert_eq!(account_json["state"].as_str(), Some("disconnected"));
+
+    let (post_delete_status, post_delete_json) =
+        authed_json(&t, "u_1", Method::GET, "/api/lazycat/machines", None).await;
+    assert_eq!(post_delete_status, StatusCode::OK);
+    assert_eq!(
+        post_delete_json["account"]["connected"].as_bool(),
+        Some(false)
+    );
+    assert_eq!(post_delete_json["items"].as_array().map(Vec::len), Some(0));
+
+    let lazycat_account_count_u1 =
+        sqlx::query("SELECT COUNT(*) FROM lazycat_accounts WHERE user_id = ?")
+            .bind("u_1")
+            .fetch_one(&t.db)
+            .await
+            .unwrap()
+            .get::<i64, _>(0);
+    let lazycat_machine_count_u1 =
+        sqlx::query("SELECT COUNT(*) FROM lazycat_machines WHERE user_id = ?")
+            .bind("u_1")
+            .fetch_one(&t.db)
+            .await
+            .unwrap()
+            .get::<i64, _>(0);
+    let lazycat_mapping_count_u1 =
+        sqlx::query("SELECT COUNT(*) FROM lazycat_port_mappings WHERE user_id = ?")
+            .bind("u_1")
+            .fetch_one(&t.db)
+            .await
+            .unwrap()
+            .get::<i64, _>(0);
+    assert_eq!(lazycat_account_count_u1, 0);
+    assert_eq!(lazycat_machine_count_u1, 0);
+    assert_eq!(lazycat_mapping_count_u1, 0);
+
+    let (status_u2_after, json_u2_after) =
+        authed_json(&t, "u_2", Method::GET, "/api/lazycat/machines", None).await;
+    assert_eq!(status_u2_after, StatusCode::OK);
+    assert_eq!(json_u2_after["account"]["connected"].as_bool(), Some(true));
+    assert_eq!(json_u2_after["items"].as_array().map(Vec::len), Some(1));
+    assert_eq!(json_u2_after["items"][0]["serviceId"].as_i64(), Some(3875));
+}
+
+#[tokio::test]
+async fn lazycat_sync_requires_connected_account() {
+    let t = make_app().await;
+    let (status, json) = authed_json(&t, "u_1", Method::POST, "/api/lazycat/sync", None).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(json["error"]["code"].as_str(), Some("INVALID_ARGUMENT"));
+    assert_eq!(
+        json["error"]["message"].as_str(),
+        Some("请先连接懒猫云账号")
     );
 }
 
@@ -1170,6 +1488,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         catalog_refresh: catnap::catalog_refresh::CatalogRefreshManager::new(),
         ops,
         update_cache: catnap::update_check::new_cache(),
+        lazycat_sync_users: Arc::new(tokio::sync::Mutex::new(HashSet::new())),
     };
     let app = build_app(state);
 

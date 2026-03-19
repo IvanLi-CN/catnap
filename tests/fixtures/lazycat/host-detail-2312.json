@@ -1,0 +1,22 @@
+{
+  "status": 200,
+  "data": {
+    "host_data": {
+      "domain": "srvQ8L2M5R1P9K",
+      "billingcycle": "monthly",
+      "nextduedate": 1775910282,
+      "dedicatedip": "edge-node-24.example.net",
+      "assignedips": [],
+      "domainstatus": "Active",
+      "os": "Alpine-3.20-amd64",
+      "productname": "港湾 Transit Mini",
+      "domainstatus_desc": "已激活",
+      "firstpaymentamount_desc": "¥9.34元",
+      "amount_desc": "¥9.34元",
+      "billingcycle_desc": "月付"
+    },
+    "module_client_area": [
+      { "key": "info", "name": "容器信息" }
+    ]
+  }
+}

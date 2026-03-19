@@ -204,6 +204,112 @@ pub struct BootstrapResponse {
     pub catalog: CatalogView,
     pub monitoring: MonitoringView,
     pub settings: SettingsView,
+    pub lazycat: LazycatAccountView,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LazycatAccountView {
+    pub connected: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    pub state: String,
+    pub machine_count: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_site_sync_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_panel_sync_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LazycatTrafficView {
+    pub used_gb: f64,
+    pub limit_gb: f64,
+    pub reset_day: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_reset_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LazycatPortMappingView {
+    pub family: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub public_ip: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub public_port: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub public_port_end: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub private_ip: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub private_port: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub private_port_end: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub protocol: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LazycatMachineView {
+    pub service_id: i64,
+    pub service_name: String,
+    pub service_code: String,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub os: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub primary_address: Option<String>,
+    #[serde(default)]
+    pub extra_addresses: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub billing_cycle: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub renew_price: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub first_price: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub traffic: Option<LazycatTrafficView>,
+    #[serde(default)]
+    pub port_mappings: Vec<LazycatPortMappingView>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_site_sync_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_panel_sync_at: Option<String>,
+    pub detail_state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LazycatMachinesResponse {
+    pub account: LazycatAccountView,
+    pub items: Vec<LazycatMachineView>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LazycatLoginRequest {
+    pub email: String,
+    pub password: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct OkResponse {
+    pub ok: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

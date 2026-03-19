@@ -6,6 +6,7 @@ use catnap::{build_app, AppState, RuntimeConfig};
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::Row;
 use sqlx::SqlitePool;
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tower::ServiceExt;
@@ -21,6 +22,12 @@ fn base_test_config() -> RuntimeConfig {
         update_check_timeout_ms: 1500,
         github_api_base_url: "https://api.github.com".to_string(),
         upstream_cart_url: "http://127.0.0.1:0/cart".to_string(),
+        lazycat_base_url: "https://lxc.lazycat.wiki".to_string(),
+        lazycat_site_sync_interval_minutes: 5,
+        lazycat_panel_sync_interval_minutes: 10,
+        lazycat_panel_concurrency: 2,
+        lazycat_panel_timeout_ms: 5_000,
+        lazycat_allow_invalid_tls: true,
         telegram_api_base_url: "https://api.telegram.org".to_string(),
         auth_user_header: Some("x-user".to_string()),
         dev_user_id: None,
@@ -69,6 +76,7 @@ async fn make_app_with_config(cfg: RuntimeConfig) -> TestApp {
         catalog_refresh: catnap::catalog_refresh::CatalogRefreshManager::new(),
         ops,
         update_cache: catnap::update_check::new_cache(),
+        lazycat_sync_users: Arc::new(tokio::sync::Mutex::new(HashSet::new())),
     };
 
     TestApp {

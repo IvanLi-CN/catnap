@@ -1,0 +1,96 @@
+# DB Contract
+
+## lazycat_accounts
+
+New table:
+
+- `user_id` TEXT PRIMARY KEY
+- `email` TEXT NOT NULL
+- `password` TEXT NOT NULL
+- `cookies_json` TEXT NULL
+- `state` TEXT NOT NULL
+- `last_error` TEXT NULL
+- `last_authenticated_at` TEXT NULL
+- `last_site_sync_at` TEXT NULL
+- `last_panel_sync_at` TEXT NULL
+- `created_at` TEXT NOT NULL
+- `updated_at` TEXT NOT NULL
+
+Rules:
+
+- at most one row per Catnap user;
+- cookies are serialized session cookies for `lxc.lazycat.wiki`;
+- deleting the account row is treated as “disconnect account”.
+
+## lazycat_machines
+
+New table:
+
+- `user_id` TEXT NOT NULL
+- `service_id` INTEGER NOT NULL
+- `service_name` TEXT NOT NULL
+- `service_code` TEXT NOT NULL
+- `status` TEXT NOT NULL
+- `os` TEXT NULL
+- `primary_address` TEXT NULL
+- `extra_addresses_json` TEXT NOT NULL
+- `billing_cycle` TEXT NULL
+- `renew_price` TEXT NULL
+- `first_price` TEXT NULL
+- `expires_at` TEXT NULL
+- `panel_kind` TEXT NULL
+- `panel_url` TEXT NULL
+- `panel_hash` TEXT NULL
+- `traffic_used_gb` REAL NULL
+- `traffic_limit_gb` REAL NULL
+- `traffic_reset_day` INTEGER NULL
+- `traffic_last_reset_at` TEXT NULL
+- `traffic_display` TEXT NULL
+- `last_site_sync_at` TEXT NULL
+- `last_panel_sync_at` TEXT NULL
+- `detail_state` TEXT NOT NULL
+- `detail_error` TEXT NULL
+- `created_at` TEXT NOT NULL
+- `updated_at` TEXT NOT NULL
+
+Primary key:
+
+- `(user_id, service_id)`
+
+Rules:
+
+- main-site sync overwrites core machine fields but must preserve last-good panel detail when a panel refresh fails;
+- `extra_addresses_json` stores normalized `assignedips` / extra address list;
+- `panel_hash` is cached only for the specific machine returned by lazycat main site.
+
+## lazycat_port_mappings
+
+New table:
+
+- `user_id` TEXT NOT NULL
+- `service_id` INTEGER NOT NULL
+- `family` TEXT NOT NULL (`v4|v6|nat`)
+- `mapping_key` TEXT NOT NULL
+- `public_ip` TEXT NULL
+- `public_port` INTEGER NULL
+- `public_port_end` INTEGER NULL
+- `private_ip` TEXT NULL
+- `private_port` INTEGER NULL
+- `private_port_end` INTEGER NULL
+- `protocol` TEXT NULL
+- `status` TEXT NULL
+- `description` TEXT NULL
+- `remote_created_at` TEXT NULL
+- `remote_updated_at` TEXT NULL
+- `sync_at` TEXT NOT NULL
+
+Primary key:
+
+- `(user_id, service_id, family, mapping_key)`
+
+Rules:
+
+- successful panel/NAT sync replaces the mapping set for that machine + family;
+- failed panel/NAT sync must not eagerly delete the existing rows;
+- disconnecting an account deletes all cached mappings for that user.
+

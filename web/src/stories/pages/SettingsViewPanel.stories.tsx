@@ -85,6 +85,18 @@ function SettingsViewPanelDemo({ about, bootstrap: initialBootstrap = demoBootst
       aboutLoading={false}
       aboutError={null}
       onCheckUpdate={async () => {}}
+      onLazycatLogin={async (email) => ({
+        ...bootstrap.lazycat,
+        connected: true,
+        email,
+        state: "syncing",
+      })}
+      onLazycatDisconnect={async () => {}}
+      onLazycatSync={async () => ({
+        ...bootstrap.lazycat,
+        state: "syncing",
+      })}
+      onRefreshLazycatAccount={async () => bootstrap.lazycat}
       onSave={async (next) => {
         const { telegramBotToken: _telegramBotToken, ...settings } = next;
         setBootstrap((prev) => ({ ...prev, settings: { ...prev.settings, ...settings } }));

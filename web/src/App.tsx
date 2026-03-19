@@ -121,6 +121,62 @@ export type SettingsView = {
   };
 };
 
+export type LazycatAccountView = {
+  connected: boolean;
+  email?: string | null;
+  state: "disconnected" | "authenticating" | "syncing" | "ready" | "error" | string;
+  machineCount: number;
+  lastSiteSyncAt?: string | null;
+  lastPanelSyncAt?: string | null;
+  lastError?: string | null;
+};
+
+export type LazycatTrafficView = {
+  usedGb: number;
+  limitGb: number;
+  resetDay: number;
+  lastResetAt?: string | null;
+  display?: string | null;
+};
+
+export type LazycatPortMappingView = {
+  family: string;
+  publicIp?: string | null;
+  publicPort?: number | null;
+  publicPortEnd?: number | null;
+  privateIp?: string | null;
+  privatePort?: number | null;
+  privatePortEnd?: number | null;
+  protocol?: string | null;
+  status?: string | null;
+  description?: string | null;
+};
+
+export type LazycatMachineView = {
+  serviceId: number;
+  serviceName: string;
+  serviceCode: string;
+  status: string;
+  os?: string | null;
+  primaryAddress?: string | null;
+  extraAddresses: string[];
+  expiresAt?: string | null;
+  billingCycle?: string | null;
+  renewPrice?: string | null;
+  firstPrice?: string | null;
+  traffic?: LazycatTrafficView | null;
+  portMappings: LazycatPortMappingView[];
+  lastSiteSyncAt?: string | null;
+  lastPanelSyncAt?: string | null;
+  detailState: string;
+  detailError?: string | null;
+};
+
+export type LazycatMachinesResponse = {
+  account: LazycatAccountView;
+  items: LazycatMachineView[];
+};
+
 export type BootstrapResponse = {
   user: UserView;
   catalog: {
@@ -137,6 +193,7 @@ export type BootstrapResponse = {
     poll: { intervalSeconds: number; jitterPct: number };
   };
   settings: SettingsView;
+  lazycat: LazycatAccountView;
 };
 
 export type AboutUpdate = {
@@ -375,13 +432,21 @@ export type OpsStateResponse = {
   }>;
 };
 
-export type Route = "monitoring" | "products" | "notifications" | "settings" | "logs" | "ops";
+export type Route =
+  | "monitoring"
+  | "products"
+  | "notifications"
+  | "machines"
+  | "settings"
+  | "logs"
+  | "ops";
 
 function getRoute(): Route {
   const raw = window.location.hash.replace(/^#/, "");
   if (
     raw === "products" ||
     raw === "notifications" ||
+    raw === "machines" ||
     raw === "settings" ||
     raw === "logs" ||
     raw === "ops"
@@ -399,6 +464,7 @@ function getNotificationTargetId(): string | null {
 function routeTitle(route: Route): string {
   if (route === "products") return "全部产品";
   if (route === "notifications") return "通知记录";
+  if (route === "machines") return "机器资产";
   if (route === "settings") return "系统设置";
   if (route === "logs") return "日志";
   if (route === "ops") return "采集观测台";
@@ -408,11 +474,88 @@ function routeTitle(route: Route): string {
 function routeSubtitle(route: Route): string {
   if (route === "products") return "分组：国家地区 → 可用区域 → 配置 • 点击卡片下单（新标签页）";
   if (route === "notifications") return "按用户隔离 • 深链定位 • cursor 按需加载与无限滚动";
+  if (route === "machines") return "懒猫云账号只读缓存 • 自动续会话 • 主站与面板信息统一收口";
   if (route === "settings") return "按用户隔离 • 自动保存（下次轮询使用新频率 + 抖动）";
   if (route === "logs") return "按用户隔离 • 支持过滤与分页（cursor）";
   if (route === "ops")
     return "全局共享 • 队列/worker/成功率/推送成功率 • SSE 实时 tail（断线自动续传/重置）";
   return "按国家地区 / 可用区分组展示；支持折叠，默认展开（折叠状态可记忆）";
+}
+
+function emptyLazycatAccount(): LazycatAccountView {
+  return {
+    connected: false,
+    state: "disconnected",
+    machineCount: 0,
+    lastSiteSyncAt: null,
+    lastPanelSyncAt: null,
+    lastError: null,
+  };
+}
+
+function lazycatAccountTone(state: string): string {
+  if (state === "ready") return "on";
+  if (state === "syncing" || state === "authenticating") return "warn";
+  if (state === "error") return "err";
+  return "disabled";
+}
+
+function lazycatAccountLabel(account: LazycatAccountView): string {
+  if (!account.connected) return "未连接";
+  if (account.state === "authenticating") return "登录中";
+  if (account.state === "syncing") return "同步中";
+  if (account.state === "ready") return "已连接";
+  if (account.state === "error") return "异常";
+  return account.state;
+}
+
+function lazycatDetailLabel(detailState: string): string {
+  if (detailState === "ready") return "正常";
+  if (detailState === "stale") return "使用缓存";
+  if (detailState === "error") return "失败";
+  if (detailState === "pending") return "待补全";
+  return detailState;
+}
+
+function lazycatDetailClass(detailState: string): string {
+  if (detailState === "ready") return "pill sm badge on";
+  if (detailState === "stale") return "pill sm badge warn";
+  if (detailState === "error") return "pill sm badge err";
+  return "pill sm badge";
+}
+
+function InlineSpinner({ className = "sync-icon spin" }: { className?: string }) {
+  return (
+    <span className={className} aria-hidden="true">
+      <svg viewBox="0 0 24 24" focusable="false">
+        <title>Loading</title>
+        <path
+          fill="currentColor"
+          d="M12 4a8 8 0 0 1 7.9 6.7a1 1 0 1 1-2 .3A6 6 0 1 0 18 12a1 1 0 1 1 2 0a8 8 0 1 1-8-8"
+        />
+      </svg>
+    </span>
+  );
+}
+
+function renderLazycatAccountBadge(account: LazycatAccountView) {
+  const busy = account.state === "syncing" || account.state === "authenticating";
+  return (
+    <span className={`pill badge ${lazycatAccountTone(account.state)} lazycat-account-badge`}>
+      {busy ? <InlineSpinner className="sync-icon spin lazycat-account-badge-spin" /> : null}
+      {lazycatAccountLabel(account)}
+    </span>
+  );
+}
+
+function formatPortRange(start?: number | null, end?: number | null): string {
+  if (start == null) return "—";
+  if (end == null || end === start) return String(start);
+  return `${start}-${end}`;
+}
+
+function formatLazycatAddress(address?: string | null): string {
+  return address?.trim() ? address.trim() : "—";
 }
 
 type OrderLinkMode = "configureproduct";
@@ -573,6 +716,46 @@ function formatAbsoluteTime(iso: string): string {
     second: "2-digit",
     hour12: false,
   }).format(new Date(t));
+}
+
+function formatLocalTime(iso: string | null | undefined): string {
+  if (!iso) return "-";
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return iso;
+  return new Date(t).toLocaleString();
+}
+
+function formatLazycatTrafficValue(value: number): string {
+  if (!Number.isFinite(value)) return "—";
+  return new Intl.NumberFormat(undefined, {
+    minimumFractionDigits: value >= 100 ? 0 : 1,
+    maximumFractionDigits: value >= 100 ? 1 : 2,
+  }).format(value);
+}
+
+function formatLazycatTraffic(traffic?: LazycatTrafficView | null): string {
+  if (!traffic) return "—";
+  return `${formatLazycatTrafficValue(traffic.usedGb)} / ${formatLazycatTrafficValue(traffic.limitGb)} GB`;
+}
+
+function lazycatMachineStatusClass(status: string): string {
+  const normalized = status.trim().toLowerCase();
+  if (
+    normalized.includes("active") ||
+    normalized.includes("normal") ||
+    normalized.includes("running") ||
+    normalized.includes("正常")
+  ) {
+    return "pill sm badge on";
+  }
+  if (
+    normalized.includes("pending") ||
+    normalized.includes("processing") ||
+    normalized.includes("待")
+  ) {
+    return "pill sm badge warn";
+  }
+  return "pill sm badge err";
 }
 
 function notificationKindLabel(kind: string): string {
@@ -851,6 +1034,9 @@ export function App() {
   }, []);
 
   const hasBootstrap = bootstrap !== null;
+  const applyLazycatAccount = useCallback((account: LazycatAccountView) => {
+    setBootstrap((prev) => (prev ? { ...prev, lazycat: account } : prev));
+  }, []);
 
   const countriesById = useMemo(() => {
     const m = new Map<string, Country>();
@@ -926,6 +1112,40 @@ export function App() {
       setError(e instanceof Error ? e.message : String(e));
     }
   }, []);
+
+  const refreshLazycatAccount = useCallback(async () => {
+    const json = await api<LazycatAccountView>("/api/lazycat/account");
+    applyLazycatAccount(json);
+    return json;
+  }, [applyLazycatAccount]);
+
+  const loginLazycat = useCallback(
+    async (email: string, password: string) => {
+      const json = await api<LazycatAccountView>("/api/lazycat/account", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+      applyLazycatAccount(json);
+      return json;
+    },
+    [applyLazycatAccount],
+  );
+
+  const syncLazycat = useCallback(async () => {
+    const json = await api<LazycatAccountView>("/api/lazycat/sync", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    applyLazycatAccount(json);
+    return json;
+  }, [applyLazycatAccount]);
+
+  const disconnectLazycat = useCallback(async () => {
+    await api<{ ok: boolean }>("/api/lazycat/account", { method: "DELETE" });
+    applyLazycatAccount(emptyLazycatAccount());
+  }, [applyLazycatAccount]);
 
   const refreshAbout = useCallback(async (force: boolean) => {
     setAboutLoading(true);
@@ -1046,6 +1266,15 @@ export function App() {
     const id = window.setInterval(() => void refreshMonitoringSilently(), 15_000);
     return () => window.clearInterval(id);
   }, [hasBootstrap, refreshMonitoringSilently, route]);
+
+  useEffect(() => {
+    if (!bootstrap?.lazycat.connected) return;
+    if (!(bootstrap.lazycat.state === "syncing" || bootstrap.lazycat.state === "authenticating")) {
+      return;
+    }
+    const id = window.setInterval(() => void refreshBootstrapSilently(), 3_000);
+    return () => window.clearInterval(id);
+  }, [bootstrap?.lazycat.connected, bootstrap?.lazycat.state, refreshBootstrapSilently]);
 
   useEffect(() => {
     if (!hasBootstrap) return;
@@ -1492,7 +1721,7 @@ export function App() {
   const updatePill =
     about?.update.updateAvailable && about.update.latestVersion ? (
       <a
-        className="pill warn center"
+        className="pill badge warn topbar-update-pill"
         href={updateHref ?? "#settings"}
         {...(updateHref && /^https?:\/\//.test(updateHref)
           ? { target: "_blank", rel: "noopener noreferrer" }
@@ -1503,7 +1732,8 @@ export function App() {
             : "有新版本：请在系统设置中查看"
         }
       >
-        {`有新版本 ${formatVersionDisplay(about.update.latestVersion)}`}
+        <span className="topbar-update-pill-dot" aria-hidden="true" />
+        <span>{`有新版本 ${formatVersionDisplay(about.update.latestVersion)}`}</span>
       </a>
     ) : null;
   const sidebar = (
@@ -1520,6 +1750,9 @@ export function App() {
         href="#notifications"
       >
         通知记录
+      </a>
+      <a className={route === "machines" ? "nav-item active" : "nav-item"} href="#machines">
+        机器资产
       </a>
       <a className={route === "settings" ? "nav-item active" : "nav-item"} href="#settings">
         系统设置
@@ -1709,6 +1942,12 @@ export function App() {
             nowMs={nowMs}
             onTargetHandled={clearNotificationTargetId}
           />
+        ) : route === "machines" ? (
+          <MachinesView
+            bootstrap={bootstrap}
+            onSync={syncLazycat}
+            onRefreshAccount={refreshLazycatAccount}
+          />
         ) : route === "settings" ? (
           <SettingsViewPanel
             bootstrap={bootstrap}
@@ -1717,6 +1956,10 @@ export function App() {
             aboutError={aboutError}
             onCheckUpdate={async () => refreshAbout(true)}
             onSave={saveSettings}
+            onLazycatLogin={loginLazycat}
+            onLazycatDisconnect={disconnectLazycat}
+            onLazycatSync={syncLazycat}
+            onRefreshLazycatAccount={refreshLazycatAccount}
           />
         ) : route === "logs" ? (
           <LogsView />
@@ -3311,6 +3554,369 @@ export function MonitoringSection({
   );
 }
 
+export function MachinesView({
+  bootstrap,
+  onSync,
+  fetchMachines = () => api<LazycatMachinesResponse>("/api/lazycat/machines"),
+}: {
+  bootstrap: BootstrapResponse;
+  onSync: () => Promise<LazycatAccountView>;
+  onRefreshAccount: () => Promise<LazycatAccountView>;
+  fetchMachines?: () => Promise<LazycatMachinesResponse>;
+}) {
+  const [account, setAccount] = useState<LazycatAccountView>(() => bootstrap.lazycat);
+  const [items, setItems] = useState<LazycatMachineView[]>([]);
+  const [loading, setLoading] = useState<boolean>(bootstrap.lazycat.connected);
+  const [refreshing, setRefreshing] = useState<boolean>(false);
+  const [syncPending, setSyncPending] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
+  const [expandedServiceId, setExpandedServiceId] = useState<number | null>(null);
+
+  const loadMachines = useCallback(
+    async (mode: "load" | "refresh" = "load") => {
+      if (!bootstrap.lazycat.connected) {
+        setAccount(bootstrap.lazycat);
+        setItems([]);
+        setLoading(false);
+        setRefreshing(false);
+        setError(null);
+        setExpandedServiceId(null);
+        return;
+      }
+
+      if (mode === "load") {
+        setLoading(true);
+      } else {
+        setRefreshing(true);
+      }
+      setError(null);
+
+      try {
+        const response = await fetchMachines();
+        setAccount(response.account);
+        setItems(response.items);
+        setExpandedServiceId((current) =>
+          current != null && response.items.some((item) => item.serviceId === current)
+            ? current
+            : null,
+        );
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        if (mode === "load") {
+          setLoading(false);
+        } else {
+          setRefreshing(false);
+        }
+      }
+    },
+    [bootstrap.lazycat, fetchMachines],
+  );
+
+  useEffect(() => {
+    setAccount(bootstrap.lazycat);
+    void loadMachines("load");
+  }, [bootstrap.lazycat, loadMachines]);
+
+  useEffect(() => {
+    if (!(account.state === "syncing" || account.state === "authenticating")) {
+      return;
+    }
+    const id = window.setInterval(() => {
+      void loadMachines("refresh");
+    }, 3_000);
+    return () => window.clearInterval(id);
+  }, [account.state, loadMachines]);
+
+  const staleCount = items.filter((item) => item.detailState === "stale").length;
+  const errorCount = items.filter((item) => item.detailState === "error").length;
+  const readyTrafficCount = items.filter((item) => item.traffic).length;
+
+  return (
+    <div className="panel" data-testid="page-machines">
+      <div className="panel-section">
+        <div className="panel-head">
+          <div>
+            <div className="panel-title">懒猫云机器资产</div>
+            <div className="panel-subtitle">
+              主站字段和面板字段统一缓存到本地；面板失败时保留 last-good 数据，不影响核心机器信息。
+            </div>
+          </div>
+          <div className="panel-title-actions">
+            {renderLazycatAccountBadge(account)}
+            <button
+              type="button"
+              className="pill action-primary lazycat-sync-btn"
+              disabled={!account.connected || syncPending}
+              onClick={async () => {
+                setSyncPending(true);
+                setError(null);
+                try {
+                  const next = await onSync();
+                  setAccount(next);
+                  await loadMachines("refresh");
+                } catch (e) {
+                  setError(e instanceof Error ? e.message : String(e));
+                } finally {
+                  setSyncPending(false);
+                }
+              }}
+            >
+              {syncPending ? (
+                <>
+                  <InlineSpinner />
+                  <span>同步中</span>
+                </>
+              ) : (
+                "立即同步"
+              )}
+            </button>
+          </div>
+        </div>
+
+        {!account.connected ? (
+          <div className="empty">
+            还没有连接懒猫云账号。去 <a href="#settings">系统设置</a>{" "}
+            中填写邮箱和密码后，服务端会自动抓取机器列表喵。
+          </div>
+        ) : (
+          <div className="machines-summary-grid">
+            <div className="machines-summary-card">
+              <span className="machines-summary-label">机器数</span>
+              <strong>{account.machineCount}</strong>
+              <span className="machines-summary-meta">当前缓存条目</span>
+            </div>
+            <div className="machines-summary-card">
+              <span className="machines-summary-label">面板流量</span>
+              <strong>{readyTrafficCount}</strong>
+              <span className="machines-summary-meta">已补全实时流量的机器</span>
+            </div>
+            <div className="machines-summary-card">
+              <span className="machines-summary-label">异常/缓存</span>
+              <strong>{`${errorCount}/${staleCount}`}</strong>
+              <span className="machines-summary-meta">error / stale</span>
+            </div>
+            <div className="machines-summary-card">
+              <span className="machines-summary-label">最近同步</span>
+              <strong>{formatLocalTime(account.lastSiteSyncAt)}</strong>
+              <span className="machines-summary-meta">
+                {account.lastPanelSyncAt
+                  ? `面板 ${formatLocalTime(account.lastPanelSyncAt)}`
+                  : "面板尚未同步"}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {error ? <p className="error">{error}</p> : null}
+        {account.lastError ? <p className="error">{account.lastError}</p> : null}
+        {refreshing && !loading ? <p className="muted">正在刷新缓存视图…</p> : null}
+      </div>
+
+      {account.connected ? (
+        <div className="panel-section">
+          <div className="panel-title-row">
+            <div className="panel-title">机器列表</div>
+            <div className="panel-title-actions">
+              <span className="pill sm">{`${items.length} 台`}</span>
+            </div>
+          </div>
+          <div className="panel-subtitle">
+            展开某台机器可查看端口映射、流量重置时间和明细同步状态。
+          </div>
+
+          {loading ? <div className="empty">正在读取机器缓存…</div> : null}
+          {!loading && items.length === 0 ? (
+            <div className="empty">
+              账号已连接，但本地还没有机器缓存。稍等同步完成或手动触发一次同步。
+            </div>
+          ) : null}
+
+          <div className="machines-list">
+            {items.map((item) => {
+              const expanded = expandedServiceId === item.serviceId;
+              return (
+                <section className="machines-card" key={item.serviceId}>
+                  <div className="machines-card-head">
+                    <div className="machines-card-main">
+                      <div className="machines-card-title-row">
+                        <div className="machines-card-title-wrap">
+                          <div className="machines-card-title">{item.serviceName}</div>
+                          <div className="machines-card-code mono">{item.serviceCode}</div>
+                        </div>
+                      </div>
+                      <div className="machines-card-grid">
+                        <div>
+                          <span className="machines-kv-label">主地址</span>
+                          <div className="machines-kv-value mono">
+                            {formatLazycatAddress(item.primaryAddress)}
+                          </div>
+                        </div>
+                        <div>
+                          <span className="machines-kv-label">到期时间</span>
+                          <div className="machines-kv-value">{formatLocalTime(item.expiresAt)}</div>
+                        </div>
+                        <div>
+                          <span className="machines-kv-label">续费价格</span>
+                          <div className="machines-kv-value">{item.renewPrice ?? "—"}</div>
+                        </div>
+                        <div>
+                          <span className="machines-kv-label">流量</span>
+                          <div className="machines-kv-value">
+                            {formatLazycatTraffic(item.traffic)}
+                          </div>
+                        </div>
+                        <div>
+                          <span className="machines-kv-label">支付周期</span>
+                          <div className="machines-kv-value">{item.billingCycle ?? "—"}</div>
+                        </div>
+                        <div>
+                          <span className="machines-kv-label">附加地址</span>
+                          <div className="machines-kv-value">
+                            {item.extraAddresses.length > 0 ? item.extraAddresses.join(" · ") : "—"}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="machines-card-side">
+                      <div className="machines-card-badges">
+                        <span className={lazycatMachineStatusClass(item.status)}>
+                          {item.status}
+                        </span>
+                        <span className={lazycatDetailClass(item.detailState)}>
+                          {lazycatDetailLabel(item.detailState)}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        className="pill machines-expand-btn"
+                        onClick={() => {
+                          setExpandedServiceId((current) =>
+                            current === item.serviceId ? null : item.serviceId,
+                          );
+                        }}
+                      >
+                        {expanded ? "收起详情" : "展开详情"}
+                      </button>
+                    </div>
+                  </div>
+
+                  {expanded ? (
+                    <div className="machines-detail">
+                      <div className="machines-detail-grid">
+                        <div>
+                          <span className="machines-kv-label">系统</span>
+                          <div className="machines-kv-value">{item.os ?? "—"}</div>
+                        </div>
+                        <div>
+                          <span className="machines-kv-label">首购价格</span>
+                          <div className="machines-kv-value">{item.firstPrice ?? "—"}</div>
+                        </div>
+                        <div>
+                          <span className="machines-kv-label">最近主站同步</span>
+                          <div className="machines-kv-value mono">
+                            {formatLocalTime(item.lastSiteSyncAt)}
+                          </div>
+                        </div>
+                        <div>
+                          <span className="machines-kv-label">最近面板同步</span>
+                          <div className="machines-kv-value mono">
+                            {formatLocalTime(item.lastPanelSyncAt)}
+                          </div>
+                        </div>
+                      </div>
+
+                      {item.traffic ? (
+                        <div className="machines-detail-block">
+                          <div className="machines-detail-title">流量与重置</div>
+                          <div className="machines-detail-grid">
+                            <div>
+                              <span className="machines-kv-label">已用 / 上限</span>
+                              <div className="machines-kv-value">
+                                {formatLazycatTraffic(item.traffic)}
+                              </div>
+                            </div>
+                            <div>
+                              <span className="machines-kv-label">重置日</span>
+                              <div className="machines-kv-value">{item.traffic.resetDay} 日</div>
+                            </div>
+                            <div>
+                              <span className="machines-kv-label">最近重置</span>
+                              <div className="machines-kv-value mono">
+                                {formatLocalTime(item.traffic.lastResetAt)}
+                              </div>
+                            </div>
+                            <div>
+                              <span className="machines-kv-label">展示口径</span>
+                              <div className="machines-kv-value">
+                                {item.traffic.display ?? "GB"}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ) : null}
+
+                      <div className="machines-detail-block">
+                        <div className="machines-detail-title">端口映射</div>
+                        {item.portMappings.length === 0 ? (
+                          <div className="empty machines-inline-empty">
+                            当前没有端口映射缓存，或者这台机器的面板/NAT 代理暂时不可达。
+                          </div>
+                        ) : (
+                          <div className="machines-port-list">
+                            {item.portMappings.map((mapping, index) => (
+                              <div
+                                className="machines-port-row"
+                                key={`${item.serviceId}:${mapping.family}:${index}`}
+                              >
+                                <span className="pill sm">{mapping.family.toUpperCase()}</span>
+                                <span className="mono">
+                                  {`${formatLazycatAddress(mapping.publicIp)}:${formatPortRange(mapping.publicPort, mapping.publicPortEnd)}`}
+                                </span>
+                                <span className="machines-port-arrow">→</span>
+                                <span className="mono">
+                                  {`${formatLazycatAddress(mapping.privateIp)}:${formatPortRange(mapping.privatePort, mapping.privatePortEnd)}`}
+                                </span>
+                                {mapping.protocol ? (
+                                  <span className="pill sm badge">
+                                    {mapping.protocol.toUpperCase()}
+                                  </span>
+                                ) : null}
+                                {mapping.status ? (
+                                  <span className="pill sm badge">{mapping.status}</span>
+                                ) : null}
+                                {mapping.description ? (
+                                  <span className="machines-port-description">
+                                    {mapping.description}
+                                  </span>
+                                ) : null}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {item.detailError ? (
+                        <div className="machines-detail-note error">{item.detailError}</div>
+                      ) : (
+                        <div className="machines-detail-note muted">
+                          {item.detailState === "stale"
+                            ? "当前展示的是最近一次成功同步的缓存。"
+                            : "面板字段已按当前缓存展示。"}
+                        </div>
+                      )}
+                    </div>
+                  ) : null}
+                </section>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 type SettingsFieldKey =
   | "intervalMinutes"
   | "jitterPct"
@@ -3486,6 +4092,10 @@ export function SettingsViewPanel({
   aboutError,
   onCheckUpdate,
   onSave,
+  onLazycatLogin,
+  onLazycatDisconnect,
+  onLazycatSync,
+  onRefreshLazycatAccount,
 }: {
   bootstrap: BootstrapResponse;
   about: AboutResponse | null;
@@ -3493,6 +4103,10 @@ export function SettingsViewPanel({
   aboutError: string | null;
   onCheckUpdate: () => Promise<void>;
   onSave: (next: SettingsView & { telegramBotToken?: string | null }) => Promise<SettingsView>;
+  onLazycatLogin: (email: string, password: string) => Promise<LazycatAccountView>;
+  onLazycatDisconnect: () => Promise<void>;
+  onLazycatSync: () => Promise<LazycatAccountView>;
+  onRefreshLazycatAccount: () => Promise<LazycatAccountView>;
 }) {
   const [intervalMinutesInput, setIntervalMinutesInput] = useState<string>(
     String(bootstrap.settings.poll.intervalMinutes),
@@ -3525,6 +4139,13 @@ export function SettingsViewPanel({
   const [wpEnabled, setWpEnabled] = useState<boolean>(
     bootstrap.settings.notifications.webPush.enabled,
   );
+  const [lazycatAccount, setLazycatAccount] = useState<LazycatAccountView>(() => bootstrap.lazycat);
+  const [lazycatEmailInput, setLazycatEmailInput] = useState<string>(bootstrap.lazycat.email ?? "");
+  const [lazycatPasswordInput, setLazycatPasswordInput] = useState<string>("");
+  const [lazycatLoginPending, setLazycatLoginPending] = useState<boolean>(false);
+  const [lazycatSyncPending, setLazycatSyncPending] = useState<boolean>(false);
+  const [lazycatDisconnectPending, setLazycatDisconnectPending] = useState<boolean>(false);
+  const [lazycatActionError, setLazycatActionError] = useState<string | null>(null);
   const [wpStatus, setWpStatus] = useState<string | null>(null);
   const [wpTestPending, setWpTestPending] = useState<boolean>(false);
   const [wpTestStatus, setWpTestStatus] = useState<string | null>(null);
@@ -3556,6 +4177,32 @@ export function SettingsViewPanel({
     },
     [],
   );
+
+  useEffect(() => {
+    setLazycatAccount(bootstrap.lazycat);
+    setLazycatEmailInput((prev) => (prev.trim() ? prev : (bootstrap.lazycat.email ?? "")));
+  }, [bootstrap.lazycat]);
+
+  useEffect(() => {
+    if (!lazycatAccount.connected) return;
+    if (!(lazycatAccount.state === "syncing" || lazycatAccount.state === "authenticating")) {
+      return;
+    }
+    let cancelled = false;
+    const id = window.setInterval(() => {
+      void onRefreshLazycatAccount()
+        .then((account) => {
+          if (!cancelled) setLazycatAccount(account);
+        })
+        .catch(() => {
+          // Ignore polling errors; explicit actions surface the failure.
+        });
+    }, 3_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [lazycatAccount.connected, lazycatAccount.state, onRefreshLazycatAccount]);
 
   const clearTgTestStatus = useCallback(() => {
     clearFeedbackTimer(tgTestSuccessTimerRef);
@@ -3869,13 +4516,6 @@ export function SettingsViewPanel({
     },
     [buildDraft, persistDraft],
   );
-
-  function formatLocalTime(iso: string | null): string {
-    if (!iso) return "-";
-    const t = Date.parse(iso);
-    if (!Number.isFinite(t)) return iso;
-    return new Date(t).toLocaleString();
-  }
 
   const renderFieldError = (
     field: SettingsFieldKey,
@@ -4550,6 +5190,170 @@ export function SettingsViewPanel({
               true,
               wpTestButtonRef,
             )}
+          </div>
+        </div>
+      </div>
+
+      <div className="panel-section">
+        <div className="panel-title">懒猫云账号</div>
+        <div className="panel-subtitle">
+          显式连接/断开，不走自动保存；成功后服务端会自动续会话并同步机器缓存。
+        </div>
+
+        <div className="settings-grid" style={{ marginTop: "16px" }}>
+          <div>连接状态</div>
+          <div>{renderLazycatAccountBadge(lazycatAccount)}</div>
+          <div className="hint">{`机器数：${lazycatAccount.machineCount}`}</div>
+
+          <div>最近主站同步</div>
+          <div className="mono">
+            {lazycatAccount.lastSiteSyncAt ? formatLocalTime(lazycatAccount.lastSiteSyncAt) : "-"}
+          </div>
+          <div className="hint">机器列表、到期时间、续费价格等核心字段来源</div>
+
+          <div>最近面板同步</div>
+          <div className="mono">
+            {lazycatAccount.lastPanelSyncAt ? formatLocalTime(lazycatAccount.lastPanelSyncAt) : "-"}
+          </div>
+          <div className="hint">流量与端口映射来源；失败时保留 last-good 缓存</div>
+        </div>
+
+        <div className="settings-row" style={{ marginTop: "16px" }}>
+          <div>邮箱</div>
+          <div className="settings-input-wrap">
+            <div className="pill">
+              <input
+                type="email"
+                placeholder="user@example.com"
+                value={lazycatEmailInput}
+                onChange={(e) => {
+                  setLazycatEmailInput(e.target.value);
+                  setLazycatActionError(null);
+                }}
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="settings-row" style={{ marginTop: "16px" }}>
+          <div>密码</div>
+          <div className="settings-input-wrap">
+            <div className="pill">
+              <input
+                type="password"
+                placeholder={lazycatAccount.connected ? "••••••••••••••••" : ""}
+                value={lazycatPasswordInput}
+                onChange={(e) => {
+                  setLazycatPasswordInput(e.target.value);
+                  setLazycatActionError(null);
+                }}
+              />
+            </div>
+          </div>
+        </div>
+
+        {lazycatAccount.lastError ? (
+          <div className="error" style={{ marginTop: 12 }}>
+            {lazycatAccount.lastError}
+          </div>
+        ) : null}
+        {lazycatActionError ? (
+          <div className="error" style={{ marginTop: 12 }}>
+            {lazycatActionError}
+          </div>
+        ) : null}
+
+        <div className="settings-actions">
+          <div className="settings-action-wrap">
+            <button
+              type="button"
+              className="pill action-primary lazycat-settings-btn"
+              disabled={lazycatLoginPending || lazycatSyncPending || lazycatDisconnectPending}
+              onClick={async () => {
+                setLazycatLoginPending(true);
+                setLazycatActionError(null);
+                try {
+                  const next = await onLazycatLogin(lazycatEmailInput, lazycatPasswordInput);
+                  setLazycatAccount(next);
+                  setLazycatPasswordInput("");
+                } catch (e) {
+                  setLazycatActionError(e instanceof Error ? e.message : String(e));
+                } finally {
+                  setLazycatLoginPending(false);
+                }
+              }}
+            >
+              {lazycatLoginPending ? (
+                <>
+                  <InlineSpinner />
+                  <span>连接中</span>
+                </>
+              ) : lazycatAccount.connected ? (
+                "更新凭据"
+              ) : (
+                "连接懒猫云"
+              )}
+            </button>
+          </div>
+          <div className="settings-action-wrap">
+            <button
+              type="button"
+              className="pill action-primary lazycat-settings-btn"
+              disabled={
+                !lazycatAccount.connected ||
+                lazycatLoginPending ||
+                lazycatSyncPending ||
+                lazycatDisconnectPending
+              }
+              onClick={async () => {
+                setLazycatSyncPending(true);
+                setLazycatActionError(null);
+                try {
+                  const next = await onLazycatSync();
+                  setLazycatAccount(next);
+                } catch (e) {
+                  setLazycatActionError(e instanceof Error ? e.message : String(e));
+                } finally {
+                  setLazycatSyncPending(false);
+                }
+              }}
+            >
+              {lazycatSyncPending ? (
+                <>
+                  <InlineSpinner />
+                  <span>同步中</span>
+                </>
+              ) : (
+                "立即同步"
+              )}
+            </button>
+          </div>
+          <div className="settings-action-wrap">
+            <button
+              type="button"
+              className="pill err lazycat-settings-btn"
+              disabled={
+                !lazycatAccount.connected ||
+                lazycatLoginPending ||
+                lazycatSyncPending ||
+                lazycatDisconnectPending
+              }
+              onClick={async () => {
+                setLazycatDisconnectPending(true);
+                setLazycatActionError(null);
+                try {
+                  await onLazycatDisconnect();
+                  setLazycatAccount(emptyLazycatAccount());
+                  setLazycatPasswordInput("");
+                } catch (e) {
+                  setLazycatActionError(e instanceof Error ? e.message : String(e));
+                } finally {
+                  setLazycatDisconnectPending(false);
+                }
+              }}
+            >
+              {lazycatDisconnectPending ? "断开中…" : "断开账号"}
+            </button>
           </div>
         </div>
       </div>
