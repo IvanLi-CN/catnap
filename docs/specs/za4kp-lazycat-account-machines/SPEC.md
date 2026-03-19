@@ -188,6 +188,30 @@
 - 需要决策的问题：None。
 - 假设（需主人确认）：None。
 
+## Visual Evidence (PR)
+
+- source_type: storybook_canvas
+  target_program: mock-only
+  capture_scope: element
+  sensitive_exclusion: N/A
+  submission_gate: pending-owner-approval
+  story_id_or_title: Pages/MachinesView/Default
+  state: default
+  evidence_note: 验证机器资产页默认展示态，包含账号摘要卡、机器列表、支付周期、续费价格、流量与状态徽标的最终布局。
+  image:
+  ![MachinesView default canvas](./assets/machines-default-canvas.png)
+
+- source_type: storybook_canvas
+  target_program: mock-only
+  capture_scope: element
+  sensitive_exclusion: N/A
+  submission_gate: pending-owner-approval
+  story_id_or_title: Pages/MachinesView/Partial Failure
+  state: partial failure expanded detail
+  evidence_note: 验证面板失败降级态，证明 stale/error 汇总、展开详情、缓存端口映射与 TLS 失败提示会同时展示。
+  image:
+  ![MachinesView partial failure canvas](./assets/machines-partial-failure-canvas.png)
+
 ## 变更记录（Change log）
 
 - 2026-03-19: 创建规格，冻结懒猫云账号接入、机器缓存、面板补全与前端页面口径。
