@@ -720,6 +720,9 @@ async fn run(state: AppState) -> anyhow::Result<()> {
 
         for user_id in users {
             let settings = db::get_settings(&state.db, &user_id).await?;
+            if let Err(err) = crate::lazycat::maybe_spawn_due_sync(&state, &user_id).await {
+                warn!(user_id, error = %err, "lazycat sync scheduling failed");
+            }
             let due = next_due.get(&user_id).copied().unwrap_or(now);
             if now < due {
                 continue;

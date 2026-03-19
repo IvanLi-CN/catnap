@@ -1,4 +1,5 @@
 use crate::models::{Country, Inventory, Money, Region, RegionNotice, Spec};
+use anyhow::{anyhow, Context};
 use scraper::{ElementRef, Html, Selector};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -152,12 +153,29 @@ pub struct RegionFetchDetailed {
 
 impl UpstreamClient {
     pub fn new(cart_url: String) -> anyhow::Result<Self> {
+        let cart_url = reqwest::Url::parse(&cart_url)
+            .with_context(|| format!("invalid CATNAP_UPSTREAM_CART_URL: {cart_url}"))?;
+        if !matches!(cart_url.scheme(), "http" | "https") {
+            return Err(anyhow!(
+                "shopping cart url must use http or https: {}",
+                cart_url
+            ));
+        }
+        if !cart_url.username().is_empty() || cart_url.password().is_some() {
+            return Err(anyhow!(
+                "shopping cart url must not include credentials: {}",
+                cart_url
+            ));
+        }
+        // Cart scraping must stay anonymous. This client deliberately avoids referer propagation,
+        // and reqwest cookies are disabled at the crate feature level.
         let client = reqwest::Client::builder()
             .user_agent("catnap/0.1 (+https://example.invalid)")
+            .referer(false)
             .build()?;
         Ok(Self {
             client,
-            cart_url,
+            cart_url: cart_url.to_string(),
             pid_name_cache: Arc::new(Mutex::new(HashMap::new())),
         })
     }
@@ -908,7 +926,13 @@ fn known_pid_fallback(name: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::Router;
+    use axum::{
+        extract::State,
+        http::{HeaderMap, HeaderValue},
+        response::IntoResponse,
+        Router,
+    };
+    use std::sync::{Arc, Mutex as StdMutex};
 
     #[test]
     fn parses_countries() {
@@ -938,7 +962,7 @@ mod tests {
             <div class="secondgroup_box_area mr-2 fs-16 yy-dtjbt-text">
               <span class="yy-bl"></span>
               <span class="fs-18">
-                台湾苗栗Hinet 高质量IP 三网直连 动态IP 带IPV6
+                Demo Edge Premium 双栈接入 动态地址 示例资源
                 <p>禁止滥用！发包、机场、扫描等滥用行为！</p>
               </span>
             </div>
@@ -946,7 +970,7 @@ mod tests {
         </body></html>
         "#;
         let notice = parse_region_notice(html).expect("notice should be present");
-        assert!(notice.contains("台湾苗栗Hinet"));
+        assert!(notice.contains("Demo Edge Premium"));
         assert!(notice.contains("禁止滥用"));
     }
 
@@ -1392,6 +1416,79 @@ mod tests {
 
         assert!(result.empty_result_authoritative);
         assert_eq!(result.configs.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn upstream_client_keeps_cart_requests_anonymous() {
+        #[derive(Clone, Default)]
+        struct RequestLog {
+            cookies: Arc<StdMutex<Vec<Option<String>>>>,
+            referers: Arc<StdMutex<Vec<Option<String>>>>,
+        }
+
+        async fn cart_handler(
+            State(log): State<RequestLog>,
+            headers: HeaderMap,
+        ) -> impl IntoResponse {
+            log.cookies.lock().unwrap().push(
+                headers
+                    .get("cookie")
+                    .and_then(|value| value.to_str().ok())
+                    .map(str::to_string),
+            );
+            log.referers.lock().unwrap().push(
+                headers
+                    .get("referer")
+                    .and_then(|value| value.to_str().ok())
+                    .map(str::to_string),
+            );
+
+            let mut response = include_str!("../tests/fixtures/cart-root.html")
+                .to_string()
+                .into_response();
+            response.headers_mut().append(
+                axum::http::header::SET_COOKIE,
+                HeaderValue::from_static("session=tracked; Path=/; HttpOnly"),
+            );
+            response
+        }
+
+        let log = RequestLog::default();
+        let upstream = Router::new()
+            .route("/cart", axum::routing::get(cart_handler))
+            .with_state(log.clone());
+        let base = spawn_stub_server(upstream).await;
+        let client = UpstreamClient::new(format!("{base}/cart")).unwrap();
+
+        client
+            .fetch_html_raw(&format!("{base}/cart"))
+            .await
+            .unwrap();
+        client
+            .fetch_html_raw(&format!("{base}/cart"))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            *log.cookies.lock().unwrap(),
+            vec![None, None],
+            "cart fetch must not send stored cookies back to upstream"
+        );
+        assert_eq!(
+            *log.referers.lock().unwrap(),
+            vec![None, None],
+            "cart fetch must not send referer"
+        );
+    }
+
+    #[test]
+    fn upstream_client_rejects_cart_urls_with_embedded_credentials() {
+        let err = match UpstreamClient::new("https://user:secret@example.invalid/cart".to_string())
+        {
+            Ok(_) => panic!("credentialed cart urls must be rejected"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("must not include credentials"));
     }
 
     #[test]

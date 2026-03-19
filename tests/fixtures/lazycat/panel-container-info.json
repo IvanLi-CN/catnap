@@ -1,0 +1,14 @@
+{
+  "code": 200,
+  "msg": "success",
+  "data": {
+    "traffic": {
+      "ContainerName": "svcDemoEdge24",
+      "TotalGB": 700.2235215594992,
+      "LimitGB": 800,
+      "ResetDay": 11,
+      "LastReset": "2026-03-11T00:00:08.774266055+08:00"
+    },
+    "traffic_usage": "700.22 GB"
+  }
+}

@@ -16,6 +16,12 @@ pub struct RuntimeConfig {
     pub github_api_base_url: String,
 
     pub upstream_cart_url: String,
+    pub lazycat_base_url: String,
+    pub lazycat_site_sync_interval_minutes: i64,
+    pub lazycat_panel_sync_interval_minutes: i64,
+    pub lazycat_panel_concurrency: usize,
+    pub lazycat_panel_timeout_ms: i64,
+    pub lazycat_allow_invalid_tls: bool,
 
     /// Base URL for Telegram Bot API. Used to allow local stubs in tests.
     pub telegram_api_base_url: String,
@@ -101,6 +107,45 @@ impl RuntimeConfig {
             .map(|v| v.trim().to_string())
             .filter(|v| !v.is_empty())
             .unwrap_or_else(|| "https://api.telegram.org".to_string());
+
+        let lazycat_base_url = env::var("CATNAP_LAZYCAT_BASE_URL")
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| "https://lxc.lazycat.wiki".to_string());
+
+        let lazycat_site_sync_interval_minutes =
+            env::var("CATNAP_LAZYCAT_SITE_SYNC_INTERVAL_MINUTES")
+                .ok()
+                .and_then(|v| v.trim().parse::<i64>().ok())
+                .filter(|v| *v >= 1)
+                .unwrap_or(5);
+
+        let lazycat_panel_sync_interval_minutes =
+            env::var("CATNAP_LAZYCAT_PANEL_SYNC_INTERVAL_MINUTES")
+                .ok()
+                .and_then(|v| v.trim().parse::<i64>().ok())
+                .filter(|v| *v >= 1)
+                .unwrap_or(10);
+
+        let lazycat_panel_concurrency = env::var("CATNAP_LAZYCAT_PANEL_CONCURRENCY")
+            .ok()
+            .and_then(|v| v.trim().parse::<i64>().ok())
+            .filter(|v| (1..=16).contains(v))
+            .unwrap_or(2) as usize;
+
+        let lazycat_panel_timeout_ms = env::var("CATNAP_LAZYCAT_PANEL_TIMEOUT_MS")
+            .ok()
+            .and_then(|v| v.trim().parse::<i64>().ok())
+            .filter(|v| (500..=60_000).contains(v))
+            .unwrap_or(5_000);
+
+        let lazycat_allow_invalid_tls = env::var("CATNAP_LAZYCAT_ALLOW_INVALID_TLS")
+            .ok()
+            .map(|v| v.trim().to_ascii_lowercase())
+            .filter(|v| !v.is_empty())
+            .map(|v| matches!(v.as_str(), "1" | "true" | "yes" | "y" | "on"))
+            .unwrap_or(true);
 
         let auth_user_header = env::var("CATNAP_AUTH_USER_HEADER")
             .ok()
@@ -189,6 +234,12 @@ impl RuntimeConfig {
             github_api_base_url,
             upstream_cart_url: env::var("CATNAP_UPSTREAM_CART_URL")
                 .unwrap_or_else(|_| "https://lxc.lazycat.wiki/cart".to_string()),
+            lazycat_base_url,
+            lazycat_site_sync_interval_minutes,
+            lazycat_panel_sync_interval_minutes,
+            lazycat_panel_concurrency,
+            lazycat_panel_timeout_ms,
+            lazycat_allow_invalid_tls,
             telegram_api_base_url,
             auth_user_header,
             dev_user_id,

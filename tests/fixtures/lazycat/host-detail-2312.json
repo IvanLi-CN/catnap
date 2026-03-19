@@ -1,0 +1,22 @@
+{
+  "status": 200,
+  "data": {
+    "host_data": {
+      "domain": "svcDemoEdge24",
+      "billingcycle": "monthly",
+      "nextduedate": 1775910282,
+      "dedicatedip": "edge-demo.example.test",
+      "assignedips": [],
+      "domainstatus": "Active",
+      "os": "Alpine-3.20-amd64",
+      "productname": "Demo Edge Mini",
+      "domainstatus_desc": "已激活",
+      "firstpaymentamount_desc": "¥9.34元",
+      "amount_desc": "¥9.34元",
+      "billingcycle_desc": "月付"
+    },
+    "module_client_area": [
+      { "key": "info", "name": "容器信息" }
+    ]
+  }
+}

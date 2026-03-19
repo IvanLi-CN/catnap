@@ -13,8 +13,8 @@ use bytes::Bytes;
 use include_dir::{include_dir, Dir};
 use mime_guess::MimeGuess;
 use sqlx::SqlitePool;
-use std::{net::SocketAddr, sync::Arc};
-use tokio::sync::RwLock;
+use std::{collections::HashSet, net::SocketAddr, sync::Arc};
+use tokio::sync::{Mutex, RwLock};
 use tower_http::trace::TraceLayer;
 
 const WEB_DIST_BUILD_ID: &str = env!("CATNAP_WEB_DIST_BUILD_ID");
@@ -28,6 +28,7 @@ pub struct AppState {
     pub catalog_refresh: crate::catalog_refresh::CatalogRefreshManager,
     pub ops: crate::ops::OpsManager,
     pub update_cache: Arc<RwLock<UpdateCheckCache>>,
+    pub lazycat_sync_users: Arc<Mutex<HashSet<String>>>,
 }
 
 fn unauthorized_html() -> &'static str {

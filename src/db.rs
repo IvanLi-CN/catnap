@@ -145,6 +145,169 @@ impl SettingsRow {
     }
 }
 
+fn parse_string_list_json(raw: Option<&str>) -> Vec<String> {
+    let Some(raw) = raw.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Vec::new();
+    };
+    serde_json::from_str::<Vec<String>>(raw).unwrap_or_default()
+}
+
+#[derive(Debug, Clone)]
+pub struct LazycatAccountRow {
+    pub user_id: String,
+    pub email: String,
+    pub password: String,
+    pub cookies_json: Option<String>,
+    pub state: String,
+    pub last_error: Option<String>,
+    pub last_authenticated_at: Option<String>,
+    pub last_site_sync_at: Option<String>,
+    pub last_panel_sync_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl LazycatAccountRow {
+    pub fn cookies(&self) -> Vec<(String, String)> {
+        let Some(raw) = self
+            .cookies_json
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        else {
+            return Vec::new();
+        };
+        serde_json::from_str::<Vec<(String, String)>>(raw).unwrap_or_default()
+    }
+
+    pub fn to_view(&self, machine_count: i64) -> LazycatAccountView {
+        LazycatAccountView {
+            connected: true,
+            email: Some(self.email.clone()),
+            state: self.state.clone(),
+            machine_count,
+            last_site_sync_at: self.last_site_sync_at.clone(),
+            last_panel_sync_at: self.last_panel_sync_at.clone(),
+            last_error: self.last_error.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LazycatSiteMachineRecord {
+    pub service_id: i64,
+    pub service_name: String,
+    pub service_code: String,
+    pub status: String,
+    pub os: Option<String>,
+    pub primary_address: Option<String>,
+    pub extra_addresses: Vec<String>,
+    pub billing_cycle: Option<String>,
+    pub renew_price: Option<String>,
+    pub first_price: Option<String>,
+    pub expires_at: Option<String>,
+    pub panel_kind: Option<String>,
+    pub panel_url: Option<String>,
+    pub panel_hash: Option<String>,
+    pub last_site_sync_at: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct LazycatMachineDetailRecord {
+    pub service_id: i64,
+    pub panel_kind: Option<String>,
+    pub panel_url: Option<String>,
+    pub panel_hash: Option<String>,
+    pub traffic_used_gb: Option<f64>,
+    pub traffic_limit_gb: Option<f64>,
+    pub traffic_reset_day: Option<i64>,
+    pub traffic_last_reset_at: Option<String>,
+    pub traffic_display: Option<String>,
+    pub detail_state: String,
+    pub detail_error: Option<String>,
+    pub last_panel_sync_at: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct LazycatPortMappingRecord {
+    pub family: String,
+    pub mapping_key: String,
+    pub public_ip: Option<String>,
+    pub public_port: Option<i64>,
+    pub public_port_end: Option<i64>,
+    pub private_ip: Option<String>,
+    pub private_port: Option<i64>,
+    pub private_port_end: Option<i64>,
+    pub protocol: Option<String>,
+    pub status: Option<String>,
+    pub description: Option<String>,
+    pub remote_created_at: Option<String>,
+    pub remote_updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct LazycatMachineRow {
+    pub user_id: String,
+    pub service_id: i64,
+    pub service_name: String,
+    pub service_code: String,
+    pub status: String,
+    pub os: Option<String>,
+    pub primary_address: Option<String>,
+    pub extra_addresses: Vec<String>,
+    pub billing_cycle: Option<String>,
+    pub renew_price: Option<String>,
+    pub first_price: Option<String>,
+    pub expires_at: Option<String>,
+    pub panel_kind: Option<String>,
+    pub panel_url: Option<String>,
+    pub panel_hash: Option<String>,
+    pub traffic_used_gb: Option<f64>,
+    pub traffic_limit_gb: Option<f64>,
+    pub traffic_reset_day: Option<i64>,
+    pub traffic_last_reset_at: Option<String>,
+    pub traffic_display: Option<String>,
+    pub last_site_sync_at: Option<String>,
+    pub last_panel_sync_at: Option<String>,
+    pub detail_state: String,
+    pub detail_error: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl LazycatMachineRow {
+    pub fn to_view(&self, port_mappings: Vec<LazycatPortMappingView>) -> LazycatMachineView {
+        LazycatMachineView {
+            service_id: self.service_id,
+            service_name: self.service_name.clone(),
+            service_code: self.service_code.clone(),
+            status: self.status.clone(),
+            os: self.os.clone(),
+            primary_address: self.primary_address.clone(),
+            extra_addresses: self.extra_addresses.clone(),
+            expires_at: self.expires_at.clone(),
+            billing_cycle: self.billing_cycle.clone(),
+            renew_price: self.renew_price.clone(),
+            first_price: self.first_price.clone(),
+            traffic: self
+                .traffic_used_gb
+                .zip(self.traffic_limit_gb)
+                .zip(self.traffic_reset_day)
+                .map(|((used_gb, limit_gb), reset_day)| LazycatTrafficView {
+                    used_gb,
+                    limit_gb,
+                    reset_day,
+                    last_reset_at: self.traffic_last_reset_at.clone(),
+                    display: self.traffic_display.clone(),
+                }),
+            port_mappings,
+            last_site_sync_at: self.last_site_sync_at.clone(),
+            last_panel_sync_at: self.last_panel_sync_at.clone(),
+            detail_state: self.detail_state.clone(),
+            detail_error: self.detail_error.clone(),
+        }
+    }
+}
+
 pub async fn init_db(db: &SqlitePool) -> anyhow::Result<()> {
     sqlx::query(
         r#"
@@ -281,6 +444,70 @@ CREATE TABLE IF NOT EXISTS web_push_subscriptions (
   created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS lazycat_accounts (
+  user_id TEXT PRIMARY KEY,
+  email TEXT NOT NULL,
+  password TEXT NOT NULL,
+  cookies_json TEXT NULL,
+  state TEXT NOT NULL,
+  last_error TEXT NULL,
+  last_authenticated_at TEXT NULL,
+  last_site_sync_at TEXT NULL,
+  last_panel_sync_at TEXT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS lazycat_machines (
+  user_id TEXT NOT NULL,
+  service_id INTEGER NOT NULL,
+  service_name TEXT NOT NULL,
+  service_code TEXT NOT NULL,
+  status TEXT NOT NULL,
+  os TEXT NULL,
+  primary_address TEXT NULL,
+  extra_addresses_json TEXT NOT NULL,
+  billing_cycle TEXT NULL,
+  renew_price TEXT NULL,
+  first_price TEXT NULL,
+  expires_at TEXT NULL,
+  panel_kind TEXT NULL,
+  panel_url TEXT NULL,
+  panel_hash TEXT NULL,
+  traffic_used_gb REAL NULL,
+  traffic_limit_gb REAL NULL,
+  traffic_reset_day INTEGER NULL,
+  traffic_last_reset_at TEXT NULL,
+  traffic_display TEXT NULL,
+  last_site_sync_at TEXT NULL,
+  last_panel_sync_at TEXT NULL,
+  detail_state TEXT NOT NULL,
+  detail_error TEXT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (user_id, service_id)
+);
+
+CREATE TABLE IF NOT EXISTS lazycat_port_mappings (
+  user_id TEXT NOT NULL,
+  service_id INTEGER NOT NULL,
+  family TEXT NOT NULL,
+  mapping_key TEXT NOT NULL,
+  public_ip TEXT NULL,
+  public_port INTEGER NULL,
+  public_port_end INTEGER NULL,
+  private_ip TEXT NULL,
+  private_port INTEGER NULL,
+  private_port_end INTEGER NULL,
+  protocol TEXT NULL,
+  status TEXT NULL,
+  description TEXT NULL,
+  remote_created_at TEXT NULL,
+  remote_updated_at TEXT NULL,
+  sync_at TEXT NOT NULL,
+  PRIMARY KEY (user_id, service_id, family, mapping_key)
+);
+
 CREATE TABLE IF NOT EXISTS event_logs (
   id TEXT PRIMARY KEY,
   user_id TEXT NULL,
@@ -383,6 +610,9 @@ CREATE INDEX IF NOT EXISTS idx_monitoring_partitions_user_enabled_updated_at ON 
 CREATE INDEX IF NOT EXISTS idx_monitoring_partitions_country_region_enabled ON monitoring_partitions (country_id, region_id, enabled);
 CREATE INDEX IF NOT EXISTS idx_user_config_archives_user_cleaned_at ON user_config_archives (user_id, cleaned_at DESC);
 CREATE INDEX IF NOT EXISTS idx_user_config_archives_config_id ON user_config_archives (config_id);
+CREATE INDEX IF NOT EXISTS idx_lazycat_machines_user_updated_at ON lazycat_machines (user_id, updated_at DESC, service_id DESC);
+CREATE INDEX IF NOT EXISTS idx_lazycat_machines_user_panel_sync ON lazycat_machines (user_id, last_panel_sync_at DESC, service_id DESC);
+CREATE INDEX IF NOT EXISTS idx_lazycat_port_mappings_user_service ON lazycat_port_mappings (user_id, service_id, family, sync_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_ops_events_ts ON ops_events (ts DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_ops_task_runs_ended_at ON ops_task_runs (ended_at DESC, id DESC);
@@ -1206,6 +1436,459 @@ pub async fn update_settings(
     .await?;
 
     get_settings(db, user_id).await
+}
+
+pub async fn get_lazycat_account(
+    db: &SqlitePool,
+    user_id: &str,
+) -> anyhow::Result<Option<LazycatAccountRow>> {
+    let row = sqlx::query(
+        r#"SELECT
+            user_id,
+            email,
+            password,
+            cookies_json,
+            state,
+            last_error,
+            last_authenticated_at,
+            last_site_sync_at,
+            last_panel_sync_at,
+            created_at,
+            updated_at
+        FROM lazycat_accounts
+        WHERE user_id = ?"#,
+    )
+    .bind(user_id)
+    .fetch_optional(db)
+    .await?;
+
+    Ok(row.map(|row| LazycatAccountRow {
+        user_id: row.get::<String, _>(0),
+        email: row.get::<String, _>(1),
+        password: row.get::<String, _>(2),
+        cookies_json: row.get::<Option<String>, _>(3),
+        state: row.get::<String, _>(4),
+        last_error: row.get::<Option<String>, _>(5),
+        last_authenticated_at: row.get::<Option<String>, _>(6),
+        last_site_sync_at: row.get::<Option<String>, _>(7),
+        last_panel_sync_at: row.get::<Option<String>, _>(8),
+        created_at: row.get::<String, _>(9),
+        updated_at: row.get::<String, _>(10),
+    }))
+}
+
+pub async fn put_lazycat_account(
+    db: &SqlitePool,
+    row: &LazycatAccountRow,
+) -> anyhow::Result<LazycatAccountRow> {
+    sqlx::query(
+        r#"INSERT INTO lazycat_accounts (
+            user_id,
+            email,
+            password,
+            cookies_json,
+            state,
+            last_error,
+            last_authenticated_at,
+            last_site_sync_at,
+            last_panel_sync_at,
+            created_at,
+            updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+            email = excluded.email,
+            password = excluded.password,
+            cookies_json = excluded.cookies_json,
+            state = excluded.state,
+            last_error = excluded.last_error,
+            last_authenticated_at = excluded.last_authenticated_at,
+            last_site_sync_at = excluded.last_site_sync_at,
+            last_panel_sync_at = excluded.last_panel_sync_at,
+            updated_at = excluded.updated_at"#,
+    )
+    .bind(&row.user_id)
+    .bind(&row.email)
+    .bind(&row.password)
+    .bind(row.cookies_json.as_deref())
+    .bind(&row.state)
+    .bind(row.last_error.as_deref())
+    .bind(row.last_authenticated_at.as_deref())
+    .bind(row.last_site_sync_at.as_deref())
+    .bind(row.last_panel_sync_at.as_deref())
+    .bind(&row.created_at)
+    .bind(&row.updated_at)
+    .execute(db)
+    .await?;
+
+    get_lazycat_account(db, &row.user_id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("lazycat account disappeared after upsert"))
+}
+
+pub async fn count_lazycat_machines(db: &SqlitePool, user_id: &str) -> anyhow::Result<i64> {
+    let row = sqlx::query("SELECT COUNT(*) FROM lazycat_machines WHERE user_id = ?")
+        .bind(user_id)
+        .fetch_one(db)
+        .await?;
+    Ok(row.get::<i64, _>(0))
+}
+
+pub async fn delete_lazycat_account_data(db: &SqlitePool, user_id: &str) -> anyhow::Result<()> {
+    let mut tx = db.begin().await?;
+    sqlx::query("DELETE FROM lazycat_port_mappings WHERE user_id = ?")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM lazycat_machines WHERE user_id = ?")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM lazycat_accounts WHERE user_id = ?")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+pub async fn upsert_lazycat_site_machines(
+    db: &SqlitePool,
+    user_id: &str,
+    machines: &[LazycatSiteMachineRecord],
+) -> anyhow::Result<()> {
+    let now = now_rfc3339();
+    let mut tx = db.begin().await?;
+
+    for machine in machines {
+        let extra_addresses_json = serde_json::to_string(&machine.extra_addresses)?;
+        sqlx::query(
+            r#"INSERT INTO lazycat_machines (
+                user_id,
+                service_id,
+                service_name,
+                service_code,
+                status,
+                os,
+                primary_address,
+                extra_addresses_json,
+                billing_cycle,
+                renew_price,
+                first_price,
+                expires_at,
+                panel_kind,
+                panel_url,
+                panel_hash,
+                traffic_used_gb,
+                traffic_limit_gb,
+                traffic_reset_day,
+                traffic_last_reset_at,
+                traffic_display,
+                last_site_sync_at,
+                last_panel_sync_at,
+                detail_state,
+                detail_error,
+                created_at,
+                updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, ?, NULL, 'pending', NULL, ?, ?)
+            ON CONFLICT(user_id, service_id) DO UPDATE SET
+                service_name = excluded.service_name,
+                service_code = excluded.service_code,
+                status = excluded.status,
+                os = excluded.os,
+                primary_address = excluded.primary_address,
+                extra_addresses_json = excluded.extra_addresses_json,
+                billing_cycle = excluded.billing_cycle,
+                renew_price = excluded.renew_price,
+                first_price = excluded.first_price,
+                expires_at = excluded.expires_at,
+                panel_kind = COALESCE(excluded.panel_kind, lazycat_machines.panel_kind),
+                panel_url = COALESCE(excluded.panel_url, lazycat_machines.panel_url),
+                panel_hash = COALESCE(excluded.panel_hash, lazycat_machines.panel_hash),
+                last_site_sync_at = excluded.last_site_sync_at,
+                updated_at = excluded.updated_at"#,
+        )
+        .bind(user_id)
+        .bind(machine.service_id)
+        .bind(&machine.service_name)
+        .bind(&machine.service_code)
+        .bind(&machine.status)
+        .bind(machine.os.as_deref())
+        .bind(machine.primary_address.as_deref())
+        .bind(extra_addresses_json)
+        .bind(machine.billing_cycle.as_deref())
+        .bind(machine.renew_price.as_deref())
+        .bind(machine.first_price.as_deref())
+        .bind(machine.expires_at.as_deref())
+        .bind(machine.panel_kind.as_deref())
+        .bind(machine.panel_url.as_deref())
+        .bind(machine.panel_hash.as_deref())
+        .bind(&machine.last_site_sync_at)
+        .bind(&now)
+        .bind(&now)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    if machines.is_empty() {
+        sqlx::query("DELETE FROM lazycat_port_mappings WHERE user_id = ?")
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM lazycat_machines WHERE user_id = ?")
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await?;
+    } else {
+        let ids = machines
+            .iter()
+            .map(|item| item.service_id)
+            .collect::<Vec<_>>();
+        let placeholders = vec!["?"; ids.len()].join(", ");
+        let delete_mappings_sql = format!(
+            "DELETE FROM lazycat_port_mappings WHERE user_id = ? AND service_id NOT IN ({placeholders})"
+        );
+        let mut delete_mappings = sqlx::query(&delete_mappings_sql).bind(user_id);
+        for id in &ids {
+            delete_mappings = delete_mappings.bind(*id);
+        }
+        delete_mappings.execute(&mut *tx).await?;
+
+        let delete_machines_sql = format!(
+            "DELETE FROM lazycat_machines WHERE user_id = ? AND service_id NOT IN ({placeholders})"
+        );
+        let mut delete_machines = sqlx::query(&delete_machines_sql).bind(user_id);
+        for id in &ids {
+            delete_machines = delete_machines.bind(*id);
+        }
+        delete_machines.execute(&mut *tx).await?;
+    }
+
+    tx.commit().await?;
+    Ok(())
+}
+
+pub async fn update_lazycat_machine_detail(
+    db: &SqlitePool,
+    user_id: &str,
+    detail: &LazycatMachineDetailRecord,
+) -> anyhow::Result<()> {
+    let now = now_rfc3339();
+    sqlx::query(
+        r#"UPDATE lazycat_machines
+        SET panel_kind = ?,
+            panel_url = ?,
+            panel_hash = ?,
+            traffic_used_gb = ?,
+            traffic_limit_gb = ?,
+            traffic_reset_day = ?,
+            traffic_last_reset_at = ?,
+            traffic_display = ?,
+            last_panel_sync_at = ?,
+            detail_state = ?,
+            detail_error = ?,
+            updated_at = ?
+        WHERE user_id = ? AND service_id = ?"#,
+    )
+    .bind(detail.panel_kind.as_deref())
+    .bind(detail.panel_url.as_deref())
+    .bind(detail.panel_hash.as_deref())
+    .bind(detail.traffic_used_gb)
+    .bind(detail.traffic_limit_gb)
+    .bind(detail.traffic_reset_day)
+    .bind(detail.traffic_last_reset_at.as_deref())
+    .bind(detail.traffic_display.as_deref())
+    .bind(&detail.last_panel_sync_at)
+    .bind(&detail.detail_state)
+    .bind(detail.detail_error.as_deref())
+    .bind(&now)
+    .bind(user_id)
+    .bind(detail.service_id)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+pub async fn replace_lazycat_port_mappings(
+    db: &SqlitePool,
+    user_id: &str,
+    service_id: i64,
+    family: &str,
+    mappings: &[LazycatPortMappingRecord],
+    sync_at: &str,
+) -> anyhow::Result<()> {
+    let mut tx = db.begin().await?;
+    sqlx::query(
+        "DELETE FROM lazycat_port_mappings WHERE user_id = ? AND service_id = ? AND family = ?",
+    )
+    .bind(user_id)
+    .bind(service_id)
+    .bind(family)
+    .execute(&mut *tx)
+    .await?;
+
+    for mapping in mappings {
+        sqlx::query(
+            r#"INSERT INTO lazycat_port_mappings (
+                user_id,
+                service_id,
+                family,
+                mapping_key,
+                public_ip,
+                public_port,
+                public_port_end,
+                private_ip,
+                private_port,
+                private_port_end,
+                protocol,
+                status,
+                description,
+                remote_created_at,
+                remote_updated_at,
+                sync_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+        )
+        .bind(user_id)
+        .bind(service_id)
+        .bind(&mapping.family)
+        .bind(&mapping.mapping_key)
+        .bind(mapping.public_ip.as_deref())
+        .bind(mapping.public_port)
+        .bind(mapping.public_port_end)
+        .bind(mapping.private_ip.as_deref())
+        .bind(mapping.private_port)
+        .bind(mapping.private_port_end)
+        .bind(mapping.protocol.as_deref())
+        .bind(mapping.status.as_deref())
+        .bind(mapping.description.as_deref())
+        .bind(mapping.remote_created_at.as_deref())
+        .bind(mapping.remote_updated_at.as_deref())
+        .bind(sync_at)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    tx.commit().await?;
+    Ok(())
+}
+
+pub async fn list_lazycat_machines(
+    db: &SqlitePool,
+    user_id: &str,
+) -> anyhow::Result<Vec<LazycatMachineRow>> {
+    let rows = sqlx::query(
+        r#"SELECT
+            user_id,
+            service_id,
+            service_name,
+            service_code,
+            status,
+            os,
+            primary_address,
+            extra_addresses_json,
+            billing_cycle,
+            renew_price,
+            first_price,
+            expires_at,
+            panel_kind,
+            panel_url,
+            panel_hash,
+            traffic_used_gb,
+            traffic_limit_gb,
+            traffic_reset_day,
+            traffic_last_reset_at,
+            traffic_display,
+            last_site_sync_at,
+            last_panel_sync_at,
+            detail_state,
+            detail_error,
+            created_at,
+            updated_at
+        FROM lazycat_machines
+        WHERE user_id = ?
+        ORDER BY COALESCE(expires_at, '9999-12-31T23:59:59Z') ASC, service_id ASC"#,
+    )
+    .bind(user_id)
+    .fetch_all(db)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|row| LazycatMachineRow {
+            user_id: row.get::<String, _>(0),
+            service_id: row.get::<i64, _>(1),
+            service_name: row.get::<String, _>(2),
+            service_code: row.get::<String, _>(3),
+            status: row.get::<String, _>(4),
+            os: row.get::<Option<String>, _>(5),
+            primary_address: row.get::<Option<String>, _>(6),
+            extra_addresses: parse_string_list_json(row.get::<Option<String>, _>(7).as_deref()),
+            billing_cycle: row.get::<Option<String>, _>(8),
+            renew_price: row.get::<Option<String>, _>(9),
+            first_price: row.get::<Option<String>, _>(10),
+            expires_at: row.get::<Option<String>, _>(11),
+            panel_kind: row.get::<Option<String>, _>(12),
+            panel_url: row.get::<Option<String>, _>(13),
+            panel_hash: row.get::<Option<String>, _>(14),
+            traffic_used_gb: row.get::<Option<f64>, _>(15),
+            traffic_limit_gb: row.get::<Option<f64>, _>(16),
+            traffic_reset_day: row.get::<Option<i64>, _>(17),
+            traffic_last_reset_at: row.get::<Option<String>, _>(18),
+            traffic_display: row.get::<Option<String>, _>(19),
+            last_site_sync_at: row.get::<Option<String>, _>(20),
+            last_panel_sync_at: row.get::<Option<String>, _>(21),
+            detail_state: row.get::<String, _>(22),
+            detail_error: row.get::<Option<String>, _>(23),
+            created_at: row.get::<String, _>(24),
+            updated_at: row.get::<String, _>(25),
+        })
+        .collect())
+}
+
+pub async fn list_lazycat_port_mappings(
+    db: &SqlitePool,
+    user_id: &str,
+) -> anyhow::Result<Vec<(i64, LazycatPortMappingView)>> {
+    let rows = sqlx::query(
+        r#"SELECT
+            service_id,
+            family,
+            public_ip,
+            public_port,
+            public_port_end,
+            private_ip,
+            private_port,
+            private_port_end,
+            protocol,
+            status,
+            description
+        FROM lazycat_port_mappings
+        WHERE user_id = ?
+        ORDER BY service_id ASC, family ASC, COALESCE(public_port, 0) ASC, mapping_key ASC"#,
+    )
+    .bind(user_id)
+    .fetch_all(db)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            (
+                row.get::<i64, _>(0),
+                LazycatPortMappingView {
+                    family: row.get::<String, _>(1),
+                    public_ip: row.get::<Option<String>, _>(2),
+                    public_port: row.get::<Option<i64>, _>(3),
+                    public_port_end: row.get::<Option<i64>, _>(4),
+                    private_ip: row.get::<Option<String>, _>(5),
+                    private_port: row.get::<Option<i64>, _>(6),
+                    private_port_end: row.get::<Option<i64>, _>(7),
+                    protocol: row.get::<Option<String>, _>(8),
+                    status: row.get::<Option<String>, _>(9),
+                    description: row.get::<Option<String>, _>(10),
+                },
+            )
+        })
+        .collect())
 }
 
 pub async fn list_enabled_monitoring_config_ids(

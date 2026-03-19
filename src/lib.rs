@@ -4,6 +4,7 @@ pub mod catalog_refresh;
 pub mod config;
 pub mod db;
 pub mod defaults;
+pub mod lazycat;
 pub mod models;
 mod notification_content;
 pub mod notifications;

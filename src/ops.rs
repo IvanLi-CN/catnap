@@ -3193,6 +3193,7 @@ mod tests {
     };
     use serde_json::Value;
     use sqlx::sqlite::SqlitePoolOptions;
+    use std::collections::HashSet;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use time::format_description::well_known::Rfc3339;
@@ -3208,6 +3209,12 @@ mod tests {
             update_check_timeout_ms: 1500,
             github_api_base_url: "https://api.github.com".to_string(),
             upstream_cart_url,
+            lazycat_base_url: "https://lxc.lazycat.wiki".to_string(),
+            lazycat_site_sync_interval_minutes: 5,
+            lazycat_panel_sync_interval_minutes: 10,
+            lazycat_panel_concurrency: 2,
+            lazycat_panel_timeout_ms: 5_000,
+            lazycat_allow_invalid_tls: true,
             telegram_api_base_url: "https://api.telegram.org".to_string(),
             auth_user_header: Some("x-user".to_string()),
             dev_user_id: None,

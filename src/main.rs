@@ -1,6 +1,6 @@
 use catnap::{build_app, RuntimeConfig};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
-use std::{net::SocketAddr, str::FromStr};
+use std::{collections::HashSet, net::SocketAddr, str::FromStr, sync::Arc};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
@@ -35,6 +35,7 @@ async fn main() -> anyhow::Result<()> {
         catalog_refresh: catnap::catalog_refresh::CatalogRefreshManager::new(),
         ops,
         update_cache,
+        lazycat_sync_users: Arc::new(tokio::sync::Mutex::new(HashSet::new())),
     };
 
     catnap::poller::spawn(state.clone()).await;
