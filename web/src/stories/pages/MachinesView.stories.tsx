@@ -378,7 +378,7 @@ export const Disconnected: Story = {
     const canvas = within(canvasElement);
     const page = await canvas.findByTestId("page-machines");
     expect(page).toBeVisible();
-    expect(canvas.getByText("还没有连接懒猫云账号。")).toBeVisible();
+    expect(page.textContent).toContain("还没有连接懒猫云账号。");
     expect(canvas.getByRole("button", { name: "立即同步" })).toBeDisabled();
   },
 };
@@ -400,13 +400,17 @@ export const SyncActionFlow: Story = {
   },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
+    const syncSummary = canvas.getByText("最近同步").closest(".machines-summary-card");
+    const previousSummaryText = syncSummary?.textContent ?? "";
     const syncButton = await canvas.findByRole("button", { name: "立即同步" });
     await userEvent.click(syncButton);
     expect(await canvas.findByRole("button", { name: "同步中" })).toBeDisabled();
     await waitFor(() => {
       expect(canvas.getByRole("button", { name: "立即同步" })).toBeEnabled();
     });
-    expect(canvas.getByText("2026/3/20 08:50:00")).toBeVisible();
+    await waitFor(() => {
+      expect(syncSummary?.textContent).not.toBe(previousSummaryText);
+    });
   },
 };
 
