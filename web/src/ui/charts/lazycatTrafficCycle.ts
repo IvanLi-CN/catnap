@@ -184,9 +184,7 @@ export function buildLazycatTrafficCycle(
       remainingGb >= 0
         ? `${formatTrafficValue(remainingGb)} ${displayUnit} 剩余`
         : `超出 ${formatTrafficValue(Math.abs(remainingGb))} ${displayUnit}`,
-    sampleCountLabel: hasSamples
-      ? `${points.length} 个小时样本`
-      : "0 个小时样本（显示缓存摘要）",
+    sampleCountLabel: hasSamples ? `${points.length} 个小时样本` : "0 个小时样本（显示缓存摘要）",
     startAt: cycleStart.getTime(),
     startLabel: formatDateTime(cycleStart.getTime()),
     ticks: buildTicks(cycleStart.getTime(), currentAt, cycleEnd.getTime()),

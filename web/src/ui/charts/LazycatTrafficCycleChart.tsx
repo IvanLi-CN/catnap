@@ -203,7 +203,9 @@ export function LazycatTrafficCycleChart({ serviceId, snapshot }: LazycatTraffic
       <div className="machines-traffic-panel-foot">
         <span>{`上限 ${snapshot.limitLabel}`}</span>
         <span>
-          {snapshot.hasSamples ? `最新样本 ${snapshot.currentLabel}` : "暂无小时样本，当前显示缓存摘要"}
+          {snapshot.hasSamples
+            ? `最新样本 ${snapshot.currentLabel}`
+            : "暂无小时样本，当前显示缓存摘要"}
         </span>
         <span>{snapshot.sampleCountLabel}</span>
         <span>虚线 = 流量上限</span>
