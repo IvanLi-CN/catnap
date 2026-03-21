@@ -179,10 +179,10 @@ function deriveTrafficScale(traffic: LazycatTrafficSnapshotInput): {
     parsedLimit.unit && normalizeTrafficUnit(parsedLimit.unit) === normalizedUnit
       ? traffic.limitGb / (parsedLimit.value ?? Number.NaN)
       : Number.NaN,
+    getCanonicalGbPerUnit(displayUnit),
     parsedUsed.unit && normalizeTrafficUnit(parsedUsed.unit) === normalizedUnit
       ? traffic.usedGb / (parsedUsed.value ?? Number.NaN)
       : Number.NaN,
-    getCanonicalGbPerUnit(displayUnit),
   ].find((value) => Number.isFinite(value) && value > 0);
 
   return {

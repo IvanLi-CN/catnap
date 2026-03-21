@@ -815,8 +815,17 @@ fn should_hide_stale_previous_cycle_traffic(
     if !resolved_samples.is_empty() {
         return false;
     }
+    let resolved_cycle_start = parse_rfc3339_timestamp(resolved_cycle.0);
+    let machine_last_reset_at = machine
+        .traffic_last_reset_at
+        .as_deref()
+        .and_then(parse_rfc3339_timestamp);
     let Some(latest_sample) = latest_sample else {
-        return false;
+        return matches!(
+            (machine_last_reset_at, resolved_cycle_start),
+            (Some(machine_last_reset_at), Some(resolved_cycle_start))
+                if machine_last_reset_at < resolved_cycle_start
+        );
     };
     if latest_sample.cycle_start_at == resolved_cycle.0
         && latest_sample.cycle_end_at == resolved_cycle.1

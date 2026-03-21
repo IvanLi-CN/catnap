@@ -775,6 +775,80 @@ async fn lazycat_machines_hide_stale_previous_cycle_traffic_after_rollover() {
 }
 
 #[tokio::test]
+async fn lazycat_machines_hide_stale_previous_cycle_traffic_without_history_rows() {
+    let t = make_app().await;
+    let user_id = "u_1";
+    let service_id = 9102;
+    let primary_address = "vm-charlie.edge.example.test";
+    seed_lazycat_machine(
+        &t,
+        user_id,
+        service_id,
+        "owner@example.com",
+        "旧账期缓存机",
+        primary_address,
+    )
+    .await;
+
+    let now = OffsetDateTime::now_utc();
+    let current_cycle_start = PrimitiveDateTime::new(
+        Date::from_calendar_date(now.year(), now.month(), 1).unwrap(),
+        Time::MIDNIGHT,
+    )
+    .assume_offset(UtcOffset::UTC);
+    let previous_cycle_marker = current_cycle_start - Duration::days(1);
+    let previous_cycle_start = PrimitiveDateTime::new(
+        Date::from_calendar_date(
+            previous_cycle_marker.year(),
+            previous_cycle_marker.month(),
+            1,
+        )
+        .unwrap(),
+        Time::MIDNIGHT,
+    )
+    .assume_offset(UtcOffset::UTC);
+    let sampled_at = previous_cycle_start + Duration::days(10) + Duration::minutes(20);
+    let previous_cycle_start_rfc3339 = previous_cycle_start.format(&Rfc3339).unwrap();
+    let sampled_at_rfc3339 = sampled_at.format(&Rfc3339).unwrap();
+
+    let detail = catnap::db::LazycatMachineDetailRecord {
+        service_id,
+        panel_kind: Some("container".to_string()),
+        panel_url: Some(format!(
+            "https://panel-{service_id}.example.test:8443/container/dashboard"
+        )),
+        panel_hash: Some(format!("hash-{service_id}")),
+        traffic_used_gb: Some(321.0),
+        traffic_limit_gb: Some(800.0),
+        traffic_reset_day: Some(1),
+        traffic_last_reset_at: Some(previous_cycle_start_rfc3339.clone()),
+        traffic_display: Some("321 GB / 800 GB".to_string()),
+        detail_state: "stale".to_string(),
+        detail_error: Some("panel timeout".to_string()),
+        last_panel_sync_at: sampled_at_rfc3339.clone(),
+    };
+    catnap::db::update_lazycat_machine_detail(&t.db, "u_1", &detail)
+        .await
+        .unwrap();
+
+    sqlx::query("DELETE FROM lazycat_traffic_samples WHERE user_id = ? AND service_id = ?")
+        .bind("u_1")
+        .bind(service_id)
+        .execute(&t.db)
+        .await
+        .unwrap();
+
+    let (status, json) = authed_json(&t, "u_1", Method::GET, "/api/lazycat/machines", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(now >= current_cycle_start);
+    assert!(json["items"][0]["traffic"].is_null());
+    assert_eq!(
+        json["items"][0]["lastPanelSyncAt"].as_str(),
+        Some(sampled_at_rfc3339.as_str())
+    );
+}
+
+#[tokio::test]
 async fn lazycat_sync_requires_connected_account() {
     let t = make_app().await;
     let (status, json) = authed_json(&t, "u_1", Method::POST, "/api/lazycat/sync", None).await;
