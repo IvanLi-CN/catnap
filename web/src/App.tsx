@@ -3782,12 +3782,6 @@ export function MachinesView({
                         <div className="machines-kv-value">{item.renewPrice ?? "—"}</div>
                       </div>
                       <div>
-                        <span className="machines-kv-label">流量</span>
-                        <div className="machines-kv-value">
-                          {trafficSnapshot ? trafficSnapshot.usageLabel : "—"}
-                        </div>
-                      </div>
-                      <div>
                         <span className="machines-kv-label">支付周期</span>
                         <div className="machines-kv-value">{item.billingCycle ?? "—"}</div>
                       </div>
