@@ -951,7 +951,7 @@ fn compute_traffic_cycle_start(
             candidate_start = candidate_end;
         }
     }
-    infer_cycle_start(reset_day, reference_time)
+    infer_cycle_start(reset_day, lazycat_cycle_reference_time(reference_time))
 }
 
 fn infer_cycle_start(reset_day: i64, reference_time: OffsetDateTime) -> Option<OffsetDateTime> {
@@ -961,6 +961,18 @@ fn infer_cycle_start(reset_day: i64, reference_time: OffsetDateTime) -> Option<O
     } else {
         create_monthly_anchor(reference_time, -1, reset_day, Time::MIDNIGHT)
     }
+}
+
+fn lazycat_cycle_reference_time(reference_time: OffsetDateTime) -> OffsetDateTime {
+    if reference_time.offset() == UtcOffset::UTC {
+        reference_time.to_offset(lazycat_provider_offset())
+    } else {
+        reference_time
+    }
+}
+
+fn lazycat_provider_offset() -> UtcOffset {
+    UtcOffset::from_hms(8, 0, 0).expect("valid lazycat provider offset")
 }
 
 fn create_monthly_anchor(
@@ -2265,6 +2277,71 @@ mod tests {
 
         assert_eq!(sample.cycle_start_at, "2026-03-21T10:30:00Z");
         assert_eq!(sample.cycle_end_at, "2026-04-21T10:30:00Z");
+    }
+
+    #[test]
+    fn build_traffic_sample_uses_provider_offset_when_last_reset_is_missing() {
+        let detail = LazycatMachineDetailRecord {
+            service_id: 2312,
+            panel_kind: Some("container".to_string()),
+            panel_url: Some(
+                "https://edge-node-24.example.net:8443/container/dashboard".to_string(),
+            ),
+            panel_hash: Some("hash".to_string()),
+            traffic_used_gb: Some(0.4),
+            traffic_limit_gb: Some(800.0),
+            traffic_reset_day: Some(11),
+            traffic_last_reset_at: None,
+            traffic_display: Some("0.40 GB / 800 GB".to_string()),
+            detail_state: "ready".to_string(),
+            detail_error: None,
+            last_panel_sync_at: "2026-03-10T16:20:00Z".to_string(),
+        };
+
+        let sample = build_traffic_sample(&detail, true).expect("sample");
+
+        assert_eq!(sample.cycle_start_at, "2026-03-10T16:00:00Z");
+        assert_eq!(sample.cycle_end_at, "2026-04-10T16:00:00Z");
+    }
+
+    #[test]
+    fn resolve_machine_traffic_cycle_uses_provider_offset_without_last_reset() {
+        let machine = LazycatMachineRow {
+            user_id: "u_1".to_string(),
+            service_id: 2312,
+            service_name: "港湾 Transit Mini".to_string(),
+            service_code: "srvQ8L2M5R1P9K".to_string(),
+            status: "Active".to_string(),
+            os: Some("Debian 12".to_string()),
+            primary_address: Some("edge-node-24.example.net".to_string()),
+            extra_addresses: vec![],
+            billing_cycle: Some("monthly".to_string()),
+            renew_price: Some("¥9.34元/月付".to_string()),
+            first_price: Some("¥9.34元".to_string()),
+            expires_at: Some("2026-04-11T00:00:00Z".to_string()),
+            panel_kind: Some("container".to_string()),
+            panel_url: Some(
+                "https://edge-node-24.example.net:8443/container/dashboard".to_string(),
+            ),
+            panel_hash: Some("hash".to_string()),
+            traffic_used_gb: Some(0.4),
+            traffic_limit_gb: Some(800.0),
+            traffic_reset_day: Some(11),
+            traffic_last_reset_at: None,
+            traffic_display: Some("0.40 GB / 800 GB".to_string()),
+            last_site_sync_at: Some("2026-03-19T14:00:00Z".to_string()),
+            last_panel_sync_at: Some("2026-03-10T16:20:00Z".to_string()),
+            detail_state: "ready".to_string(),
+            detail_error: None,
+            created_at: "2026-03-19T14:05:00Z".to_string(),
+            updated_at: "2026-03-19T14:05:00Z".to_string(),
+        };
+        let now = OffsetDateTime::parse("2026-03-10T16:20:00Z", &Rfc3339).unwrap();
+
+        let cycle = resolve_machine_traffic_cycle(&machine, now).expect("cycle");
+
+        assert_eq!(cycle.0, "2026-03-10T16:00:00Z");
+        assert_eq!(cycle.1, "2026-04-10T16:00:00Z");
     }
 
     #[test]
