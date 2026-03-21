@@ -1201,3 +1201,72 @@ async fn lazycat_traffic_samples_for_cycles_batch_filters_requested_windows() {
     assert_eq!(rows[1].service_id, 5845);
     assert_eq!(rows[1].cycle_start_at, "2026-03-11T00:00:00Z");
 }
+
+#[tokio::test]
+async fn lazycat_latest_traffic_samples_for_services_returns_newest_rows() {
+    let cfg = test_config();
+    let db = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&cfg.db_url)
+        .await
+        .unwrap();
+
+    catnap::db::init_db(&db).await.unwrap();
+
+    for sample in [
+        catnap::db::LazycatTrafficSampleRecord {
+            service_id: 2312,
+            bucket_at: "2026-03-21T10:00:00Z".to_string(),
+            sampled_at: "2026-03-21T10:25:00Z".to_string(),
+            cycle_start_at: "2026-03-11T00:00:00Z".to_string(),
+            cycle_end_at: "2026-04-11T00:00:00Z".to_string(),
+            used_gb: 120.0,
+            limit_gb: 800.0,
+            reset_day: 11,
+            last_reset_at: Some("2026-03-11T00:00:00Z".to_string()),
+            display: Some("GB".to_string()),
+        },
+        catnap::db::LazycatTrafficSampleRecord {
+            service_id: 2312,
+            bucket_at: "2026-03-21T11:00:00Z".to_string(),
+            sampled_at: "2026-03-21T11:15:00Z".to_string(),
+            cycle_start_at: "2026-03-11T00:00:00Z".to_string(),
+            cycle_end_at: "2026-04-11T00:00:00Z".to_string(),
+            used_gb: 140.0,
+            limit_gb: 800.0,
+            reset_day: 11,
+            last_reset_at: Some("2026-03-11T00:00:00Z".to_string()),
+            display: Some("GB".to_string()),
+        },
+        catnap::db::LazycatTrafficSampleRecord {
+            service_id: 5845,
+            bucket_at: "2026-03-15T08:00:00Z".to_string(),
+            sampled_at: "2026-03-15T08:10:00Z".to_string(),
+            cycle_start_at: "2026-03-01T00:00:00Z".to_string(),
+            cycle_end_at: "2026-04-01T00:00:00Z".to_string(),
+            used_gb: 12.4,
+            limit_gb: 200.0,
+            reset_day: 1,
+            last_reset_at: Some("2026-03-01T00:00:00Z".to_string()),
+            display: Some("TiB".to_string()),
+        },
+    ] {
+        catnap::db::upsert_lazycat_traffic_sample(&db, "u_1", &sample)
+            .await
+            .unwrap();
+    }
+
+    let rows = catnap::db::list_latest_lazycat_traffic_samples_for_services(
+        &db,
+        "u_1",
+        &[2312, 5845, 9999],
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].service_id, 2312);
+    assert_eq!(rows[0].sampled_at, "2026-03-21T11:15:00Z");
+    assert_eq!(rows[1].service_id, 5845);
+    assert_eq!(rows[1].sampled_at, "2026-03-15T08:10:00Z");
+}

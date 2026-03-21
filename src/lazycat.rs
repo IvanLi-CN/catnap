@@ -683,16 +683,55 @@ pub async fn get_machines_response(
             .push(mapping);
     }
     let now = OffsetDateTime::now_utc();
-    let active_cycles = machines
+    let resolved_cycles = machines
         .iter()
         .filter_map(|machine| {
             resolve_machine_traffic_cycle(machine, now).map(|(cycle_start_at, cycle_end_at)| {
-                (machine.service_id, cycle_start_at, cycle_end_at)
+                (machine.service_id, (cycle_start_at, cycle_end_at))
             })
         })
-        .collect::<Vec<_>>();
-    let traffic_samples =
-        db::list_lazycat_traffic_samples_for_cycles(&state.db, user_id, &active_cycles).await?;
+        .collect::<HashMap<_, _>>();
+    let latest_samples = db::list_latest_lazycat_traffic_samples_for_services(
+        &state.db,
+        user_id,
+        &resolved_cycles.keys().copied().collect::<Vec<_>>(),
+    )
+    .await?;
+    let latest_samples_by_service = latest_samples
+        .into_iter()
+        .map(|sample| (sample.service_id, sample))
+        .collect::<HashMap<_, _>>();
+    let mut requested_cycle_keys = resolved_cycles
+        .iter()
+        .map(|(&service_id, (cycle_start_at, cycle_end_at))| {
+            (service_id, cycle_start_at.clone(), cycle_end_at.clone())
+        })
+        .collect::<HashSet<_>>();
+    for machine in &machines {
+        let Some(resolved_cycle) = resolved_cycles.get(&machine.service_id) else {
+            continue;
+        };
+        let Some(latest_sample) = latest_samples_by_service.get(&machine.service_id) else {
+            continue;
+        };
+        if should_consider_latest_cycle_fallback(
+            machine,
+            (&resolved_cycle.0, &resolved_cycle.1),
+            latest_sample,
+        ) {
+            requested_cycle_keys.insert((
+                machine.service_id,
+                latest_sample.cycle_start_at.clone(),
+                latest_sample.cycle_end_at.clone(),
+            ));
+        }
+    }
+    let traffic_samples = db::list_lazycat_traffic_samples_for_cycles(
+        &state.db,
+        user_id,
+        &requested_cycle_keys.into_iter().collect::<Vec<_>>(),
+    )
+    .await?;
     let mut samples_by_cycle =
         HashMap::<(i64, String, String), Vec<LazycatTrafficSampleRow>>::new();
     for sample in traffic_samples {
@@ -711,16 +750,51 @@ pub async fn get_machines_response(
             .remove(&machine.service_id)
             .unwrap_or_default();
         let traffic = if let Some((cycle_start_at, cycle_end_at)) =
-            resolve_machine_traffic_cycle(machine, now)
+            resolved_cycles.get(&machine.service_id).cloned()
         {
-            let service_samples = samples_by_cycle
-                .remove(&(
-                    machine.service_id,
-                    cycle_start_at.clone(),
-                    cycle_end_at.clone(),
-                ))
+            let current_cycle_key = (
+                machine.service_id,
+                cycle_start_at.clone(),
+                cycle_end_at.clone(),
+            );
+            let current_cycle_samples = samples_by_cycle
+                .get(&current_cycle_key)
+                .cloned()
                 .unwrap_or_default();
-            build_machine_traffic_view(machine, service_samples, cycle_start_at, cycle_end_at)
+            let (selected_cycle_start, selected_cycle_end, selected_cycle_samples) =
+                if let Some(latest_sample) = latest_samples_by_service.get(&machine.service_id) {
+                    if should_use_latest_cycle_fallback(
+                        machine,
+                        (&cycle_start_at, &cycle_end_at),
+                        &current_cycle_samples,
+                        latest_sample,
+                    ) {
+                        let fallback_cycle_key = (
+                            machine.service_id,
+                            latest_sample.cycle_start_at.clone(),
+                            latest_sample.cycle_end_at.clone(),
+                        );
+                        let fallback_cycle_samples = samples_by_cycle
+                            .get(&fallback_cycle_key)
+                            .cloned()
+                            .unwrap_or_default();
+                        (
+                            latest_sample.cycle_start_at.clone(),
+                            latest_sample.cycle_end_at.clone(),
+                            fallback_cycle_samples,
+                        )
+                    } else {
+                        (cycle_start_at, cycle_end_at, current_cycle_samples)
+                    }
+                } else {
+                    (cycle_start_at, cycle_end_at, current_cycle_samples)
+                };
+            build_machine_traffic_view(
+                machine,
+                selected_cycle_samples,
+                selected_cycle_start,
+                selected_cycle_end,
+            )
         } else {
             None
         };
@@ -779,6 +853,54 @@ fn resolve_machine_traffic_cycle(
         reference_time,
     )?;
     Some((format_timestamp(cycle_start)?, format_timestamp(cycle_end)?))
+}
+
+fn should_use_latest_cycle_fallback(
+    machine: &LazycatMachineRow,
+    resolved_cycle: (&str, &str),
+    resolved_samples: &[LazycatTrafficSampleRow],
+    latest_sample: &LazycatTrafficSampleRow,
+) -> bool {
+    resolved_samples.is_empty()
+        && should_consider_latest_cycle_fallback(machine, resolved_cycle, latest_sample)
+}
+
+fn should_consider_latest_cycle_fallback(
+    machine: &LazycatMachineRow,
+    resolved_cycle: (&str, &str),
+    latest_sample: &LazycatTrafficSampleRow,
+) -> bool {
+    if latest_sample.cycle_start_at == resolved_cycle.0
+        && latest_sample.cycle_end_at == resolved_cycle.1
+    {
+        return false;
+    }
+
+    let Some(last_panel_sync_at) = machine
+        .last_panel_sync_at
+        .as_deref()
+        .and_then(parse_rfc3339_timestamp)
+    else {
+        return false;
+    };
+    let Some(latest_sampled_at) = parse_rfc3339_timestamp(&latest_sample.sampled_at) else {
+        return false;
+    };
+    if latest_sampled_at >= last_panel_sync_at {
+        return false;
+    }
+
+    match (
+        machine.traffic_last_reset_at.as_deref(),
+        latest_sample.last_reset_at.as_deref(),
+    ) {
+        (Some(machine_last_reset_at), Some(sample_last_reset_at))
+            if machine_last_reset_at == sample_last_reset_at => {}
+        _ => return false,
+    }
+
+    machine.traffic_used_gb == Some(latest_sample.used_gb)
+        && machine.traffic_limit_gb == Some(latest_sample.limit_gb)
 }
 
 fn has_fresh_traffic_snapshot(detail: &LazycatMachineDetailRecord) -> bool {

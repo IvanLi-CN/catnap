@@ -717,9 +717,11 @@ async fn lazycat_machines_keep_stale_traffic_in_original_cycle() {
     )
     .assume_offset(UtcOffset::UTC);
     let sampled_at = previous_cycle_start + Duration::days(10) + Duration::minutes(20);
+    let stale_sync_at = now;
     let previous_cycle_start_rfc3339 = previous_cycle_start.format(&Rfc3339).unwrap();
     let current_cycle_start_rfc3339 = current_cycle_start.format(&Rfc3339).unwrap();
     let sampled_at_rfc3339 = sampled_at.format(&Rfc3339).unwrap();
+    let stale_sync_at_rfc3339 = stale_sync_at.format(&Rfc3339).unwrap();
 
     let detail = catnap::db::LazycatMachineDetailRecord {
         service_id,
@@ -735,7 +737,7 @@ async fn lazycat_machines_keep_stale_traffic_in_original_cycle() {
         traffic_display: Some("321 GB / 800 GB".to_string()),
         detail_state: "stale".to_string(),
         detail_error: Some("panel timeout".to_string()),
-        last_panel_sync_at: sampled_at_rfc3339.clone(),
+        last_panel_sync_at: stale_sync_at_rfc3339.clone(),
     };
     catnap::db::update_lazycat_machine_detail(&t.db, "u_1", &detail)
         .await
@@ -766,6 +768,8 @@ async fn lazycat_machines_keep_stale_traffic_in_original_cycle() {
 
     let (status, json) = authed_json(&t, "u_1", Method::GET, "/api/lazycat/machines", None).await;
     assert_eq!(status, StatusCode::OK);
+    assert!(stale_sync_at_rfc3339 > sampled_at_rfc3339);
+    assert!(stale_sync_at >= current_cycle_start);
     assert_eq!(
         json["items"][0]["traffic"]["cycleStartAt"].as_str(),
         Some(previous_cycle_start_rfc3339.as_str())
@@ -783,6 +787,10 @@ async fn lazycat_machines_keep_stale_traffic_in_original_cycle() {
     assert_eq!(
         json["items"][0]["traffic"]["history"][0]["sampledAt"].as_str(),
         Some(sampled_at_rfc3339.as_str())
+    );
+    assert_eq!(
+        json["items"][0]["lastPanelSyncAt"].as_str(),
+        Some(stale_sync_at_rfc3339.as_str())
     );
 }
 
