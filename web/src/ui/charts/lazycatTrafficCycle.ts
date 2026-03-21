@@ -4,7 +4,7 @@ export type LazycatTrafficSnapshotInput = {
   resetDay: number;
   cycleStartAt: string;
   cycleEndAt: string;
-  history: Array<{
+  history?: Array<{
     sampledAt: string;
     usedGb: number;
     limitGb: number;
@@ -139,7 +139,7 @@ export function buildLazycatTrafficCycle(
     return null;
   }
 
-  const points = traffic.history
+  const points = (traffic.history ?? [])
     .map((point) => {
       const sampledAt = parseDate(point.sampledAt);
       if (!isValidDate(sampledAt)) return null;
