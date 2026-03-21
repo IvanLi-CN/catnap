@@ -118,6 +118,18 @@ function buildTrafficYTicks(limitGb: number): number[] {
   return [0, mid, limitGb];
 }
 
+function deriveTrafficDisplayUnit(display: string | null | undefined): string {
+  const unitTokens = (display ?? "")
+    .match(/[A-Za-z]{1,8}/g)
+    ?.map((token) => token.trim())
+    .filter((token) => token.length > 0);
+  if (!unitTokens || unitTokens.length === 0) {
+    return "GB";
+  }
+  const distinctUnits = Array.from(new Set(unitTokens));
+  return distinctUnits.length === 1 ? distinctUnits[0] : unitTokens[unitTokens.length - 1];
+}
+
 export function buildLazycatTrafficCycle(
   traffic: LazycatTrafficSnapshotInput,
 ): LazycatTrafficCycleSnapshot | null {
@@ -149,7 +161,7 @@ export function buildLazycatTrafficCycle(
     })
     .sort((left, right) => left.ts - right.ts);
 
-  const displayUnit = "GB";
+  const displayUnit = deriveTrafficDisplayUnit(traffic.display);
   const usagePct = traffic.limitGb > 0 ? (traffic.usedGb / traffic.limitGb) * 100 : 0;
   const remainingGb = traffic.limitGb - traffic.usedGb;
   const hasSamples = points.length > 0;

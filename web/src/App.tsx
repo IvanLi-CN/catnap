@@ -3799,7 +3799,7 @@ export function MachinesView({
                         </div>
                       </div>
                     </div>
-                    {trafficSnapshot ? (
+                    {trafficSnapshot?.hasSamples ? (
                       <LazycatTrafficCycleChart
                         serviceId={item.serviceId}
                         snapshot={trafficSnapshot}
