@@ -26,6 +26,7 @@ export type LazycatTrafficCycleSnapshot = {
   displayUnit: string;
   endAt: number;
   endLabel: string;
+  hasSamples: boolean;
   lastResetLabel: string;
   limitGb: number;
   limitLabel: string;
@@ -148,13 +149,10 @@ export function buildLazycatTrafficCycle(
     })
     .sort((left, right) => left.ts - right.ts);
 
-  if (points.length === 0) {
-    return null;
-  }
-
   const displayUnit = traffic.display?.trim() || "GB";
   const usagePct = traffic.limitGb > 0 ? (traffic.usedGb / traffic.limitGb) * 100 : 0;
   const remainingGb = traffic.limitGb - traffic.usedGb;
+  const hasSamples = points.length > 0;
   const currentAt = clampNumber(
     points[points.length - 1]?.ts ?? cycleStart.getTime(),
     cycleStart.getTime(),
@@ -169,10 +167,11 @@ export function buildLazycatTrafficCycle(
 
   return {
     currentAt,
-    currentLabel: formatDateTime(currentAt),
+    currentLabel: hasSamples ? formatDateTime(currentAt) : "暂无小时样本",
     displayUnit,
     endAt: cycleEnd.getTime(),
     endLabel: formatDateTime(cycleEnd.getTime()),
+    hasSamples,
     lastResetLabel: formatDateTime(
       parseDate(traffic.lastResetAt)?.getTime() ?? cycleStart.getTime(),
     ),
@@ -185,7 +184,9 @@ export function buildLazycatTrafficCycle(
       remainingGb >= 0
         ? `${formatTrafficValue(remainingGb)} ${displayUnit} 剩余`
         : `超出 ${formatTrafficValue(Math.abs(remainingGb))} ${displayUnit}`,
-    sampleCountLabel: `${points.length} 个小时样本`,
+    sampleCountLabel: hasSamples
+      ? `${points.length} 个小时样本`
+      : "0 个小时样本（显示缓存摘要）",
     startAt: cycleStart.getTime(),
     startLabel: formatDateTime(cycleStart.getTime()),
     ticks: buildTicks(cycleStart.getTime(), currentAt, cycleEnd.getTime()),

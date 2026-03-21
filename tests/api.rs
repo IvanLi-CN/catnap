@@ -12,7 +12,7 @@ use std::sync::{
     Arc, Mutex,
 };
 use time::format_description::well_known::Rfc3339;
-use time::OffsetDateTime;
+use time::{Date, Duration, OffsetDateTime, PrimitiveDateTime, Time, UtcOffset};
 use tower::ServiceExt;
 
 fn test_config() -> RuntimeConfig {
@@ -683,6 +683,105 @@ async fn lazycat_machines_are_user_scoped_and_disconnect_cleans_current_user() {
     assert_eq!(json_u2_after["account"]["connected"].as_bool(), Some(true));
     assert_eq!(json_u2_after["items"].as_array().map(Vec::len), Some(1));
     assert_eq!(json_u2_after["items"][0]["serviceId"].as_i64(), Some(3875));
+}
+
+#[tokio::test]
+async fn lazycat_machines_keep_stale_traffic_in_original_cycle() {
+    let t = make_app().await;
+    let service_id = 2312;
+    seed_lazycat_machine(
+        &t,
+        "u_1",
+        service_id,
+        "first@example.com",
+        "港湾 Transit Mini",
+        "edge-user-1.example.net",
+    )
+    .await;
+
+    let now = OffsetDateTime::now_utc();
+    let current_cycle_start = PrimitiveDateTime::new(
+        Date::from_calendar_date(now.year(), now.month(), 1).unwrap(),
+        Time::MIDNIGHT,
+    )
+    .assume_offset(UtcOffset::UTC);
+    let previous_cycle_marker = current_cycle_start - Duration::days(1);
+    let previous_cycle_start = PrimitiveDateTime::new(
+        Date::from_calendar_date(
+            previous_cycle_marker.year(),
+            previous_cycle_marker.month(),
+            1,
+        )
+        .unwrap(),
+        Time::MIDNIGHT,
+    )
+    .assume_offset(UtcOffset::UTC);
+    let sampled_at = previous_cycle_start + Duration::days(10) + Duration::minutes(20);
+    let previous_cycle_start_rfc3339 = previous_cycle_start.format(&Rfc3339).unwrap();
+    let current_cycle_start_rfc3339 = current_cycle_start.format(&Rfc3339).unwrap();
+    let sampled_at_rfc3339 = sampled_at.format(&Rfc3339).unwrap();
+
+    let detail = catnap::db::LazycatMachineDetailRecord {
+        service_id,
+        panel_kind: Some("container".to_string()),
+        panel_url: Some(format!(
+            "https://panel-{service_id}.example.test:8443/container/dashboard"
+        )),
+        panel_hash: Some(format!("hash-{service_id}")),
+        traffic_used_gb: Some(321.0),
+        traffic_limit_gb: Some(800.0),
+        traffic_reset_day: Some(1),
+        traffic_last_reset_at: Some(previous_cycle_start_rfc3339.clone()),
+        traffic_display: Some("321 GB / 800 GB".to_string()),
+        detail_state: "stale".to_string(),
+        detail_error: Some("panel timeout".to_string()),
+        last_panel_sync_at: sampled_at_rfc3339.clone(),
+    };
+    catnap::db::update_lazycat_machine_detail(&t.db, "u_1", &detail)
+        .await
+        .unwrap();
+
+    sqlx::query("DELETE FROM lazycat_traffic_samples WHERE user_id = ? AND service_id = ?")
+        .bind("u_1")
+        .bind(service_id)
+        .execute(&t.db)
+        .await
+        .unwrap();
+
+    let sample = catnap::db::LazycatTrafficSampleRecord {
+        service_id,
+        bucket_at: sampled_at_rfc3339.clone(),
+        sampled_at: sampled_at_rfc3339.clone(),
+        cycle_start_at: previous_cycle_start_rfc3339.clone(),
+        cycle_end_at: current_cycle_start_rfc3339.clone(),
+        used_gb: 321.0,
+        limit_gb: 800.0,
+        reset_day: 1,
+        last_reset_at: Some(previous_cycle_start_rfc3339.clone()),
+        display: Some("GB".to_string()),
+    };
+    catnap::db::upsert_lazycat_traffic_sample(&t.db, "u_1", &sample)
+        .await
+        .unwrap();
+
+    let (status, json) = authed_json(&t, "u_1", Method::GET, "/api/lazycat/machines", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        json["items"][0]["traffic"]["cycleStartAt"].as_str(),
+        Some(previous_cycle_start_rfc3339.as_str())
+    );
+    assert_eq!(
+        json["items"][0]["traffic"]["cycleEndAt"].as_str(),
+        Some(current_cycle_start_rfc3339.as_str())
+    );
+    assert_eq!(
+        json["items"][0]["traffic"]["history"].as_array().map(Vec::len),
+        Some(1)
+    );
+    assert_eq!(
+        json["items"][0]["traffic"]["history"][0]["sampledAt"].as_str(),
+        Some(sampled_at_rfc3339.as_str())
+    );
 }
 
 #[tokio::test]

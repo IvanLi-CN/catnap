@@ -720,8 +720,16 @@ fn build_machine_traffic_view(
         return None;
     }
 
-    let (cycle_start, cycle_end) =
-        compute_traffic_cycle_window(reset_day, machine.traffic_last_reset_at.as_deref(), now)?;
+    let reference_time = machine
+        .last_panel_sync_at
+        .as_deref()
+        .and_then(parse_rfc3339_timestamp)
+        .unwrap_or(now);
+    let (cycle_start, cycle_end) = compute_traffic_cycle_window(
+        reset_day,
+        machine.traffic_last_reset_at.as_deref(),
+        reference_time,
+    )?;
     let cycle_start_at = format_timestamp(cycle_start)?;
     let cycle_end_at = format_timestamp(cycle_end)?;
 
