@@ -206,8 +206,8 @@
   sensitive_exclusion: N/A
   submission_gate: approved
   story_id_or_title: Pages/MachinesView/Default
-  state: default
-  evidence_note: 验证机器资产页默认展示态，包含账号摘要卡、机器列表、支付周期、续费价格、流量与状态徽标的最终布局。
+  state: default with hourly traffic history
+  evidence_note: 验证机器资产页默认展示态，证明列表项中的流量图表基于当前账期真实小时样本渲染，并保留流量上限虚线与账期范围标签。
   image:
   ![MachinesView default canvas](./assets/machines-default-canvas.png)
 
@@ -218,7 +218,7 @@
   submission_gate: approved
   story_id_or_title: Pages/MachinesView/Partial Failure
   state: partial failure expanded detail
-  evidence_note: 验证面板失败降级态，证明 stale/error 汇总、展开详情、缓存端口映射与 TLS 失败提示会同时展示。
+  evidence_note: 验证面板失败降级态，证明 stale/error 汇总、展开详情、缓存端口映射与 TLS 失败提示会同时展示且不影响主列表可见。
   image:
   ![MachinesView partial failure canvas](./assets/machines-partial-failure-canvas.png)
 
