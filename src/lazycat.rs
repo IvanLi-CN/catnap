@@ -701,37 +701,15 @@ pub async fn get_machines_response(
         .into_iter()
         .map(|sample| (sample.service_id, sample))
         .collect::<HashMap<_, _>>();
-    let mut requested_cycle_keys = resolved_cycles
+    let requested_cycle_keys = resolved_cycles
         .iter()
         .map(|(&service_id, (cycle_start_at, cycle_end_at))| {
             (service_id, cycle_start_at.clone(), cycle_end_at.clone())
         })
-        .collect::<HashSet<_>>();
-    for machine in &machines {
-        let Some(resolved_cycle) = resolved_cycles.get(&machine.service_id) else {
-            continue;
-        };
-        let Some(latest_sample) = latest_samples_by_service.get(&machine.service_id) else {
-            continue;
-        };
-        if should_consider_latest_cycle_fallback(
-            machine,
-            (&resolved_cycle.0, &resolved_cycle.1),
-            latest_sample,
-        ) {
-            requested_cycle_keys.insert((
-                machine.service_id,
-                latest_sample.cycle_start_at.clone(),
-                latest_sample.cycle_end_at.clone(),
-            ));
-        }
-    }
-    let traffic_samples = db::list_lazycat_traffic_samples_for_cycles(
-        &state.db,
-        user_id,
-        &requested_cycle_keys.into_iter().collect::<Vec<_>>(),
-    )
-    .await?;
+        .collect::<Vec<_>>();
+    let traffic_samples =
+        db::list_lazycat_traffic_samples_for_cycles(&state.db, user_id, &requested_cycle_keys)
+            .await?;
     let mut samples_by_cycle =
         HashMap::<(i64, String, String), Vec<LazycatTrafficSampleRow>>::new();
     for sample in traffic_samples {
@@ -761,40 +739,21 @@ pub async fn get_machines_response(
                 .get(&current_cycle_key)
                 .cloned()
                 .unwrap_or_default();
-            let (selected_cycle_start, selected_cycle_end, selected_cycle_samples) =
-                if let Some(latest_sample) = latest_samples_by_service.get(&machine.service_id) {
-                    if should_use_latest_cycle_fallback(
-                        machine,
-                        (&cycle_start_at, &cycle_end_at),
-                        &current_cycle_samples,
-                        latest_sample,
-                    ) {
-                        let fallback_cycle_key = (
-                            machine.service_id,
-                            latest_sample.cycle_start_at.clone(),
-                            latest_sample.cycle_end_at.clone(),
-                        );
-                        let fallback_cycle_samples = samples_by_cycle
-                            .get(&fallback_cycle_key)
-                            .cloned()
-                            .unwrap_or_default();
-                        (
-                            latest_sample.cycle_start_at.clone(),
-                            latest_sample.cycle_end_at.clone(),
-                            fallback_cycle_samples,
-                        )
-                    } else {
-                        (cycle_start_at, cycle_end_at, current_cycle_samples)
-                    }
-                } else {
-                    (cycle_start_at, cycle_end_at, current_cycle_samples)
-                };
-            build_machine_traffic_view(
+            if should_hide_stale_previous_cycle_traffic(
                 machine,
-                selected_cycle_samples,
-                selected_cycle_start,
-                selected_cycle_end,
-            )
+                (&cycle_start_at, &cycle_end_at),
+                &current_cycle_samples,
+                latest_samples_by_service.get(&machine.service_id),
+            ) {
+                None
+            } else {
+                build_machine_traffic_view(
+                    machine,
+                    current_cycle_samples,
+                    cycle_start_at,
+                    cycle_end_at,
+                )
+            }
         } else {
             None
         };
@@ -842,51 +801,26 @@ fn resolve_machine_traffic_cycle(
     now: OffsetDateTime,
 ) -> Option<(String, String)> {
     let reset_day = machine.traffic_reset_day?;
-    let reference_time = machine
-        .last_panel_sync_at
-        .as_deref()
-        .and_then(parse_rfc3339_timestamp)
-        .unwrap_or(now);
-    let (cycle_start, cycle_end) = compute_traffic_cycle_window(
-        reset_day,
-        machine.traffic_last_reset_at.as_deref(),
-        reference_time,
-    )?;
+    let (cycle_start, cycle_end) =
+        compute_traffic_cycle_window(reset_day, machine.traffic_last_reset_at.as_deref(), now)?;
     Some((format_timestamp(cycle_start)?, format_timestamp(cycle_end)?))
 }
 
-fn should_use_latest_cycle_fallback(
+fn should_hide_stale_previous_cycle_traffic(
     machine: &LazycatMachineRow,
     resolved_cycle: (&str, &str),
     resolved_samples: &[LazycatTrafficSampleRow],
-    latest_sample: &LazycatTrafficSampleRow,
+    latest_sample: Option<&LazycatTrafficSampleRow>,
 ) -> bool {
-    resolved_samples.is_empty()
-        && should_consider_latest_cycle_fallback(machine, resolved_cycle, latest_sample)
-}
-
-fn should_consider_latest_cycle_fallback(
-    machine: &LazycatMachineRow,
-    resolved_cycle: (&str, &str),
-    latest_sample: &LazycatTrafficSampleRow,
-) -> bool {
+    if !resolved_samples.is_empty() {
+        return false;
+    }
+    let Some(latest_sample) = latest_sample else {
+        return false;
+    };
     if latest_sample.cycle_start_at == resolved_cycle.0
         && latest_sample.cycle_end_at == resolved_cycle.1
     {
-        return false;
-    }
-
-    let Some(last_panel_sync_at) = machine
-        .last_panel_sync_at
-        .as_deref()
-        .and_then(parse_rfc3339_timestamp)
-    else {
-        return false;
-    };
-    let Some(latest_sampled_at) = parse_rfc3339_timestamp(&latest_sample.sampled_at) else {
-        return false;
-    };
-    if latest_sampled_at >= last_panel_sync_at {
         return false;
     }
 
@@ -1019,11 +953,7 @@ fn create_monthly_anchor(
     let last_day = days_in_month(year, month)?;
     let clamped_day = reset_day.clamp(1, i64::from(last_day)) as u8;
     let date = Date::from_calendar_date(year, month, clamped_day).ok()?;
-    Some(
-        PrimitiveDateTime::new(date, time_of_day)
-            .assume_offset(UtcOffset::UTC)
-            .to_offset(UtcOffset::UTC),
-    )
+    Some(PrimitiveDateTime::new(date, time_of_day).assume_offset(reference.offset()))
 }
 
 fn shift_year_month(year: i32, month: Month, offset: i32) -> (i32, Month) {
@@ -1050,9 +980,7 @@ fn truncate_to_hour(ts: OffsetDateTime) -> OffsetDateTime {
 }
 
 fn parse_rfc3339_timestamp(value: &str) -> Option<OffsetDateTime> {
-    OffsetDateTime::parse(value, &Rfc3339)
-        .ok()
-        .map(|ts| ts.to_offset(UtcOffset::UTC))
+    OffsetDateTime::parse(value, &Rfc3339).ok()
 }
 
 fn format_timestamp(ts: OffsetDateTime) -> Option<String> {
@@ -2174,7 +2102,7 @@ mod tests {
             traffic_used_gb: Some(700.22),
             traffic_limit_gb: Some(800.0),
             traffic_reset_day: Some(11),
-            traffic_last_reset_at: Some("2026-03-10T16:00:08Z".to_string()),
+            traffic_last_reset_at: Some("2026-03-11T00:00:08+08:00".to_string()),
             traffic_display: Some("700.22 GB / 800 GB".to_string()),
             last_site_sync_at: Some("2026-03-19T14:00:00Z".to_string()),
             last_panel_sync_at: Some("2026-03-19T14:05:00Z".to_string()),
@@ -2203,10 +2131,10 @@ mod tests {
 
         assert_eq!(
             preserved.traffic_last_reset_at.as_deref(),
-            Some("2026-03-10T16:00:08Z")
+            Some("2026-03-11T00:00:08+08:00")
         );
         assert_eq!(sample.cycle_start_at, "2026-03-10T16:00:08Z");
-        assert_eq!(sample.cycle_end_at, "2026-04-11T16:00:08Z");
+        assert_eq!(sample.cycle_end_at, "2026-04-10T16:00:08Z");
     }
 
     #[test]
