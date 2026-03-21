@@ -26,7 +26,7 @@
 
 | ID   | Title | Status | Spec | Last | Notes |
 |-----:|-------|--------|------|------|-------|
-| za4kp | 懒猫云账号接入与机器资产面板 | 部分完成（5/6） | `za4kp-lazycat-account-machines/SPEC.md` | 2026-03-19 | spec-sync：懒猫云账号/API/同步/`#machines` 页面与质量门已完成，待 PR / review-loop 收口 |
+| za4kp | 懒猫云账号接入与机器资产面板 | 已完成 | `za4kp-lazycat-account-machines/SPEC.md` | 2026-03-21 | spec-sync：流量小时样本入库、机器页真实账期图表与视觉证据已完成，PR #82 待合并 |
 | kqcgt | Telegram 多目标群/频道通知 | 部分完成（3/4） | `kqcgt-telegram-multi-target-notify/SPEC.md` | 2026-03-14 | spec-sync：多目标 settings / test / notification-record 实现已完成，待 PR / review-loop 收口 |
 | jpguk | 手动刷新单个可用区 | 已完成 | `jpguk-manual-region-refresh/SPEC.md` | 2026-03-15 | PR #70：单可用区手动刷新、局部回拉反馈与 review-loop 收口 |
 | j3m9u | 国家说明与可用区说明边界修复 | 已完成 | `j3m9u-country-notice-region-boundary/SPEC.md` | 2026-03-13 | PR #68：products / monitoring 统一修正 country notice 边界，并补齐 Storybook 视觉证据 |
