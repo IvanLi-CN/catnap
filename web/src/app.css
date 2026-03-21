@@ -2111,8 +2111,8 @@ select {
 }
 
 .machines-card {
-  padding: 18px;
-  border-radius: 24px;
+  padding: 16px 18px;
+  border-radius: 20px;
   border: 1px solid color-mix(in oklab, var(--line) 84%, var(--surface2));
   background: linear-gradient(
     180deg,
@@ -2143,17 +2143,12 @@ select {
 }
 
 .machines-card-body {
-  margin-top: 18px;
-  display: grid;
-  grid-template-columns: minmax(0, 1.6fr) minmax(320px, 0.95fr);
-  gap: 18px;
-  align-items: stretch;
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
   position: relative;
   z-index: 1;
-}
-
-.machines-card-main {
-  min-width: 0;
 }
 
 .machines-card-title-row {
@@ -2199,15 +2194,15 @@ select {
 .machines-card-grid,
 .machines-detail-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 14px 18px;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px 16px;
 }
 
 .machines-kv-label {
   display: block;
   font-size: 12px;
   color: var(--muted);
-  margin-bottom: 4px;
+  margin-bottom: 3px;
 }
 
 .machines-kv-value {
@@ -2224,8 +2219,8 @@ select {
 
 .machines-traffic-panel {
   min-width: 0;
-  padding: 16px 16px 14px;
-  border-radius: 22px;
+  padding: 12px 14px 10px;
+  border-radius: 16px;
   border: 1px solid color-mix(in oklab, var(--line) 78%, transparent);
   background: linear-gradient(
       180deg,
@@ -2274,13 +2269,13 @@ select {
 }
 
 .machines-traffic-panel-copy strong {
-  font-size: 22px;
-  line-height: 1.15;
+  font-size: 16px;
+  line-height: 1.2;
   color: var(--text);
 }
 
 .machines-traffic-panel-label {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--muted);
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -2288,9 +2283,10 @@ select {
 
 .machines-traffic-panel-stats {
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
   flex: 0 0 auto;
 }
 
@@ -2299,18 +2295,18 @@ select {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 28px;
-  padding: 0 10px;
+  min-height: 24px;
+  padding: 0 9px;
   border-radius: 999px;
   border: 1px solid color-mix(in oklab, var(--machines-traffic-accent) 38%, transparent);
   background: color-mix(in oklab, var(--machines-traffic-accent) 10%, transparent);
   color: var(--text);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
 }
 
 .machines-traffic-ratio {
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .machines-traffic-panel-range,
@@ -2321,22 +2317,22 @@ select {
 }
 
 .machines-traffic-chart {
-  height: 208px;
-  margin: 2px -4px 0;
+  height: 118px;
+  margin: 0 -4px;
 }
 
 .machines-traffic-panel-foot {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px 12px;
+  justify-content: flex-start;
+  gap: 6px 12px;
   flex-wrap: wrap;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .machines-traffic-empty-title {
-  font-size: 18px;
+  font-size: 15px;
 }
 
 .machines-traffic-tooltip {
@@ -3458,7 +3454,6 @@ select {
 
   .machines-card-head,
   .machines-card-title-row,
-  .machines-card-body,
   .machines-traffic-panel-head {
     flex-direction: column;
     align-items: stretch;
@@ -3471,10 +3466,6 @@ select {
   .machines-card-side {
     width: 100%;
     align-items: flex-start;
-  }
-
-  .machines-card-body {
-    grid-template-columns: 1fr;
   }
 
   .machines-expand-btn {
@@ -3597,8 +3588,7 @@ select {
 
   .machines-summary-grid,
   .machines-card-grid,
-  .machines-detail-grid,
-  .machines-card-body {
+  .machines-detail-grid {
     grid-template-columns: 1fr;
   }
 
@@ -3613,7 +3603,7 @@ select {
   }
 
   .machines-traffic-chart {
-    height: 188px;
+    height: 112px;
   }
 
   .machines-port-row {

@@ -3766,37 +3766,35 @@ export function MachinesView({
                   </div>
 
                   <div className="machines-card-body">
-                    <div className="machines-card-main">
-                      <div className="machines-card-grid">
-                        <div>
-                          <span className="machines-kv-label">主地址</span>
-                          <div className="machines-kv-value mono">
-                            {formatLazycatAddress(item.primaryAddress)}
-                          </div>
+                    <div className="machines-card-grid">
+                      <div>
+                        <span className="machines-kv-label">主地址</span>
+                        <div className="machines-kv-value mono">
+                          {formatLazycatAddress(item.primaryAddress)}
                         </div>
-                        <div>
-                          <span className="machines-kv-label">到期时间</span>
-                          <div className="machines-kv-value">{formatLocalTime(item.expiresAt)}</div>
+                      </div>
+                      <div>
+                        <span className="machines-kv-label">到期时间</span>
+                        <div className="machines-kv-value">{formatLocalTime(item.expiresAt)}</div>
+                      </div>
+                      <div>
+                        <span className="machines-kv-label">续费价格</span>
+                        <div className="machines-kv-value">{item.renewPrice ?? "—"}</div>
+                      </div>
+                      <div>
+                        <span className="machines-kv-label">流量</span>
+                        <div className="machines-kv-value">
+                          {trafficSnapshot ? trafficSnapshot.usageLabel : "—"}
                         </div>
-                        <div>
-                          <span className="machines-kv-label">续费价格</span>
-                          <div className="machines-kv-value">{item.renewPrice ?? "—"}</div>
-                        </div>
-                        <div>
-                          <span className="machines-kv-label">支付周期</span>
-                          <div className="machines-kv-value">{item.billingCycle ?? "—"}</div>
-                        </div>
-                        <div>
-                          <span className="machines-kv-label">最近面板同步</span>
-                          <div className="machines-kv-value mono">
-                            {formatLocalTime(item.lastPanelSyncAt)}
-                          </div>
-                        </div>
-                        <div>
-                          <span className="machines-kv-label">附加地址</span>
-                          <div className="machines-kv-value">
-                            {item.extraAddresses.length > 0 ? item.extraAddresses.join(" · ") : "—"}
-                          </div>
+                      </div>
+                      <div>
+                        <span className="machines-kv-label">支付周期</span>
+                        <div className="machines-kv-value">{item.billingCycle ?? "—"}</div>
+                      </div>
+                      <div>
+                        <span className="machines-kv-label">附加地址</span>
+                        <div className="machines-kv-value">
+                          {item.extraAddresses.length > 0 ? item.extraAddresses.join(" · ") : "—"}
                         </div>
                       </div>
                     </div>
@@ -3811,11 +3809,8 @@ export function MachinesView({
                           <span className="machines-traffic-panel-label">账期流量</span>
                           <strong className="machines-traffic-empty-title">暂无面板流量缓存</strong>
                         </div>
-                        <div className="machines-traffic-panel-range">
-                          同步到机器明细后，这里会显示账期面积图与流量上限标记。
-                        </div>
                         <div className="machines-traffic-empty-copy">
-                          当前仍可在详情区查看同步状态和缓存错误原因。
+                          同步到机器明细后，这里会补上紧凑图表和上限标记。
                         </div>
                       </div>
                     )}
