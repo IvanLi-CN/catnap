@@ -20,7 +20,8 @@
     "@iconify-icons/flagpack": "^1.2.7",
     "@iconify/react": "^6.0.2",
     "react": "^18.0.0",
-    "react-dom": "^18.0.0"
+    "react-dom": "^18.0.0",
+    "recharts": "^3.8.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.0.0",

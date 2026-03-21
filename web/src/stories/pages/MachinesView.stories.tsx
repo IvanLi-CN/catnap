@@ -35,6 +35,14 @@ function delay(ms: number) {
   });
 }
 
+function buildTrafficHistory(points: Array<[sampledAt: string, usedGb: number, limitGb: number]>) {
+  return points.map(([sampledAt, usedGb, limitGb]) => ({
+    sampledAt,
+    usedGb,
+    limitGb,
+  }));
+}
+
 const readyAccount: LazycatAccountView = {
   connected: true,
   email: "demo@lazycat.example",
@@ -81,6 +89,15 @@ const healthyMachines: LazycatMachineView[] = [
       usedGb: 61.53,
       limitGb: 750,
       resetDay: 13,
+      cycleStartAt: "2026-03-13T00:00:00Z",
+      cycleEndAt: "2026-04-13T00:00:00Z",
+      history: buildTrafficHistory([
+        ["2026-03-13T00:00:00Z", 0, 750],
+        ["2026-03-14T00:00:00Z", 8.2, 750],
+        ["2026-03-16T00:00:00Z", 18.6, 750],
+        ["2026-03-18T00:00:00Z", 39.1, 750],
+        ["2026-03-20T00:00:00Z", 61.53, 750],
+      ]),
       lastResetAt: "2026-03-13T00:00:00Z",
       display: "GB",
     },
@@ -127,6 +144,16 @@ const healthyMachines: LazycatMachineView[] = [
       usedGb: 702,
       limitGb: 800,
       resetDay: 11,
+      cycleStartAt: "2026-03-11T00:00:00Z",
+      cycleEndAt: "2026-04-11T00:00:00Z",
+      history: buildTrafficHistory([
+        ["2026-03-11T00:00:00Z", 0, 800],
+        ["2026-03-13T00:00:00Z", 72, 800],
+        ["2026-03-15T00:00:00Z", 156, 800],
+        ["2026-03-17T00:00:00Z", 310, 800],
+        ["2026-03-19T00:00:00Z", 522, 800],
+        ["2026-03-20T00:00:00Z", 702, 800],
+      ]),
       lastResetAt: "2026-03-11T00:00:00Z",
       display: "GB",
     },
@@ -163,6 +190,9 @@ const healthyMachines: LazycatMachineView[] = [
       usedGb: 0,
       limitGb: 700,
       resetDay: 20,
+      cycleStartAt: "2026-03-20T00:00:00Z",
+      cycleEndAt: "2026-04-20T00:00:00Z",
+      history: buildTrafficHistory([["2026-03-20T00:00:00Z", 0, 700]]),
       lastResetAt: "2026-03-20T00:00:00Z",
       display: "GB",
     },
@@ -301,6 +331,8 @@ function MachinesViewDemo({
     );
     const nextItems = cloneMachines(syncNextItems ?? itemsRef.current);
 
+    accountRef.current = nextAccount;
+    itemsRef.current = nextItems;
     setAccount(nextAccount);
     setItems(nextItems);
     return nextAccount;

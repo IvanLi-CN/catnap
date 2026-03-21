@@ -144,6 +144,20 @@ Response body:
         "usedGb": 700.22,
         "limitGb": 800,
         "resetDay": 11,
+        "cycleStartAt": "2026-03-11T00:00:00Z",
+        "cycleEndAt": "2026-04-11T00:00:00Z",
+        "history": [
+          {
+            "sampledAt": "2026-03-18T00:20:00Z",
+            "usedGb": 622.3,
+            "limitGb": 800
+          },
+          {
+            "sampledAt": "2026-03-19T00:20:00Z",
+            "usedGb": 700.22,
+            "limitGb": 800
+          }
+        ],
         "lastResetAt": "2026-03-10T16:00:08.774266055Z",
         "display": "700.22 GB / 800 GB"
       },
@@ -175,3 +189,4 @@ Rules:
 - `items` are filtered by current `X-User-Id`;
 - `detailState` is implementation-defined but must distinguish at least `ready`, `error`, and stale-cache scenarios;
 - panel/NAT failures must not remove core machine fields returned from main-site sync.
+- `traffic.history` only contains persisted hourly samples for the current billing cycle; it must not be synthesized from a single latest snapshot.
