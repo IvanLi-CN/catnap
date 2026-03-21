@@ -65,8 +65,8 @@ function TrafficTooltip({ active, payload, snapshot }: TrafficTooltipProps) {
     | {
         kind?: "sample";
         ts?: number;
-        usedGb?: number;
-        limitGb?: number;
+        usedValue?: number;
+        limitValue?: number;
       }
     | undefined;
 
@@ -86,10 +86,10 @@ function TrafficTooltip({ active, payload, snapshot }: TrafficTooltipProps) {
         }).format(new Date(point.ts ?? 0))}
       </div>
       <div className="machines-traffic-tooltip-value">
-        {`${formatTrafficValue(point.usedGb ?? 0)} ${snapshot.displayUnit}`}
+        {`${formatTrafficValue(point.usedValue ?? 0)} ${snapshot.displayUnit}`}
       </div>
       <div className="machines-traffic-tooltip-meta">
-        {`上限 ${formatTrafficValue(point.limitGb ?? snapshot.limitGb)} ${snapshot.displayUnit}`}
+        {`上限 ${formatTrafficValue(point.limitValue ?? snapshot.limitValue)} ${snapshot.displayUnit}`}
       </div>
     </div>
   );
@@ -181,7 +181,7 @@ export function LazycatTrafficCycleChart({ serviceId, snapshot }: LazycatTraffic
                 strokeWidth: 2,
               }}
               connectNulls={false}
-              dataKey="usedGb"
+              dataKey="usedValue"
               fill={`url(#${gradientId})`}
               fillOpacity={1}
               isAnimationActive={false}
@@ -191,7 +191,7 @@ export function LazycatTrafficCycleChart({ serviceId, snapshot }: LazycatTraffic
             />
             <ReferenceLine
               ifOverflow="extendDomain"
-              y={snapshot.limitGb}
+              y={snapshot.limitValue}
               stroke="var(--machines-traffic-dash)"
               strokeDasharray="6 5"
               strokeWidth={1.5}

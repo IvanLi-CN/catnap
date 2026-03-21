@@ -16,8 +16,8 @@ export type LazycatTrafficSnapshotInput = {
 export type LazycatTrafficCyclePoint = {
   kind: "sample";
   ts: number;
-  usedGb: number;
-  limitGb: number;
+  usedValue: number;
+  limitValue: number;
 };
 
 export type LazycatTrafficCycleSnapshot = {
@@ -28,11 +28,11 @@ export type LazycatTrafficCycleSnapshot = {
   endLabel: string;
   hasSamples: boolean;
   lastResetLabel: string;
-  limitGb: number;
+  limitValue: number;
   limitLabel: string;
   points: LazycatTrafficCyclePoint[];
   rangeLabel: string;
-  remainingGb: number;
+  remainingValue: number;
   remainingLabel: string;
   sampleCountLabel: string;
   startAt: number;
@@ -41,7 +41,7 @@ export type LazycatTrafficCycleSnapshot = {
   yTicks: number[];
   usageLabel: string;
   usagePct: number;
-  usedGb: number;
+  usedValue: number;
   yDomainMax: number;
 };
 
@@ -112,10 +112,10 @@ export function formatTrafficTick(ts: number): string {
   return formatDateTick(ts);
 }
 
-function buildTrafficYTicks(limitGb: number): number[] {
-  if (!Number.isFinite(limitGb) || limitGb <= 0) return [0];
-  const mid = limitGb / 2;
-  return [0, mid, limitGb];
+function buildTrafficYTicks(limitValue: number): number[] {
+  if (!Number.isFinite(limitValue) || limitValue <= 0) return [0];
+  const mid = limitValue / 2;
+  return [0, mid, limitValue];
 }
 
 function deriveTrafficDisplayUnit(display: string | null | undefined): string {
@@ -130,6 +130,74 @@ function deriveTrafficDisplayUnit(display: string | null | undefined): string {
   return distinctUnits.length === 1 ? distinctUnits[0] : unitTokens[unitTokens.length - 1];
 }
 
+function parseTrafficDisplayPart(part: string): { value?: number; unit?: string } {
+  const valueMatch = part.match(/-?\d+(?:\.\d+)?/);
+  const unitMatch = part.match(/[A-Za-z]{1,8}(?=[^A-Za-z]*$)/);
+  return {
+    value: valueMatch ? Number(valueMatch[0]) : undefined,
+    unit: unitMatch?.[0],
+  };
+}
+
+function normalizeTrafficUnit(unit: string): string {
+  return unit.trim().toLowerCase();
+}
+
+function getCanonicalGbPerUnit(unit: string): number {
+  switch (normalizeTrafficUnit(unit)) {
+    case "kb":
+      return 1 / 1_000_000;
+    case "mb":
+      return 1 / 1_000;
+    case "gb":
+    case "gib":
+      return 1;
+    case "tb":
+      return 1_000;
+    case "tib":
+      return 1_024;
+    case "mib":
+      return 1 / 1_024;
+    case "kib":
+      return 1 / (1_024 * 1_024);
+    default:
+      return 1;
+  }
+}
+
+function deriveTrafficScale(traffic: LazycatTrafficSnapshotInput): {
+  displayUnit: string;
+  gbPerUnit: number;
+} {
+  const displayUnit = deriveTrafficDisplayUnit(traffic.display);
+  const [usedPart = "", limitPart = ""] = (traffic.display ?? "").split("/");
+  const parsedUsed = parseTrafficDisplayPart(usedPart);
+  const parsedLimit = parseTrafficDisplayPart(limitPart);
+  const normalizedUnit = normalizeTrafficUnit(displayUnit);
+
+  const candidateGbPerUnit = [
+    parsedLimit.unit && normalizeTrafficUnit(parsedLimit.unit) === normalizedUnit
+      ? traffic.limitGb / (parsedLimit.value ?? Number.NaN)
+      : Number.NaN,
+    parsedUsed.unit && normalizeTrafficUnit(parsedUsed.unit) === normalizedUnit
+      ? traffic.usedGb / (parsedUsed.value ?? Number.NaN)
+      : Number.NaN,
+    getCanonicalGbPerUnit(displayUnit),
+  ].find((value) => Number.isFinite(value) && value > 0);
+
+  return {
+    displayUnit,
+    gbPerUnit: candidateGbPerUnit ?? 1,
+  };
+}
+
+function convertGbToDisplayValue(valueGb: number, gbPerUnit: number): number {
+  if (!Number.isFinite(valueGb) || !Number.isFinite(gbPerUnit) || gbPerUnit <= 0) {
+    return valueGb;
+  }
+  return valueGb / gbPerUnit;
+}
+
 export function buildLazycatTrafficCycle(
   traffic: LazycatTrafficSnapshotInput,
 ): LazycatTrafficCycleSnapshot | null {
@@ -139,43 +207,40 @@ export function buildLazycatTrafficCycle(
     return null;
   }
 
+  const { displayUnit, gbPerUnit } = deriveTrafficScale(traffic);
   const points = (traffic.history ?? [])
-    .map((point) => {
+    .map((point): LazycatTrafficCyclePoint | null => {
       const sampledAt = parseDate(point.sampledAt);
       if (!isValidDate(sampledAt)) return null;
       return {
         kind: "sample" as const,
         ts: sampledAt.getTime(),
-        usedGb: point.usedGb,
-        limitGb: point.limitGb,
+        usedValue: convertGbToDisplayValue(point.usedGb, gbPerUnit),
+        limitValue: convertGbToDisplayValue(point.limitGb, gbPerUnit),
       };
     })
     .filter((point): point is LazycatTrafficCyclePoint => {
       return Boolean(
         point &&
-          Number.isFinite(point.usedGb) &&
-          Number.isFinite(point.limitGb) &&
+          Number.isFinite(point.usedValue) &&
+          Number.isFinite(point.limitValue) &&
           point.ts >= cycleStart.getTime() &&
           point.ts <= cycleEnd.getTime(),
       );
     })
     .sort((left, right) => left.ts - right.ts);
 
-  const displayUnit = deriveTrafficDisplayUnit(traffic.display);
   const usagePct = traffic.limitGb > 0 ? (traffic.usedGb / traffic.limitGb) * 100 : 0;
-  const remainingGb = traffic.limitGb - traffic.usedGb;
+  const usedValue = convertGbToDisplayValue(traffic.usedGb, gbPerUnit);
+  const limitValue = convertGbToDisplayValue(traffic.limitGb, gbPerUnit);
+  const remainingValue = convertGbToDisplayValue(traffic.limitGb - traffic.usedGb, gbPerUnit);
   const hasSamples = points.length > 0;
   const currentAt = clampNumber(
     points[points.length - 1]?.ts ?? cycleStart.getTime(),
     cycleStart.getTime(),
     cycleEnd.getTime(),
   );
-  const usageTop = Math.max(
-    traffic.limitGb,
-    traffic.usedGb,
-    ...points.map((point) => point.usedGb),
-    1,
-  );
+  const usageTop = Math.max(limitValue, usedValue, ...points.map((point) => point.usedValue), 1);
 
   return {
     currentAt,
@@ -187,23 +252,23 @@ export function buildLazycatTrafficCycle(
     lastResetLabel: formatDateTime(
       parseDate(traffic.lastResetAt)?.getTime() ?? cycleStart.getTime(),
     ),
-    limitGb: traffic.limitGb,
-    limitLabel: `${formatTrafficValue(traffic.limitGb)} ${displayUnit}`,
+    limitValue,
+    limitLabel: `${formatTrafficValue(limitValue)} ${displayUnit}`,
     points,
     rangeLabel: `${formatDateTime(cycleStart.getTime())} - ${formatDateTime(cycleEnd.getTime())}`,
-    remainingGb,
+    remainingValue,
     remainingLabel:
-      remainingGb >= 0
-        ? `${formatTrafficValue(remainingGb)} ${displayUnit} 剩余`
-        : `超出 ${formatTrafficValue(Math.abs(remainingGb))} ${displayUnit}`,
+      remainingValue >= 0
+        ? `${formatTrafficValue(remainingValue)} ${displayUnit} 剩余`
+        : `超出 ${formatTrafficValue(Math.abs(remainingValue))} ${displayUnit}`,
     sampleCountLabel: hasSamples ? `${points.length} 个小时样本` : "0 个小时样本（显示缓存摘要）",
     startAt: cycleStart.getTime(),
     startLabel: formatDateTime(cycleStart.getTime()),
     ticks: buildTicks(cycleStart.getTime(), currentAt, cycleEnd.getTime()),
     yTicks: buildTrafficYTicks(usageTop),
-    usageLabel: `${formatTrafficValue(traffic.usedGb)} / ${formatTrafficValue(traffic.limitGb)} ${displayUnit}`,
+    usageLabel: `${formatTrafficValue(usedValue)} / ${formatTrafficValue(limitValue)} ${displayUnit}`,
     usagePct,
-    usedGb: traffic.usedGb,
+    usedValue,
     yDomainMax: usageTop,
   };
 }

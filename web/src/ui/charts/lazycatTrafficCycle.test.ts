@@ -17,25 +17,29 @@ describe("buildLazycatTrafficCycle", () => {
     expect(snapshot?.points).toEqual([]);
   });
 
-  it("derives the chart unit from the provider display string", () => {
+  it("converts gb counters into the provider display unit", () => {
     const snapshot = buildLazycatTrafficCycle({
-      usedGb: 1.5,
-      limitGb: 2,
+      usedGb: 1024,
+      limitGb: 2048,
       resetDay: 11,
       cycleStartAt: "2026-03-11T00:00:00Z",
       cycleEndAt: "2026-04-11T00:00:00Z",
       history: [
         {
           sampledAt: "2026-03-18T00:20:00Z",
-          usedGb: 1.5,
-          limitGb: 2,
+          usedGb: 1024,
+          limitGb: 2048,
         },
       ],
-      display: "1.50 TiB / 2 TiB",
+      display: "0.98 TiB / 2 TiB",
     });
 
     expect(snapshot?.displayUnit).toBe("TiB");
+    expect(snapshot?.usedValue).toBeCloseTo(1, 6);
+    expect(snapshot?.limitValue).toBeCloseTo(2, 6);
+    expect(snapshot?.points[0]?.usedValue).toBeCloseTo(1, 6);
     expect(snapshot?.usageLabel).toContain("TiB");
-    expect(snapshot?.limitLabel).toContain("TiB");
+    expect(snapshot?.usageLabel).toContain("1");
+    expect(snapshot?.limitLabel).toContain("2");
   });
 });
