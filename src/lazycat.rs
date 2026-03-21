@@ -683,6 +683,28 @@ pub async fn get_machines_response(
             .push(mapping);
     }
     let now = OffsetDateTime::now_utc();
+    let active_cycles = machines
+        .iter()
+        .filter_map(|machine| {
+            resolve_machine_traffic_cycle(machine, now).map(|(cycle_start_at, cycle_end_at)| {
+                (machine.service_id, cycle_start_at, cycle_end_at)
+            })
+        })
+        .collect::<Vec<_>>();
+    let traffic_samples =
+        db::list_lazycat_traffic_samples_for_cycles(&state.db, user_id, &active_cycles).await?;
+    let mut samples_by_cycle =
+        HashMap::<(i64, String, String), Vec<LazycatTrafficSampleRow>>::new();
+    for sample in traffic_samples {
+        samples_by_cycle
+            .entry((
+                sample.service_id,
+                sample.cycle_start_at.clone(),
+                sample.cycle_end_at.clone(),
+            ))
+            .or_default()
+            .push(sample);
+    }
     let mut items = Vec::with_capacity(machines.len());
     for machine in &machines {
         let service_mappings = mappings_by_service
@@ -691,14 +713,13 @@ pub async fn get_machines_response(
         let traffic = if let Some((cycle_start_at, cycle_end_at)) =
             resolve_machine_traffic_cycle(machine, now)
         {
-            let service_samples = db::list_lazycat_traffic_samples_for_cycle(
-                &state.db,
-                user_id,
-                machine.service_id,
-                &cycle_start_at,
-                &cycle_end_at,
-            )
-            .await?;
+            let service_samples = samples_by_cycle
+                .remove(&(
+                    machine.service_id,
+                    cycle_start_at.clone(),
+                    cycle_end_at.clone(),
+                ))
+                .unwrap_or_default();
             build_machine_traffic_view(machine, service_samples, cycle_start_at, cycle_end_at)
         } else {
             None
@@ -1565,20 +1586,21 @@ fn parse_panel_detail(json: &Value) -> anyhow::Result<PanelDetailSnapshot> {
             .get("LastReset")
             .and_then(Value::as_str)
             .and_then(normalize_datetime_string),
-        traffic_display: match (used_gb, limit_gb) {
-            (Some(used), Some(limit)) => Some(format!(
-                "{used:.2} GB / {} GB",
-                if limit.fract() == 0.0 {
-                    format!("{limit:.0}")
-                } else {
-                    format!("{limit:.2}")
-                }
-            )),
-            _ => data
-                .get("traffic_usage")
-                .and_then(Value::as_str)
-                .map(|value| value.to_string()),
-        },
+        traffic_display: data
+            .get("traffic_usage")
+            .and_then(Value::as_str)
+            .map(|value| value.to_string())
+            .or_else(|| match (used_gb, limit_gb) {
+                (Some(used), Some(limit)) => Some(format!(
+                    "{used:.2} GB / {} GB",
+                    if limit.fract() == 0.0 {
+                        format!("{limit:.0}")
+                    } else {
+                        format!("{limit:.2}")
+                    }
+                )),
+                _ => None,
+            }),
     })
 }
 
@@ -1858,10 +1880,7 @@ mod tests {
         .unwrap();
         let detail = parse_panel_detail(&info).unwrap();
         assert_eq!(detail.traffic_reset_day, Some(11));
-        assert_eq!(
-            detail.traffic_display.as_deref(),
-            Some("700.22 GB / 800 GB")
-        );
+        assert_eq!(detail.traffic_display.as_deref(), Some("700.22 GB"));
 
         let ipv4: Value = serde_json::from_str(include_str!(
             "../tests/fixtures/lazycat/panel-port-mapping-v4.json"
@@ -1876,6 +1895,26 @@ mod tests {
         assert_eq!(mappings_v4.len(), 2);
         assert_eq!(mappings_v4[0].public_port, Some(52222));
         assert!(mappings_v6.is_empty());
+    }
+
+    #[test]
+    fn parse_panel_detail_preserves_provider_unit_string() {
+        let info = serde_json::json!({
+            "data": {
+                "traffic": {
+                    "TotalGB": 1024.0,
+                    "LimitGB": 2048.0,
+                    "ResetDay": 11,
+                    "LastReset": "2026-03-11T00:00:08.774266055+08:00"
+                },
+                "traffic_usage": "0.98 TiB"
+            }
+        });
+        let detail = parse_panel_detail(&info).unwrap();
+
+        assert_eq!(detail.traffic_used_gb, Some(1024.0));
+        assert_eq!(detail.traffic_limit_gb, Some(2048.0));
+        assert_eq!(detail.traffic_display.as_deref(), Some("0.98 TiB"));
     }
 
     #[test]

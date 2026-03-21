@@ -2232,6 +2232,70 @@ pub async fn list_lazycat_traffic_samples_for_cycle(
         .collect())
 }
 
+pub async fn list_lazycat_traffic_samples_for_cycles(
+    db: &SqlitePool,
+    user_id: &str,
+    cycles: &[(i64, String, String)],
+) -> anyhow::Result<Vec<LazycatTrafficSampleRow>> {
+    if cycles.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let filters = std::iter::repeat_n(
+        "(service_id = ? AND cycle_start_at = ? AND cycle_end_at = ?)",
+        cycles.len(),
+    )
+    .collect::<Vec<_>>()
+    .join(" OR ");
+    let sql = format!(
+        r#"SELECT
+            user_id,
+            service_id,
+            bucket_at,
+            sampled_at,
+            cycle_start_at,
+            cycle_end_at,
+            used_gb,
+            limit_gb,
+            reset_day,
+            last_reset_at,
+            display,
+            created_at,
+            updated_at
+        FROM lazycat_traffic_samples
+        WHERE user_id = ?
+          AND ({filters})
+        ORDER BY service_id ASC, sampled_at ASC"#
+    );
+    let mut query = sqlx::query(&sql).bind(user_id);
+    for (service_id, cycle_start_at, cycle_end_at) in cycles {
+        query = query
+            .bind(service_id)
+            .bind(cycle_start_at)
+            .bind(cycle_end_at);
+    }
+    let rows = query.fetch_all(db).await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|row| LazycatTrafficSampleRow {
+            user_id: row.get::<String, _>(0),
+            service_id: row.get::<i64, _>(1),
+            bucket_at: row.get::<String, _>(2),
+            sampled_at: row.get::<String, _>(3),
+            cycle_start_at: row.get::<String, _>(4),
+            cycle_end_at: row.get::<String, _>(5),
+            used_gb: row.get::<f64, _>(6),
+            limit_gb: row.get::<f64, _>(7),
+            reset_day: row.get::<i64, _>(8),
+            last_reset_at: row.get::<Option<String>, _>(9),
+            display: row.get::<Option<String>, _>(10),
+            created_at: row.get::<String, _>(11),
+            updated_at: row.get::<String, _>(12),
+        })
+        .collect())
+}
+
 pub async fn list_enabled_monitoring_config_ids(
     db: &SqlitePool,
     user_id: &str,
