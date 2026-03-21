@@ -27,7 +27,7 @@ export type LazycatTrafficCycleSnapshot = {
   endAt: number;
   endLabel: string;
   hasSamples: boolean;
-  lastResetLabel: string;
+  lastResetLabel: string | null;
   limitValue: number;
   limitLabel: string;
   points: LazycatTrafficCyclePoint[];
@@ -235,6 +235,7 @@ export function buildLazycatTrafficCycle(
   const limitValue = convertGbToDisplayValue(traffic.limitGb, gbPerUnit);
   const remainingValue = convertGbToDisplayValue(traffic.limitGb - traffic.usedGb, gbPerUnit);
   const hasSamples = points.length > 0;
+  const lastResetAt = parseDate(traffic.lastResetAt)?.getTime();
   const currentAt = clampNumber(
     points[points.length - 1]?.ts ?? cycleStart.getTime(),
     cycleStart.getTime(),
@@ -249,9 +250,7 @@ export function buildLazycatTrafficCycle(
     endAt: cycleEnd.getTime(),
     endLabel: formatDateTime(cycleEnd.getTime()),
     hasSamples,
-    lastResetLabel: formatDateTime(
-      parseDate(traffic.lastResetAt)?.getTime() ?? cycleStart.getTime(),
-    ),
+    lastResetLabel: lastResetAt ? formatDateTime(lastResetAt) : null,
     limitValue,
     limitLabel: `${formatTrafficValue(limitValue)} ${displayUnit}`,
     points,

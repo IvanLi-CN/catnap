@@ -911,6 +911,17 @@ fn preserve_machine_traffic_cache(
     detail
 }
 
+fn finalize_machine_traffic_detail(
+    detail: LazycatMachineDetailRecord,
+    machine: &LazycatMachineRow,
+) -> LazycatMachineDetailRecord {
+    if has_fresh_traffic_snapshot(&detail) {
+        preserve_machine_traffic_cache(detail, machine)
+    } else {
+        detail
+    }
+}
+
 fn compute_traffic_cycle_window(
     reset_day: i64,
     last_reset_at: Option<&str>,
@@ -1165,8 +1176,8 @@ async fn sync_user_inner(state: &AppState, user_id: &str) -> anyhow::Result<()> 
                         if !sync_account_is_current(&db_pool, &user_id, &sync_generation).await? {
                             return Ok((false, false));
                         }
-                        let fresh_traffic_snapshot = has_fresh_traffic_snapshot(&result.detail);
-                        let detail = preserve_machine_traffic_cache(result.detail, machine);
+                        let detail = finalize_machine_traffic_detail(result.detail, machine);
+                        let fresh_traffic_snapshot = has_fresh_traffic_snapshot(&detail);
                         db::update_lazycat_machine_detail(&db_pool, &user_id, &detail).await?;
                         if let Some(sample) = build_traffic_sample(&detail, fresh_traffic_snapshot)
                         {
@@ -2144,6 +2155,62 @@ mod tests {
         );
         assert_eq!(sample.cycle_start_at, "2026-03-10T16:00:08Z");
         assert_eq!(sample.cycle_end_at, "2026-04-10T16:00:08Z");
+    }
+
+    #[test]
+    fn finalize_machine_traffic_detail_clears_cached_snapshot_without_fresh_traffic() {
+        let machine = LazycatMachineRow {
+            user_id: "u_1".to_string(),
+            service_id: 2312,
+            service_name: "港湾 Transit Mini".to_string(),
+            service_code: "srvQ8L2M5R1P9K".to_string(),
+            status: "Active".to_string(),
+            os: Some("Debian 12".to_string()),
+            primary_address: Some("edge-node-24.example.net".to_string()),
+            extra_addresses: vec![],
+            billing_cycle: Some("monthly".to_string()),
+            renew_price: Some("¥9.34元/月付".to_string()),
+            first_price: Some("¥9.34元".to_string()),
+            expires_at: Some("2026-04-11T00:00:00Z".to_string()),
+            panel_kind: Some("container".to_string()),
+            panel_url: Some(
+                "https://edge-node-24.example.net:8443/container/dashboard".to_string(),
+            ),
+            panel_hash: Some("hash".to_string()),
+            traffic_used_gb: Some(700.22),
+            traffic_limit_gb: Some(800.0),
+            traffic_reset_day: Some(11),
+            traffic_last_reset_at: Some("2026-03-11T00:00:08+08:00".to_string()),
+            traffic_display: Some("700.22 GB / 800 GB".to_string()),
+            last_site_sync_at: Some("2026-03-19T14:00:00Z".to_string()),
+            last_panel_sync_at: Some("2026-03-19T14:05:00Z".to_string()),
+            detail_state: "ready".to_string(),
+            detail_error: None,
+            created_at: "2026-03-19T14:05:00Z".to_string(),
+            updated_at: "2026-03-19T14:05:00Z".to_string(),
+        };
+        let detail = LazycatMachineDetailRecord {
+            service_id: 2312,
+            panel_kind: Some("container".to_string()),
+            panel_url: machine.panel_url.clone(),
+            panel_hash: machine.panel_hash.clone(),
+            traffic_used_gb: None,
+            traffic_limit_gb: None,
+            traffic_reset_day: None,
+            traffic_last_reset_at: None,
+            traffic_display: None,
+            detail_state: "ready".to_string(),
+            detail_error: None,
+            last_panel_sync_at: "2026-03-21T12:34:56Z".to_string(),
+        };
+
+        let finalized = finalize_machine_traffic_detail(detail, &machine);
+
+        assert_eq!(finalized.traffic_used_gb, None);
+        assert_eq!(finalized.traffic_limit_gb, None);
+        assert_eq!(finalized.traffic_reset_day, None);
+        assert_eq!(finalized.traffic_last_reset_at, None);
+        assert_eq!(finalized.traffic_display, None);
     }
 
     #[test]

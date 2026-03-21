@@ -3885,7 +3885,7 @@ export function MachinesView({
                             <div>
                               <span className="machines-kv-label">最近重置</span>
                               <div className="machines-kv-value mono">
-                                {trafficSnapshot.lastResetLabel}
+                                {trafficSnapshot.lastResetLabel ?? "—"}
                               </div>
                             </div>
                             <div>

@@ -15,6 +15,7 @@ describe("buildLazycatTrafficCycle", () => {
     expect(snapshot).not.toBeNull();
     expect(snapshot?.hasSamples).toBe(false);
     expect(snapshot?.points).toEqual([]);
+    expect(snapshot?.lastResetLabel).toBeNull();
   });
 
   it("converts gb counters into the provider display unit", () => {
