@@ -2241,44 +2241,45 @@ pub async fn list_lazycat_traffic_samples_for_cycles(
         return Ok(Vec::new());
     }
 
-    let filters = std::iter::repeat_n(
-        "(service_id = ? AND cycle_start_at = ? AND cycle_end_at = ?)",
-        cycles.len(),
-    )
-    .collect::<Vec<_>>()
-    .join(" OR ");
-    let sql = format!(
-        r#"SELECT
-            user_id,
-            service_id,
-            bucket_at,
-            sampled_at,
-            cycle_start_at,
-            cycle_end_at,
-            used_gb,
-            limit_gb,
-            reset_day,
-            last_reset_at,
-            display,
-            created_at,
-            updated_at
-        FROM lazycat_traffic_samples
-        WHERE user_id = ?
-          AND ({filters})
-        ORDER BY service_id ASC, sampled_at ASC"#
-    );
-    let mut query = sqlx::query(&sql).bind(user_id);
-    for (service_id, cycle_start_at, cycle_end_at) in cycles {
-        query = query
-            .bind(service_id)
-            .bind(cycle_start_at)
-            .bind(cycle_end_at);
-    }
-    let rows = query.fetch_all(db).await?;
+    const MAX_CYCLE_BATCH_SIZE: usize = 300;
 
-    Ok(rows
-        .into_iter()
-        .map(|row| LazycatTrafficSampleRow {
+    let mut samples = Vec::new();
+    for cycle_batch in cycles.chunks(MAX_CYCLE_BATCH_SIZE) {
+        let filters = std::iter::repeat_n(
+            "(service_id = ? AND cycle_start_at = ? AND cycle_end_at = ?)",
+            cycle_batch.len(),
+        )
+        .collect::<Vec<_>>()
+        .join(" OR ");
+        let sql = format!(
+            r#"SELECT
+                user_id,
+                service_id,
+                bucket_at,
+                sampled_at,
+                cycle_start_at,
+                cycle_end_at,
+                used_gb,
+                limit_gb,
+                reset_day,
+                last_reset_at,
+                display,
+                created_at,
+                updated_at
+            FROM lazycat_traffic_samples
+            WHERE user_id = ?
+              AND ({filters})
+            ORDER BY service_id ASC, sampled_at ASC"#
+        );
+        let mut query = sqlx::query(&sql).bind(user_id);
+        for (service_id, cycle_start_at, cycle_end_at) in cycle_batch {
+            query = query
+                .bind(service_id)
+                .bind(cycle_start_at)
+                .bind(cycle_end_at);
+        }
+        let rows = query.fetch_all(db).await?;
+        samples.extend(rows.into_iter().map(|row| LazycatTrafficSampleRow {
             user_id: row.get::<String, _>(0),
             service_id: row.get::<i64, _>(1),
             bucket_at: row.get::<String, _>(2),
@@ -2292,8 +2293,16 @@ pub async fn list_lazycat_traffic_samples_for_cycles(
             display: row.get::<Option<String>, _>(10),
             created_at: row.get::<String, _>(11),
             updated_at: row.get::<String, _>(12),
-        })
-        .collect())
+        }));
+    }
+
+    samples.sort_by(|left, right| {
+        left.service_id
+            .cmp(&right.service_id)
+            .then_with(|| left.sampled_at.cmp(&right.sampled_at))
+    });
+
+    Ok(samples)
 }
 
 pub async fn list_latest_lazycat_traffic_samples_for_services(
@@ -2305,47 +2314,48 @@ pub async fn list_latest_lazycat_traffic_samples_for_services(
         return Ok(Vec::new());
     }
 
-    let placeholders = std::iter::repeat_n("?", service_ids.len())
-        .collect::<Vec<_>>()
-        .join(", ");
-    let sql = format!(
-        r#"SELECT
-            samples.user_id,
-            samples.service_id,
-            samples.bucket_at,
-            samples.sampled_at,
-            samples.cycle_start_at,
-            samples.cycle_end_at,
-            samples.used_gb,
-            samples.limit_gb,
-            samples.reset_day,
-            samples.last_reset_at,
-            samples.display,
-            samples.created_at,
-            samples.updated_at
-        FROM lazycat_traffic_samples AS samples
-        INNER JOIN (
-            SELECT service_id, MAX(sampled_at) AS sampled_at
-            FROM lazycat_traffic_samples
-            WHERE user_id = ?
-              AND service_id IN ({placeholders})
-            GROUP BY service_id
-        ) AS latest
-          ON latest.service_id = samples.service_id
-         AND latest.sampled_at = samples.sampled_at
-        WHERE samples.user_id = ?
-        ORDER BY samples.service_id ASC, samples.sampled_at DESC"#
-    );
-    let mut query = sqlx::query(&sql).bind(user_id);
-    for service_id in service_ids {
-        query = query.bind(service_id);
-    }
-    query = query.bind(user_id);
-    let rows = query.fetch_all(db).await?;
+    const MAX_SERVICE_BATCH_SIZE: usize = 900;
 
-    Ok(rows
-        .into_iter()
-        .map(|row| LazycatTrafficSampleRow {
+    let mut samples = Vec::new();
+    for service_batch in service_ids.chunks(MAX_SERVICE_BATCH_SIZE) {
+        let placeholders = std::iter::repeat_n("?", service_batch.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            r#"SELECT
+                samples.user_id,
+                samples.service_id,
+                samples.bucket_at,
+                samples.sampled_at,
+                samples.cycle_start_at,
+                samples.cycle_end_at,
+                samples.used_gb,
+                samples.limit_gb,
+                samples.reset_day,
+                samples.last_reset_at,
+                samples.display,
+                samples.created_at,
+                samples.updated_at
+            FROM lazycat_traffic_samples AS samples
+            INNER JOIN (
+                SELECT service_id, MAX(sampled_at) AS sampled_at
+                FROM lazycat_traffic_samples
+                WHERE user_id = ?
+                  AND service_id IN ({placeholders})
+                GROUP BY service_id
+            ) AS latest
+              ON latest.service_id = samples.service_id
+             AND latest.sampled_at = samples.sampled_at
+            WHERE samples.user_id = ?
+            ORDER BY samples.service_id ASC, samples.sampled_at DESC"#
+        );
+        let mut query = sqlx::query(&sql).bind(user_id);
+        for service_id in service_batch {
+            query = query.bind(service_id);
+        }
+        query = query.bind(user_id);
+        let rows = query.fetch_all(db).await?;
+        samples.extend(rows.into_iter().map(|row| LazycatTrafficSampleRow {
             user_id: row.get::<String, _>(0),
             service_id: row.get::<i64, _>(1),
             bucket_at: row.get::<String, _>(2),
@@ -2359,8 +2369,16 @@ pub async fn list_latest_lazycat_traffic_samples_for_services(
             display: row.get::<Option<String>, _>(10),
             created_at: row.get::<String, _>(11),
             updated_at: row.get::<String, _>(12),
-        })
-        .collect())
+        }));
+    }
+
+    samples.sort_by(|left, right| {
+        left.service_id
+            .cmp(&right.service_id)
+            .then_with(|| right.sampled_at.cmp(&left.sampled_at))
+    });
+
+    Ok(samples)
 }
 
 pub async fn list_enabled_monitoring_config_ids(
