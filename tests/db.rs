@@ -949,3 +949,175 @@ async fn lazycat_traffic_samples_keep_latest_row_per_hour_bucket() {
     assert_eq!(current_cycle_rows.len(), 1);
     assert_eq!(current_cycle_rows[0].sampled_at, "2026-03-21T10:55:00Z");
 }
+
+#[tokio::test]
+async fn lazycat_traffic_samples_keep_distinct_cycles_in_same_hour_bucket() {
+    let cfg = test_config();
+    let db = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&cfg.db_url)
+        .await
+        .unwrap();
+
+    catnap::db::init_db(&db).await.unwrap();
+
+    let previous_cycle = catnap::db::LazycatTrafficSampleRecord {
+        service_id: 2312,
+        bucket_at: "2026-03-21T10:00:00Z".to_string(),
+        sampled_at: "2026-03-21T10:25:00Z".to_string(),
+        cycle_start_at: "2026-02-21T10:30:00Z".to_string(),
+        cycle_end_at: "2026-03-21T10:30:00Z".to_string(),
+        used_gb: 799.2,
+        limit_gb: 800.0,
+        reset_day: 21,
+        last_reset_at: Some("2026-02-21T10:30:00Z".to_string()),
+        display: Some("GB".to_string()),
+    };
+    let next_cycle = catnap::db::LazycatTrafficSampleRecord {
+        sampled_at: "2026-03-21T10:35:00Z".to_string(),
+        cycle_start_at: "2026-03-21T10:30:00Z".to_string(),
+        cycle_end_at: "2026-04-21T10:30:00Z".to_string(),
+        used_gb: 0.4,
+        last_reset_at: Some("2026-03-21T10:30:00Z".to_string()),
+        ..previous_cycle.clone()
+    };
+
+    catnap::db::upsert_lazycat_traffic_sample(&db, "u_1", &previous_cycle)
+        .await
+        .unwrap();
+    catnap::db::upsert_lazycat_traffic_sample(&db, "u_1", &next_cycle)
+        .await
+        .unwrap();
+
+    let rows = catnap::db::list_lazycat_traffic_samples(&db, "u_1")
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 2);
+
+    let previous_cycle_rows = catnap::db::list_lazycat_traffic_samples_for_cycle(
+        &db,
+        "u_1",
+        2312,
+        "2026-02-21T10:30:00Z",
+        "2026-03-21T10:30:00Z",
+    )
+    .await
+    .unwrap();
+    assert_eq!(previous_cycle_rows.len(), 1);
+    assert_eq!(previous_cycle_rows[0].sampled_at, "2026-03-21T10:25:00Z");
+
+    let next_cycle_rows = catnap::db::list_lazycat_traffic_samples_for_cycle(
+        &db,
+        "u_1",
+        2312,
+        "2026-03-21T10:30:00Z",
+        "2026-04-21T10:30:00Z",
+    )
+    .await
+    .unwrap();
+    assert_eq!(next_cycle_rows.len(), 1);
+    assert_eq!(next_cycle_rows[0].sampled_at, "2026-03-21T10:35:00Z");
+}
+
+#[tokio::test]
+async fn init_db_migrates_lazycat_traffic_samples_primary_key() {
+    let cfg = test_config();
+    let db = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&cfg.db_url)
+        .await
+        .unwrap();
+
+    sqlx::query(
+        r#"
+CREATE TABLE lazycat_traffic_samples (
+  user_id TEXT NOT NULL,
+  service_id INTEGER NOT NULL,
+  bucket_at TEXT NOT NULL,
+  sampled_at TEXT NOT NULL,
+  cycle_start_at TEXT NOT NULL,
+  cycle_end_at TEXT NOT NULL,
+  used_gb REAL NOT NULL,
+  limit_gb REAL NOT NULL,
+  reset_day INTEGER NOT NULL,
+  last_reset_at TEXT NULL,
+  display TEXT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (user_id, service_id, bucket_at)
+)
+"#,
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        r#"
+INSERT INTO lazycat_traffic_samples (
+    user_id,
+    service_id,
+    bucket_at,
+    sampled_at,
+    cycle_start_at,
+    cycle_end_at,
+    used_gb,
+    limit_gb,
+    reset_day,
+    last_reset_at,
+    display,
+    created_at,
+    updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+"#,
+    )
+    .bind("u_1")
+    .bind(2312_i64)
+    .bind("2026-03-21T10:00:00Z")
+    .bind("2026-03-21T10:25:00Z")
+    .bind("2026-02-21T10:30:00Z")
+    .bind("2026-03-21T10:30:00Z")
+    .bind(799.2_f64)
+    .bind(800.0_f64)
+    .bind(21_i64)
+    .bind(Some("2026-02-21T10:30:00Z"))
+    .bind(Some("GB"))
+    .bind("2026-03-21T10:25:00Z")
+    .bind("2026-03-21T10:25:00Z")
+    .execute(&db)
+    .await
+    .unwrap();
+
+    catnap::db::init_db(&db).await.unwrap();
+
+    let primary_key_rows = sqlx::query("PRAGMA table_info(lazycat_traffic_samples)")
+        .fetch_all(&db)
+        .await
+        .unwrap();
+    let mut primary_key_columns = primary_key_rows
+        .into_iter()
+        .filter_map(|row| {
+            let ordinal = row.get::<i64, _>(5);
+            if ordinal > 0 {
+                Some((ordinal, row.get::<String, _>(1)))
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    primary_key_columns.sort_by_key(|(ordinal, _)| *ordinal);
+    let primary_key_columns = primary_key_columns
+        .into_iter()
+        .map(|(_, name)| name)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        primary_key_columns,
+        vec!["user_id", "service_id", "cycle_start_at", "bucket_at"]
+    );
+
+    let rows = catnap::db::list_lazycat_traffic_samples(&db, "u_1")
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].sampled_at, "2026-03-21T10:25:00Z");
+}

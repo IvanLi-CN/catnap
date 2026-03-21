@@ -547,7 +547,7 @@ CREATE TABLE IF NOT EXISTS lazycat_traffic_samples (
   display TEXT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  PRIMARY KEY (user_id, service_id, bucket_at)
+  PRIMARY KEY (user_id, service_id, cycle_start_at, bucket_at)
 );
 
 CREATE TABLE IF NOT EXISTS event_logs (
@@ -667,6 +667,9 @@ CREATE INDEX IF NOT EXISTS idx_ops_notify_runs_channel_ts ON ops_notify_runs (ch
     )
     .execute(db)
     .await?;
+
+    ensure_lazycat_traffic_samples_cycle_primary_key(db).await?;
+    ensure_lazycat_traffic_sample_indexes(db).await?;
 
     let site_listed_column_exists =
         column_exists(db, "settings", "monitoring_events_site_listed_enabled").await?;
@@ -1247,6 +1250,129 @@ async fn add_column_if_missing(
     }
 }
 
+async fn primary_key_columns(db: &SqlitePool, table: &str) -> anyhow::Result<Vec<String>> {
+    let pragma = format!("PRAGMA table_info({table})");
+    let rows = sqlx::query(&pragma).fetch_all(db).await?;
+    let mut columns = rows
+        .into_iter()
+        .filter_map(|row| {
+            let ordinal = row.get::<i64, _>(5);
+            if ordinal > 0 {
+                Some((ordinal, row.get::<String, _>(1)))
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    columns.sort_by_key(|(ordinal, _)| *ordinal);
+    Ok(columns.into_iter().map(|(_, name)| name).collect())
+}
+
+async fn ensure_lazycat_traffic_samples_cycle_primary_key(db: &SqlitePool) -> anyhow::Result<()> {
+    let current_primary_key = primary_key_columns(db, "lazycat_traffic_samples").await?;
+    let expected_primary_key = vec![
+        "user_id".to_string(),
+        "service_id".to_string(),
+        "cycle_start_at".to_string(),
+        "bucket_at".to_string(),
+    ];
+    if current_primary_key == expected_primary_key {
+        return Ok(());
+    }
+
+    sqlx::query("ALTER TABLE lazycat_traffic_samples RENAME TO lazycat_traffic_samples_legacy")
+        .execute(db)
+        .await?;
+
+    sqlx::query(
+        r#"
+CREATE TABLE lazycat_traffic_samples (
+  user_id TEXT NOT NULL,
+  service_id INTEGER NOT NULL,
+  bucket_at TEXT NOT NULL,
+  sampled_at TEXT NOT NULL,
+  cycle_start_at TEXT NOT NULL,
+  cycle_end_at TEXT NOT NULL,
+  used_gb REAL NOT NULL,
+  limit_gb REAL NOT NULL,
+  reset_day INTEGER NOT NULL,
+  last_reset_at TEXT NULL,
+  display TEXT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (user_id, service_id, cycle_start_at, bucket_at)
+)
+"#,
+    )
+    .execute(db)
+    .await?;
+
+    sqlx::query(
+        r#"
+INSERT INTO lazycat_traffic_samples (
+    user_id,
+    service_id,
+    bucket_at,
+    sampled_at,
+    cycle_start_at,
+    cycle_end_at,
+    used_gb,
+    limit_gb,
+    reset_day,
+    last_reset_at,
+    display,
+    created_at,
+    updated_at
+)
+SELECT
+    user_id,
+    service_id,
+    bucket_at,
+    sampled_at,
+    cycle_start_at,
+    cycle_end_at,
+    used_gb,
+    limit_gb,
+    reset_day,
+    last_reset_at,
+    display,
+    created_at,
+    updated_at
+FROM lazycat_traffic_samples_legacy
+"#,
+    )
+    .execute(db)
+    .await?;
+
+    sqlx::query("DROP TABLE lazycat_traffic_samples_legacy")
+        .execute(db)
+        .await?;
+
+    Ok(())
+}
+
+async fn ensure_lazycat_traffic_sample_indexes(db: &SqlitePool) -> anyhow::Result<()> {
+    sqlx::query(
+        r#"
+CREATE INDEX IF NOT EXISTS idx_lazycat_traffic_samples_user_service
+ON lazycat_traffic_samples (user_id, service_id, sampled_at ASC)
+"#,
+    )
+    .execute(db)
+    .await?;
+
+    sqlx::query(
+        r#"
+CREATE INDEX IF NOT EXISTS idx_lazycat_traffic_samples_user_cycle
+ON lazycat_traffic_samples (user_id, cycle_start_at DESC, service_id DESC, sampled_at ASC)
+"#,
+    )
+    .execute(db)
+    .await?;
+
+    Ok(())
+}
+
 fn now_rfc3339() -> String {
     format_rfc3339(OffsetDateTime::now_utc())
 }
@@ -1750,7 +1876,7 @@ pub async fn upsert_lazycat_traffic_sample(
             created_at,
             updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(user_id, service_id, bucket_at) DO UPDATE SET
+        ON CONFLICT(user_id, service_id, cycle_start_at, bucket_at) DO UPDATE SET
             sampled_at = excluded.sampled_at,
             cycle_start_at = excluded.cycle_start_at,
             cycle_end_at = excluded.cycle_end_at,
