@@ -9,7 +9,7 @@ export type LazycatTrafficSnapshotInput = {
 export type LazycatTrafficCyclePoint = {
   kind: "start" | "current" | "end";
   ts: number;
-  usedGb: number;
+  usedGb: number | null;
 };
 
 export type LazycatTrafficCycleSnapshot = {
@@ -28,6 +28,7 @@ export type LazycatTrafficCycleSnapshot = {
   startAt: number;
   startLabel: string;
   ticks: number[];
+  yTicks: number[];
   usageLabel: string;
   usagePct: number;
   usedGb: number;
@@ -89,16 +90,6 @@ function computeCycleStart(traffic: LazycatTrafficSnapshotInput, now: Date): Dat
   return inferCycleStart(traffic.resetDay, now);
 }
 
-function niceTrafficCeil(value: number): number {
-  if (!Number.isFinite(value) || value <= 0) return 10;
-  const exponent = 10 ** Math.floor(Math.log10(value));
-  const normalized = value / exponent;
-  if (normalized <= 1) return exponent;
-  if (normalized <= 2) return 2 * exponent;
-  if (normalized <= 5) return 5 * exponent;
-  return 10 * exponent;
-}
-
 function buildTicks(startAt: number, currentAt: number, endAt: number): number[] {
   const gap = Math.max((endAt - startAt) * 0.14, 18 * 60 * 60 * 1000);
   const ticks = [startAt];
@@ -135,6 +126,12 @@ export function formatTrafficTick(ts: number): string {
   return formatDateTick(ts);
 }
 
+function buildTrafficYTicks(limitGb: number): number[] {
+  if (!Number.isFinite(limitGb) || limitGb <= 0) return [0];
+  const mid = limitGb / 2;
+  return [0, mid, limitGb];
+}
+
 export function buildLazycatTrafficCycle(
   traffic: LazycatTrafficSnapshotInput,
   now = new Date(),
@@ -151,11 +148,11 @@ export function buildLazycatTrafficCycle(
   const displayUnit = traffic.display?.trim() || "GB";
   const usagePct = traffic.limitGb > 0 ? (traffic.usedGb / traffic.limitGb) * 100 : 0;
   const remainingGb = traffic.limitGb - traffic.usedGb;
-  const usageTop = niceTrafficCeil(Math.max(10, traffic.limitGb * 1.08, traffic.usedGb * 1.12));
+  const usageTop = Math.max(traffic.limitGb, traffic.usedGb, 1);
   const points: LazycatTrafficCyclePoint[] = [
     { kind: "start", ts: cycleStart.getTime(), usedGb: 0 },
     { kind: "current", ts: safeCurrentAt, usedGb: traffic.usedGb },
-    { kind: "end", ts: cycleEnd.getTime(), usedGb: traffic.usedGb },
+    { kind: "end", ts: cycleEnd.getTime(), usedGb: null },
   ];
 
   return {
@@ -179,6 +176,7 @@ export function buildLazycatTrafficCycle(
     startAt: cycleStart.getTime(),
     startLabel: formatDateTime(cycleStart.getTime()),
     ticks: buildTicks(cycleStart.getTime(), safeCurrentAt, cycleEnd.getTime()),
+    yTicks: buildTrafficYTicks(usageTop),
     usageLabel: `${formatTrafficValue(traffic.usedGb)} / ${formatTrafficValue(traffic.limitGb)} ${displayUnit}`,
     usagePct,
     usedGb: traffic.usedGb,

@@ -161,10 +161,10 @@ export function LazycatTrafficCycleChart({ serviceId, snapshot }: LazycatTraffic
             <YAxis
               axisLine={false}
               domain={[0, snapshot.yDomainMax]}
-              tick={{ fill: "var(--muted)", fontSize: 12 }}
-              tickFormatter={(value) => formatTrafficValue(Number(value))}
+              hide
               tickLine={false}
-              width={54}
+              ticks={snapshot.yTicks}
+              width={0}
             />
             <Tooltip
               content={(props) => <TrafficTooltip {...props} snapshot={snapshot} />}
@@ -177,10 +177,11 @@ export function LazycatTrafficCycleChart({ serviceId, snapshot }: LazycatTraffic
             <Area
               activeDot={{
                 fill: "var(--machines-traffic-accent)",
-                r: 4,
+                r: 4.5,
                 stroke: "var(--surface)",
                 strokeWidth: 2,
               }}
+              connectNulls={false}
               dataKey="usedGb"
               fill={`url(#${gradientId})`}
               fillOpacity={1}
