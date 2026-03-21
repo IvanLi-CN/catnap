@@ -924,4 +924,28 @@ async fn lazycat_traffic_samples_keep_latest_row_per_hour_bucket() {
     assert_eq!(rows[0].bucket_at, "2026-03-21T10:00:00Z");
     assert_eq!(rows[0].sampled_at, "2026-03-21T10:55:00Z");
     assert_eq!(rows[0].used_gb, 138.6);
+
+    let next_cycle = catnap::db::LazycatTrafficSampleRecord {
+        bucket_at: "2026-04-12T10:00:00Z".to_string(),
+        sampled_at: "2026-04-12T10:10:00Z".to_string(),
+        cycle_start_at: "2026-04-11T00:00:00Z".to_string(),
+        cycle_end_at: "2026-05-11T00:00:00Z".to_string(),
+        used_gb: 12.4,
+        ..latest.clone()
+    };
+    catnap::db::upsert_lazycat_traffic_sample(&db, "u_1", &next_cycle)
+        .await
+        .unwrap();
+
+    let current_cycle_rows = catnap::db::list_lazycat_traffic_samples_for_cycle(
+        &db,
+        "u_1",
+        2312,
+        "2026-03-11T00:00:00Z",
+        "2026-04-11T00:00:00Z",
+    )
+    .await
+    .unwrap();
+    assert_eq!(current_cycle_rows.len(), 1);
+    assert_eq!(current_cycle_rows[0].sampled_at, "2026-03-21T10:55:00Z");
 }

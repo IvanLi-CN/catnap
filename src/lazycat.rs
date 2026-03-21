@@ -5,8 +5,7 @@ use crate::db::{
     LazycatTrafficSampleRow,
 };
 use crate::models::{
-    LazycatAccountView, LazycatMachineView, LazycatMachinesResponse, LazycatTrafficSampleView,
-    LazycatTrafficView,
+    LazycatAccountView, LazycatMachinesResponse, LazycatTrafficSampleView, LazycatTrafficView,
 };
 use anyhow::{anyhow, Context};
 use futures_util::stream::{self, StreamExt};
@@ -676,7 +675,6 @@ pub async fn get_machines_response(
     let account = get_account_view(state, user_id).await?;
     let machines = db::list_lazycat_machines(&state.db, user_id).await?;
     let port_mappings = db::list_lazycat_port_mappings(&state.db, user_id).await?;
-    let traffic_samples = db::list_lazycat_traffic_samples(&state.db, user_id).await?;
     let mut mappings_by_service = HashMap::<i64, Vec<crate::models::LazycatPortMappingView>>::new();
     for (service_id, mapping) in port_mappings {
         mappings_by_service
@@ -684,34 +682,37 @@ pub async fn get_machines_response(
             .or_default()
             .push(mapping);
     }
-    let mut samples_by_service = HashMap::<i64, Vec<LazycatTrafficSampleRow>>::new();
-    for sample in traffic_samples {
-        samples_by_service
-            .entry(sample.service_id)
-            .or_default()
-            .push(sample);
-    }
     let now = OffsetDateTime::now_utc();
-    let items = machines
-        .iter()
-        .map(|machine| {
-            let service_mappings = mappings_by_service
-                .remove(&machine.service_id)
-                .unwrap_or_default();
-            let service_samples = samples_by_service
-                .remove(&machine.service_id)
-                .unwrap_or_default();
-            let traffic = build_machine_traffic_view(machine, service_samples, now);
-            machine.to_view(service_mappings, traffic)
-        })
-        .collect::<Vec<LazycatMachineView>>();
+    let mut items = Vec::with_capacity(machines.len());
+    for machine in &machines {
+        let service_mappings = mappings_by_service
+            .remove(&machine.service_id)
+            .unwrap_or_default();
+        let traffic = if let Some((cycle_start_at, cycle_end_at)) =
+            resolve_machine_traffic_cycle(machine, now)
+        {
+            let service_samples = db::list_lazycat_traffic_samples_for_cycle(
+                &state.db,
+                user_id,
+                machine.service_id,
+                &cycle_start_at,
+                &cycle_end_at,
+            )
+            .await?;
+            build_machine_traffic_view(machine, service_samples, cycle_start_at, cycle_end_at)
+        } else {
+            None
+        };
+        items.push(machine.to_view(service_mappings, traffic));
+    }
     Ok(LazycatMachinesResponse { account, items })
 }
 
 fn build_machine_traffic_view(
     machine: &LazycatMachineRow,
     samples: Vec<LazycatTrafficSampleRow>,
-    now: OffsetDateTime,
+    cycle_start_at: String,
+    cycle_end_at: String,
 ) -> Option<LazycatTrafficView> {
     let used_gb = machine.traffic_used_gb?;
     let limit_gb = machine.traffic_limit_gb?;
@@ -720,24 +721,8 @@ fn build_machine_traffic_view(
         return None;
     }
 
-    let reference_time = machine
-        .last_panel_sync_at
-        .as_deref()
-        .and_then(parse_rfc3339_timestamp)
-        .unwrap_or(now);
-    let (cycle_start, cycle_end) = compute_traffic_cycle_window(
-        reset_day,
-        machine.traffic_last_reset_at.as_deref(),
-        reference_time,
-    )?;
-    let cycle_start_at = format_timestamp(cycle_start)?;
-    let cycle_end_at = format_timestamp(cycle_end)?;
-
     let history = samples
         .into_iter()
-        .filter(|sample| {
-            sample.cycle_start_at == cycle_start_at && sample.cycle_end_at == cycle_end_at
-        })
         .map(|sample| LazycatTrafficSampleView {
             sampled_at: sample.sampled_at,
             used_gb: sample.used_gb,
@@ -755,6 +740,24 @@ fn build_machine_traffic_view(
         last_reset_at: machine.traffic_last_reset_at.clone(),
         display: machine.traffic_display.clone(),
     })
+}
+
+fn resolve_machine_traffic_cycle(
+    machine: &LazycatMachineRow,
+    now: OffsetDateTime,
+) -> Option<(String, String)> {
+    let reset_day = machine.traffic_reset_day?;
+    let reference_time = machine
+        .last_panel_sync_at
+        .as_deref()
+        .and_then(parse_rfc3339_timestamp)
+        .unwrap_or(now);
+    let (cycle_start, cycle_end) = compute_traffic_cycle_window(
+        reset_day,
+        machine.traffic_last_reset_at.as_deref(),
+        reference_time,
+    )?;
+    Some((format_timestamp(cycle_start)?, format_timestamp(cycle_end)?))
 }
 
 fn build_traffic_sample(detail: &LazycatMachineDetailRecord) -> Option<LazycatTrafficSampleRecord> {

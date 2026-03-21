@@ -149,7 +149,7 @@ export function buildLazycatTrafficCycle(
     })
     .sort((left, right) => left.ts - right.ts);
 
-  const displayUnit = traffic.display?.trim() || "GB";
+  const displayUnit = "GB";
   const usagePct = traffic.limitGb > 0 ? (traffic.usedGb / traffic.limitGb) * 100 : 0;
   const remainingGb = traffic.limitGb - traffic.usedGb;
   const hasSamples = points.length > 0;

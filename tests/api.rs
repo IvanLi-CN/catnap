@@ -775,7 +775,9 @@ async fn lazycat_machines_keep_stale_traffic_in_original_cycle() {
         Some(current_cycle_start_rfc3339.as_str())
     );
     assert_eq!(
-        json["items"][0]["traffic"]["history"].as_array().map(Vec::len),
+        json["items"][0]["traffic"]["history"]
+            .as_array()
+            .map(Vec::len),
         Some(1)
     );
     assert_eq!(

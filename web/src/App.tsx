@@ -739,7 +739,7 @@ function formatLocalTime(iso: string | null | undefined): string {
 
 function formatLazycatTraffic(traffic?: LazycatTrafficView | null): string {
   if (!traffic) return "—";
-  return `${formatLazycatTrafficValue(traffic.usedGb)} / ${formatLazycatTrafficValue(traffic.limitGb)} ${traffic.display?.trim() || "GB"}`;
+  return `${formatLazycatTrafficValue(traffic.usedGb)} / ${formatLazycatTrafficValue(traffic.limitGb)} GB`;
 }
 
 function lazycatMachineStatusClass(status: string): string {
