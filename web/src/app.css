@@ -2191,6 +2191,13 @@ select {
   gap: 12px;
 }
 
+.machines-card-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+
 .machines-card-grid,
 .machines-detail-grid {
   display: grid;
@@ -2211,6 +2218,7 @@ select {
   overflow-wrap: anywhere;
 }
 
+.machines-vnc-btn,
 .machines-expand-btn {
   min-width: 132px;
   justify-content: center;

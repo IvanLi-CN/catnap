@@ -58,6 +58,10 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/lazycat/sync", post(post_lazycat_sync))
         .route("/lazycat/machines", get(get_lazycat_machines))
+        .route(
+            "/lazycat/machines/:service_id/vnc-url",
+            post(post_lazycat_machine_vnc_url),
+        )
         .route("/logs", get(get_logs))
         .route("/notifications/records", get(get_notification_records))
         .route(
@@ -968,6 +972,20 @@ async fn get_lazycat_machines(
         .await
         .map(Json)
         .map_err(|_| json_internal_error())
+}
+
+async fn post_lazycat_machine_vnc_url(
+    State(state): State<AppState>,
+    user: axum::extract::Extension<UserView>,
+    Path(service_id): Path<i64>,
+) -> Result<Json<LazycatMachineVncUrlResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let _ = db::ensure_user(&state.db, &state.config, &user.0.id)
+        .await
+        .map_err(|_| json_invalid_argument())?;
+    crate::lazycat::resolve_machine_vnc_url(&state, &user.0.id, service_id)
+        .await
+        .map(Json)
+        .map_err(|err| json_invalid_argument_with_message(err.to_string()))
 }
 
 #[derive(Debug, Deserialize)]

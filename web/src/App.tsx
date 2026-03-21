@@ -176,6 +176,8 @@ export type LazycatMachineView = {
   billingCycle?: string | null;
   renewPrice?: string | null;
   firstPrice?: string | null;
+  panelKind?: string | null;
+  panelUrl?: string | null;
   traffic?: LazycatTrafficView | null;
   portMappings: LazycatPortMappingView[];
   lastSiteSyncAt?: string | null;
@@ -187,6 +189,11 @@ export type LazycatMachineView = {
 export type LazycatMachinesResponse = {
   account: LazycatAccountView;
   items: LazycatMachineView[];
+};
+
+export type LazycatMachineVncUrlResponse = {
+  url: string;
+  kind: string;
 };
 
 export type BootstrapResponse = {
@@ -568,6 +575,21 @@ function formatPortRange(start?: number | null, end?: number | null): string {
 
 function formatLazycatAddress(address?: string | null): string {
   return address?.trim() ? address.trim() : "—";
+}
+
+function canResolveLazycatMachineVnc(machine: Pick<LazycatMachineView, "panelKind">): boolean {
+  return machine.panelKind === "container";
+}
+
+function lazycatMachineVncButtonTitle(
+  machine: Pick<LazycatMachineView, "panelKind">,
+  resolving: boolean,
+): string {
+  if (resolving) return "正在实时获取网页 VNC 链接…";
+  if (!canResolveLazycatMachineVnc(machine)) {
+    return "当前机器没有可用的容器面板，无法获取网页 VNC 入口";
+  }
+  return "点击时实时获取网页 VNC 链接";
 }
 
 type OrderLinkMode = "configureproduct";
@@ -3562,11 +3584,16 @@ export function MachinesView({
   bootstrap,
   onSync,
   fetchMachines = () => api<LazycatMachinesResponse>("/api/lazycat/machines"),
+  resolveMachineVncUrl = (serviceId) =>
+    api<LazycatMachineVncUrlResponse>(`/api/lazycat/machines/${serviceId}/vnc-url`, {
+      method: "POST",
+    }),
 }: {
   bootstrap: BootstrapResponse;
   onSync: () => Promise<LazycatAccountView>;
   onRefreshAccount: () => Promise<LazycatAccountView>;
   fetchMachines?: () => Promise<LazycatMachinesResponse>;
+  resolveMachineVncUrl?: (serviceId: number) => Promise<LazycatMachineVncUrlResponse>;
 }) {
   const [account, setAccount] = useState<LazycatAccountView>(() => bootstrap.lazycat);
   const [items, setItems] = useState<LazycatMachineView[]>([]);
@@ -3575,6 +3602,7 @@ export function MachinesView({
   const [syncPending, setSyncPending] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [expandedServiceId, setExpandedServiceId] = useState<number | null>(null);
+  const [resolvingVncServiceId, setResolvingVncServiceId] = useState<number | null>(null);
 
   const loadMachines = useCallback(
     async (mode: "load" | "refresh" = "load") => {
@@ -3585,6 +3613,7 @@ export function MachinesView({
         setRefreshing(false);
         setError(null);
         setExpandedServiceId(null);
+        setResolvingVncServiceId(null);
         return;
       }
 
@@ -3726,7 +3755,8 @@ export function MachinesView({
             </div>
           </div>
           <div className="panel-subtitle">
-            展开某台机器可查看端口映射、流量重置时间和明细同步状态。
+            展开某台机器可查看端口映射、流量重置时间和明细同步状态；容器面板机器可在点击时实时获取网页
+            VNC 链接并以新窗口打开。
           </div>
 
           {loading ? <div className="empty">正在读取机器缓存…</div> : null}
@@ -3740,6 +3770,8 @@ export function MachinesView({
             {items.map((item) => {
               const expanded = expandedServiceId === item.serviceId;
               const trafficSnapshot = item.traffic ? buildLazycatTrafficCycle(item.traffic) : null;
+              const canResolveVnc = canResolveLazycatMachineVnc(item);
+              const resolvingVnc = resolvingVncServiceId === item.serviceId;
               return (
                 <section className="machines-card" key={item.serviceId}>
                   <div className="machines-card-head">
@@ -3758,17 +3790,49 @@ export function MachinesView({
                           {lazycatDetailLabel(item.detailState)}
                         </span>
                       </div>
-                      <button
-                        type="button"
-                        className="pill machines-expand-btn"
-                        onClick={() => {
-                          setExpandedServiceId((current) =>
-                            current === item.serviceId ? null : item.serviceId,
-                          );
-                        }}
-                      >
-                        {expanded ? "收起详情" : "展开详情"}
-                      </button>
+                      <div className="machines-card-actions">
+                        <button
+                          type="button"
+                          className="pill machines-vnc-btn"
+                          disabled={!canResolveVnc || resolvingVnc}
+                          title={lazycatMachineVncButtonTitle(item, resolvingVnc)}
+                          onClick={async () => {
+                            if (!canResolveVnc || resolvingVnc) return;
+                            setResolvingVncServiceId(item.serviceId);
+                            setError(null);
+                            try {
+                              const resolved = await resolveMachineVncUrl(item.serviceId);
+                              window.open(resolved.url, "_blank", "noopener,noreferrer");
+                            } catch (e) {
+                              setError(e instanceof Error ? e.message : String(e));
+                            } finally {
+                              setResolvingVncServiceId((current) =>
+                                current === item.serviceId ? null : current,
+                              );
+                            }
+                          }}
+                        >
+                          {resolvingVnc ? (
+                            <>
+                              <InlineSpinner />
+                              <span>获取中</span>
+                            </>
+                          ) : (
+                            "打开 VNC"
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          className="pill machines-expand-btn"
+                          onClick={() => {
+                            setExpandedServiceId((current) =>
+                              current === item.serviceId ? null : item.serviceId,
+                            );
+                          }}
+                        >
+                          {expanded ? "收起详情" : "展开详情"}
+                        </button>
+                      </div>
                     </div>
                   </div>
 
