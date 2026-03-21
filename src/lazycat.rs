@@ -760,7 +760,20 @@ fn resolve_machine_traffic_cycle(
     Some((format_timestamp(cycle_start)?, format_timestamp(cycle_end)?))
 }
 
-fn build_traffic_sample(detail: &LazycatMachineDetailRecord) -> Option<LazycatTrafficSampleRecord> {
+fn has_fresh_traffic_snapshot(detail: &LazycatMachineDetailRecord) -> bool {
+    detail.traffic_used_gb.is_some()
+        && detail.traffic_limit_gb.is_some()
+        && detail.traffic_reset_day.is_some()
+}
+
+fn build_traffic_sample(
+    detail: &LazycatMachineDetailRecord,
+    fresh_traffic_snapshot: bool,
+) -> Option<LazycatTrafficSampleRecord> {
+    if !fresh_traffic_snapshot {
+        return None;
+    }
+
     let used_gb = detail.traffic_used_gb?;
     let limit_gb = detail.traffic_limit_gb?;
     let reset_day = detail.traffic_reset_day?;
@@ -828,9 +841,17 @@ fn compute_traffic_cycle_start(
     reference_time: OffsetDateTime,
 ) -> Option<OffsetDateTime> {
     if let Some(parsed_start) = last_reset_at.and_then(parse_rfc3339_timestamp) {
-        let parsed_end = create_monthly_anchor(parsed_start, 1, reset_day, parsed_start.time())?;
-        if parsed_start <= reference_time && parsed_end > reference_time {
-            return Some(parsed_start);
+        let mut candidate_start = parsed_start;
+        while candidate_start <= reference_time {
+            let candidate_end =
+                create_monthly_anchor(candidate_start, 1, reset_day, candidate_start.time())?;
+            if candidate_end > reference_time {
+                return Some(candidate_start);
+            }
+            if candidate_end <= candidate_start {
+                break;
+            }
+            candidate_start = candidate_end;
         }
     }
     infer_cycle_start(reset_day, reference_time)
@@ -1064,9 +1085,11 @@ async fn sync_user_inner(state: &AppState, user_id: &str) -> anyhow::Result<()> 
                         if !sync_account_is_current(&db_pool, &user_id, &sync_generation).await? {
                             return Ok((false, false));
                         }
+                        let fresh_traffic_snapshot = has_fresh_traffic_snapshot(&result.detail);
                         let detail = preserve_machine_traffic_cache(result.detail, machine);
                         db::update_lazycat_machine_detail(&db_pool, &user_id, &detail).await?;
-                        if let Some(sample) = build_traffic_sample(&detail) {
+                        if let Some(sample) = build_traffic_sample(&detail, fresh_traffic_snapshot)
+                        {
                             db::upsert_lazycat_traffic_sample(&db_pool, &user_id, &sample).await?;
                         }
                         let families = if detail.panel_kind.as_deref() == Some("container") {
@@ -2015,7 +2038,7 @@ mod tests {
         };
 
         let preserved = preserve_machine_traffic_cache(detail, &machine);
-        let sample = build_traffic_sample(&preserved).expect("sample");
+        let sample = build_traffic_sample(&preserved, true).expect("sample");
 
         assert_eq!(
             preserved.traffic_last_reset_at.as_deref(),
@@ -2023,5 +2046,112 @@ mod tests {
         );
         assert_eq!(sample.cycle_start_at, "2026-03-10T16:00:08Z");
         assert_eq!(sample.cycle_end_at, "2026-04-11T16:00:08Z");
+    }
+
+    #[test]
+    fn build_traffic_sample_advances_cycle_from_previous_reset_time() {
+        let machine = LazycatMachineRow {
+            user_id: "u_1".to_string(),
+            service_id: 2312,
+            service_name: "港湾 Transit Mini".to_string(),
+            service_code: "srvQ8L2M5R1P9K".to_string(),
+            status: "Active".to_string(),
+            os: Some("Debian 12".to_string()),
+            primary_address: Some("edge-node-24.example.net".to_string()),
+            extra_addresses: vec![],
+            billing_cycle: Some("monthly".to_string()),
+            renew_price: Some("¥9.34元/月付".to_string()),
+            first_price: Some("¥9.34元".to_string()),
+            expires_at: Some("2026-04-21T10:30:00Z".to_string()),
+            panel_kind: Some("container".to_string()),
+            panel_url: Some(
+                "https://edge-node-24.example.net:8443/container/dashboard".to_string(),
+            ),
+            panel_hash: Some("hash".to_string()),
+            traffic_used_gb: Some(799.2),
+            traffic_limit_gb: Some(800.0),
+            traffic_reset_day: Some(21),
+            traffic_last_reset_at: Some("2026-02-21T10:30:00Z".to_string()),
+            traffic_display: Some("799.20 GB / 800 GB".to_string()),
+            last_site_sync_at: Some("2026-03-19T14:00:00Z".to_string()),
+            last_panel_sync_at: Some("2026-03-19T14:05:00Z".to_string()),
+            detail_state: "ready".to_string(),
+            detail_error: None,
+            created_at: "2026-03-19T14:05:00Z".to_string(),
+            updated_at: "2026-03-19T14:05:00Z".to_string(),
+        };
+        let detail = LazycatMachineDetailRecord {
+            service_id: 2312,
+            panel_kind: Some("container".to_string()),
+            panel_url: machine.panel_url.clone(),
+            panel_hash: machine.panel_hash.clone(),
+            traffic_used_gb: Some(0.4),
+            traffic_limit_gb: Some(800.0),
+            traffic_reset_day: Some(21),
+            traffic_last_reset_at: None,
+            traffic_display: Some("0.40 GB / 800 GB".to_string()),
+            detail_state: "ready".to_string(),
+            detail_error: None,
+            last_panel_sync_at: "2026-03-21T10:35:00Z".to_string(),
+        };
+
+        let preserved = preserve_machine_traffic_cache(detail, &machine);
+        let sample = build_traffic_sample(&preserved, true).expect("sample");
+
+        assert_eq!(sample.cycle_start_at, "2026-03-21T10:30:00Z");
+        assert_eq!(sample.cycle_end_at, "2026-04-21T10:30:00Z");
+    }
+
+    #[test]
+    fn build_traffic_sample_skips_cached_counters_without_fresh_snapshot() {
+        let machine = LazycatMachineRow {
+            user_id: "u_1".to_string(),
+            service_id: 2312,
+            service_name: "港湾 Transit Mini".to_string(),
+            service_code: "srvQ8L2M5R1P9K".to_string(),
+            status: "Active".to_string(),
+            os: Some("Debian 12".to_string()),
+            primary_address: Some("edge-node-24.example.net".to_string()),
+            extra_addresses: vec![],
+            billing_cycle: Some("monthly".to_string()),
+            renew_price: Some("¥9.34元/月付".to_string()),
+            first_price: Some("¥9.34元".to_string()),
+            expires_at: Some("2026-04-21T10:30:00Z".to_string()),
+            panel_kind: Some("container".to_string()),
+            panel_url: Some(
+                "https://edge-node-24.example.net:8443/container/dashboard".to_string(),
+            ),
+            panel_hash: Some("hash".to_string()),
+            traffic_used_gb: Some(799.2),
+            traffic_limit_gb: Some(800.0),
+            traffic_reset_day: Some(21),
+            traffic_last_reset_at: Some("2026-02-21T10:30:00Z".to_string()),
+            traffic_display: Some("799.20 GB / 800 GB".to_string()),
+            last_site_sync_at: Some("2026-03-19T14:00:00Z".to_string()),
+            last_panel_sync_at: Some("2026-03-19T14:05:00Z".to_string()),
+            detail_state: "ready".to_string(),
+            detail_error: None,
+            created_at: "2026-03-19T14:05:00Z".to_string(),
+            updated_at: "2026-03-19T14:05:00Z".to_string(),
+        };
+        let detail = LazycatMachineDetailRecord {
+            service_id: 2312,
+            panel_kind: Some("container".to_string()),
+            panel_url: machine.panel_url.clone(),
+            panel_hash: machine.panel_hash.clone(),
+            traffic_used_gb: None,
+            traffic_limit_gb: None,
+            traffic_reset_day: None,
+            traffic_last_reset_at: None,
+            traffic_display: None,
+            detail_state: "ready".to_string(),
+            detail_error: None,
+            last_panel_sync_at: "2026-03-21T10:35:00Z".to_string(),
+        };
+
+        assert!(!has_fresh_traffic_snapshot(&detail));
+
+        let preserved = preserve_machine_traffic_cache(detail, &machine);
+        assert!(build_traffic_sample(&preserved, false).is_none());
     }
 }
