@@ -225,10 +225,22 @@ pub struct LazycatAccountView {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct LazycatTrafficSampleView {
+    pub sampled_at: String,
+    pub used_gb: f64,
+    pub limit_gb: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LazycatTrafficView {
     pub used_gb: f64,
     pub limit_gb: f64,
     pub reset_day: i64,
+    pub cycle_start_at: String,
+    pub cycle_end_at: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub history: Vec<LazycatTrafficSampleView>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_reset_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

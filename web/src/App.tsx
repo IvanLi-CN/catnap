@@ -140,6 +140,13 @@ export type LazycatTrafficView = {
   usedGb: number;
   limitGb: number;
   resetDay: number;
+  cycleStartAt: string;
+  cycleEndAt: string;
+  history: Array<{
+    sampledAt: string;
+    usedGb: number;
+    limitGb: number;
+  }>;
   lastResetAt?: string | null;
   display?: string | null;
 };
@@ -3627,7 +3634,7 @@ export function MachinesView({
 
   const staleCount = items.filter((item) => item.detailState === "stale").length;
   const errorCount = items.filter((item) => item.detailState === "error").length;
-  const readyTrafficCount = items.filter((item) => item.traffic).length;
+  const readyTrafficCount = items.filter((item) => (item.traffic?.history?.length ?? 0) > 0).length;
 
   return (
     <div className="panel" data-testid="page-machines">
@@ -3684,9 +3691,9 @@ export function MachinesView({
               <span className="machines-summary-meta">当前缓存条目</span>
             </div>
             <div className="machines-summary-card">
-              <span className="machines-summary-label">面板流量</span>
+              <span className="machines-summary-label">流量历史</span>
               <strong>{readyTrafficCount}</strong>
-              <span className="machines-summary-meta">已补全实时流量的机器</span>
+              <span className="machines-summary-meta">已补全小时样本的机器</span>
             </div>
             <div className="machines-summary-card">
               <span className="machines-summary-label">异常/缓存</span>
@@ -3801,10 +3808,12 @@ export function MachinesView({
                       <div className="machines-traffic-panel machines-traffic-panel--empty">
                         <div className="machines-traffic-panel-copy">
                           <span className="machines-traffic-panel-label">账期流量</span>
-                          <strong className="machines-traffic-empty-title">暂无面板流量缓存</strong>
+                          <strong className="machines-traffic-empty-title">
+                            暂无可绘制的小时样本
+                          </strong>
                         </div>
                         <div className="machines-traffic-empty-copy">
-                          同步到机器明细后，这里会补上紧凑图表和上限标记。
+                          面板同步成功后，系统会按小时把流量写入历史；当前账期至少有一条样本后才显示图表。
                         </div>
                       </div>
                     )}
@@ -3873,7 +3882,7 @@ export function MachinesView({
                             </div>
                           </div>
                           <div className="machines-detail-note muted">
-                            图表按当前账期累计快照绘制，虚线段表示当前累计值到流量上限的距离。
+                            图表只绘制当前账期内的真实小时采样，横向虚线表示当前流量上限。
                           </div>
                         </div>
                       ) : null}

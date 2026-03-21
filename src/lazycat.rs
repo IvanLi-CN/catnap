@@ -1,9 +1,13 @@
 use crate::app::AppState;
 use crate::db::{
-    self, LazycatAccountRow, LazycatMachineDetailRecord, LazycatPortMappingRecord,
-    LazycatSiteMachineRecord,
+    self, LazycatAccountRow, LazycatMachineDetailRecord, LazycatMachineRow,
+    LazycatPortMappingRecord, LazycatSiteMachineRecord, LazycatTrafficSampleRecord,
+    LazycatTrafficSampleRow,
 };
-use crate::models::{LazycatAccountView, LazycatMachineView, LazycatMachinesResponse};
+use crate::models::{
+    LazycatAccountView, LazycatMachineView, LazycatMachinesResponse, LazycatTrafficSampleView,
+    LazycatTrafficView,
+};
 use anyhow::{anyhow, Context};
 use futures_util::stream::{self, StreamExt};
 use reqwest::header::{COOKIE, LOCATION, SET_COOKIE};
@@ -12,7 +16,10 @@ use scraper::{Html, Selector};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use time::{format_description::well_known::Rfc3339, OffsetDateTime};
+use time::{
+    format_description::well_known::Rfc3339, Date, Month, OffsetDateTime, PrimitiveDateTime, Time,
+    UtcOffset,
+};
 use tracing::warn;
 
 const SITE_REQUEST_TIMEOUT_MS: u64 = 10_000;
@@ -669,6 +676,7 @@ pub async fn get_machines_response(
     let account = get_account_view(state, user_id).await?;
     let machines = db::list_lazycat_machines(&state.db, user_id).await?;
     let port_mappings = db::list_lazycat_port_mappings(&state.db, user_id).await?;
+    let traffic_samples = db::list_lazycat_traffic_samples(&state.db, user_id).await?;
     let mut mappings_by_service = HashMap::<i64, Vec<crate::models::LazycatPortMappingView>>::new();
     for (service_id, mapping) in port_mappings {
         mappings_by_service
@@ -676,16 +684,181 @@ pub async fn get_machines_response(
             .or_default()
             .push(mapping);
     }
+    let mut samples_by_service = HashMap::<i64, Vec<LazycatTrafficSampleRow>>::new();
+    for sample in traffic_samples {
+        samples_by_service
+            .entry(sample.service_id)
+            .or_default()
+            .push(sample);
+    }
+    let now = OffsetDateTime::now_utc();
     let items = machines
         .iter()
         .map(|machine| {
             let service_mappings = mappings_by_service
                 .remove(&machine.service_id)
                 .unwrap_or_default();
-            machine.to_view(service_mappings)
+            let service_samples = samples_by_service
+                .remove(&machine.service_id)
+                .unwrap_or_default();
+            let traffic = build_machine_traffic_view(machine, service_samples, now);
+            machine.to_view(service_mappings, traffic)
         })
         .collect::<Vec<LazycatMachineView>>();
     Ok(LazycatMachinesResponse { account, items })
+}
+
+fn build_machine_traffic_view(
+    machine: &LazycatMachineRow,
+    samples: Vec<LazycatTrafficSampleRow>,
+    now: OffsetDateTime,
+) -> Option<LazycatTrafficView> {
+    let used_gb = machine.traffic_used_gb?;
+    let limit_gb = machine.traffic_limit_gb?;
+    let reset_day = machine.traffic_reset_day?;
+    if !used_gb.is_finite() || !limit_gb.is_finite() {
+        return None;
+    }
+
+    let (cycle_start, cycle_end) =
+        compute_traffic_cycle_window(reset_day, machine.traffic_last_reset_at.as_deref(), now)?;
+    let cycle_start_at = format_timestamp(cycle_start)?;
+    let cycle_end_at = format_timestamp(cycle_end)?;
+
+    let history = samples
+        .into_iter()
+        .filter(|sample| {
+            sample.cycle_start_at == cycle_start_at && sample.cycle_end_at == cycle_end_at
+        })
+        .map(|sample| LazycatTrafficSampleView {
+            sampled_at: sample.sampled_at,
+            used_gb: sample.used_gb,
+            limit_gb: sample.limit_gb,
+        })
+        .collect::<Vec<_>>();
+
+    Some(LazycatTrafficView {
+        used_gb,
+        limit_gb,
+        reset_day,
+        cycle_start_at,
+        cycle_end_at,
+        history,
+        last_reset_at: machine.traffic_last_reset_at.clone(),
+        display: machine.traffic_display.clone(),
+    })
+}
+
+fn build_traffic_sample(detail: &LazycatMachineDetailRecord) -> Option<LazycatTrafficSampleRecord> {
+    let used_gb = detail.traffic_used_gb?;
+    let limit_gb = detail.traffic_limit_gb?;
+    let reset_day = detail.traffic_reset_day?;
+    if !used_gb.is_finite() || !limit_gb.is_finite() {
+        return None;
+    }
+
+    let sampled_at = parse_rfc3339_timestamp(&detail.last_panel_sync_at)?;
+    let (cycle_start, cycle_end) = compute_traffic_cycle_window(
+        reset_day,
+        detail.traffic_last_reset_at.as_deref(),
+        sampled_at,
+    )?;
+
+    Some(LazycatTrafficSampleRecord {
+        service_id: detail.service_id,
+        bucket_at: format_timestamp(truncate_to_hour(sampled_at))?,
+        sampled_at: format_timestamp(sampled_at)?,
+        cycle_start_at: format_timestamp(cycle_start)?,
+        cycle_end_at: format_timestamp(cycle_end)?,
+        used_gb,
+        limit_gb,
+        reset_day,
+        last_reset_at: detail.traffic_last_reset_at.clone(),
+        display: detail.traffic_display.clone(),
+    })
+}
+
+fn compute_traffic_cycle_window(
+    reset_day: i64,
+    last_reset_at: Option<&str>,
+    reference_time: OffsetDateTime,
+) -> Option<(OffsetDateTime, OffsetDateTime)> {
+    let cycle_start = compute_traffic_cycle_start(reset_day, last_reset_at, reference_time)?;
+    let cycle_end = create_monthly_anchor(cycle_start, 1, reset_day, cycle_start.time())?;
+    (cycle_end > cycle_start).then_some((cycle_start, cycle_end))
+}
+
+fn compute_traffic_cycle_start(
+    reset_day: i64,
+    last_reset_at: Option<&str>,
+    reference_time: OffsetDateTime,
+) -> Option<OffsetDateTime> {
+    if let Some(parsed_start) = last_reset_at.and_then(parse_rfc3339_timestamp) {
+        let parsed_end = create_monthly_anchor(parsed_start, 1, reset_day, parsed_start.time())?;
+        if parsed_start <= reference_time && parsed_end > reference_time {
+            return Some(parsed_start);
+        }
+    }
+    infer_cycle_start(reset_day, reference_time)
+}
+
+fn infer_cycle_start(reset_day: i64, reference_time: OffsetDateTime) -> Option<OffsetDateTime> {
+    let current_month_anchor = create_monthly_anchor(reference_time, 0, reset_day, Time::MIDNIGHT)?;
+    if current_month_anchor <= reference_time {
+        Some(current_month_anchor)
+    } else {
+        create_monthly_anchor(reference_time, -1, reset_day, Time::MIDNIGHT)
+    }
+}
+
+fn create_monthly_anchor(
+    reference: OffsetDateTime,
+    month_offset: i32,
+    reset_day: i64,
+    time_of_day: Time,
+) -> Option<OffsetDateTime> {
+    let (year, month) = shift_year_month(reference.year(), reference.month(), month_offset);
+    let last_day = days_in_month(year, month)?;
+    let clamped_day = reset_day.clamp(1, i64::from(last_day)) as u8;
+    let date = Date::from_calendar_date(year, month, clamped_day).ok()?;
+    Some(
+        PrimitiveDateTime::new(date, time_of_day)
+            .assume_offset(UtcOffset::UTC)
+            .to_offset(UtcOffset::UTC),
+    )
+}
+
+fn shift_year_month(year: i32, month: Month, offset: i32) -> (i32, Month) {
+    let month_index = i32::from(u8::from(month)) - 1;
+    let total = year * 12 + month_index + offset;
+    let next_year = total.div_euclid(12);
+    let next_month_index = total.rem_euclid(12) + 1;
+    let next_month = Month::try_from(next_month_index as u8).unwrap_or(Month::January);
+    (next_year, next_month)
+}
+
+fn days_in_month(year: i32, month: Month) -> Option<u8> {
+    let next = shift_year_month(year, month, 1);
+    let first_of_month = Date::from_calendar_date(year, month, 1).ok()?;
+    let first_of_next_month = Date::from_calendar_date(next.0, next.1, 1).ok()?;
+    Some((first_of_next_month - first_of_month).whole_days() as u8)
+}
+
+fn truncate_to_hour(ts: OffsetDateTime) -> OffsetDateTime {
+    let whole_hour = ts.unix_timestamp().div_euclid(3600) * 3600;
+    OffsetDateTime::from_unix_timestamp(whole_hour)
+        .unwrap_or(ts)
+        .to_offset(UtcOffset::UTC)
+}
+
+fn parse_rfc3339_timestamp(value: &str) -> Option<OffsetDateTime> {
+    OffsetDateTime::parse(value, &Rfc3339)
+        .ok()
+        .map(|ts| ts.to_offset(UtcOffset::UTC))
+}
+
+fn format_timestamp(ts: OffsetDateTime) -> Option<String> {
+    ts.to_offset(UtcOffset::UTC).format(&Rfc3339).ok()
 }
 
 pub async fn login_account(
@@ -859,6 +1032,9 @@ async fn sync_user_inner(state: &AppState, user_id: &str) -> anyhow::Result<()> 
                         }
                         db::update_lazycat_machine_detail(&db_pool, &user_id, &result.detail)
                             .await?;
+                        if let Some(sample) = build_traffic_sample(&result.detail) {
+                            db::upsert_lazycat_traffic_sample(&db_pool, &user_id, &sample).await?;
+                        }
                         let families = if result.detail.panel_kind.as_deref() == Some("container") {
                             vec!["v4".to_string(), "v6".to_string()]
                         } else {

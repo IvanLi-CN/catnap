@@ -880,3 +880,48 @@ async fn notification_records_preserve_item_order() {
         items[0].config_id.as_deref()
     );
 }
+
+#[tokio::test]
+async fn lazycat_traffic_samples_keep_latest_row_per_hour_bucket() {
+    let cfg = test_config();
+    let db = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&cfg.db_url)
+        .await
+        .unwrap();
+
+    catnap::db::init_db(&db).await.unwrap();
+
+    let first = catnap::db::LazycatTrafficSampleRecord {
+        service_id: 2312,
+        bucket_at: "2026-03-21T10:00:00Z".to_string(),
+        sampled_at: "2026-03-21T10:05:00Z".to_string(),
+        cycle_start_at: "2026-03-11T00:00:00Z".to_string(),
+        cycle_end_at: "2026-04-11T00:00:00Z".to_string(),
+        used_gb: 120.0,
+        limit_gb: 800.0,
+        reset_day: 11,
+        last_reset_at: Some("2026-03-11T00:00:00Z".to_string()),
+        display: Some("GB".to_string()),
+    };
+    let latest = catnap::db::LazycatTrafficSampleRecord {
+        sampled_at: "2026-03-21T10:55:00Z".to_string(),
+        used_gb: 138.6,
+        ..first.clone()
+    };
+
+    catnap::db::upsert_lazycat_traffic_sample(&db, "u_1", &first)
+        .await
+        .unwrap();
+    catnap::db::upsert_lazycat_traffic_sample(&db, "u_1", &latest)
+        .await
+        .unwrap();
+
+    let rows = catnap::db::list_lazycat_traffic_samples(&db, "u_1")
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].bucket_at, "2026-03-21T10:00:00Z");
+    assert_eq!(rows[0].sampled_at, "2026-03-21T10:55:00Z");
+    assert_eq!(rows[0].used_gb, 138.6);
+}

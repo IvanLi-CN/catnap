@@ -228,6 +228,20 @@ pub struct LazycatMachineDetailRecord {
 }
 
 #[derive(Debug, Clone)]
+pub struct LazycatTrafficSampleRecord {
+    pub service_id: i64,
+    pub bucket_at: String,
+    pub sampled_at: String,
+    pub cycle_start_at: String,
+    pub cycle_end_at: String,
+    pub used_gb: f64,
+    pub limit_gb: f64,
+    pub reset_day: i64,
+    pub last_reset_at: Option<String>,
+    pub display: Option<String>,
+}
+
+#[derive(Debug, Clone)]
 pub struct LazycatPortMappingRecord {
     pub family: String,
     pub mapping_key: String,
@@ -274,8 +288,29 @@ pub struct LazycatMachineRow {
     pub updated_at: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct LazycatTrafficSampleRow {
+    pub user_id: String,
+    pub service_id: i64,
+    pub bucket_at: String,
+    pub sampled_at: String,
+    pub cycle_start_at: String,
+    pub cycle_end_at: String,
+    pub used_gb: f64,
+    pub limit_gb: f64,
+    pub reset_day: i64,
+    pub last_reset_at: Option<String>,
+    pub display: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 impl LazycatMachineRow {
-    pub fn to_view(&self, port_mappings: Vec<LazycatPortMappingView>) -> LazycatMachineView {
+    pub fn to_view(
+        &self,
+        port_mappings: Vec<LazycatPortMappingView>,
+        traffic: Option<LazycatTrafficView>,
+    ) -> LazycatMachineView {
         LazycatMachineView {
             service_id: self.service_id,
             service_name: self.service_name.clone(),
@@ -288,17 +323,7 @@ impl LazycatMachineRow {
             billing_cycle: self.billing_cycle.clone(),
             renew_price: self.renew_price.clone(),
             first_price: self.first_price.clone(),
-            traffic: self
-                .traffic_used_gb
-                .zip(self.traffic_limit_gb)
-                .zip(self.traffic_reset_day)
-                .map(|((used_gb, limit_gb), reset_day)| LazycatTrafficView {
-                    used_gb,
-                    limit_gb,
-                    reset_day,
-                    last_reset_at: self.traffic_last_reset_at.clone(),
-                    display: self.traffic_display.clone(),
-                }),
+            traffic,
             port_mappings,
             last_site_sync_at: self.last_site_sync_at.clone(),
             last_panel_sync_at: self.last_panel_sync_at.clone(),
@@ -508,6 +533,23 @@ CREATE TABLE IF NOT EXISTS lazycat_port_mappings (
   PRIMARY KEY (user_id, service_id, family, mapping_key)
 );
 
+CREATE TABLE IF NOT EXISTS lazycat_traffic_samples (
+  user_id TEXT NOT NULL,
+  service_id INTEGER NOT NULL,
+  bucket_at TEXT NOT NULL,
+  sampled_at TEXT NOT NULL,
+  cycle_start_at TEXT NOT NULL,
+  cycle_end_at TEXT NOT NULL,
+  used_gb REAL NOT NULL,
+  limit_gb REAL NOT NULL,
+  reset_day INTEGER NOT NULL,
+  last_reset_at TEXT NULL,
+  display TEXT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (user_id, service_id, bucket_at)
+);
+
 CREATE TABLE IF NOT EXISTS event_logs (
   id TEXT PRIMARY KEY,
   user_id TEXT NULL,
@@ -613,6 +655,8 @@ CREATE INDEX IF NOT EXISTS idx_user_config_archives_config_id ON user_config_arc
 CREATE INDEX IF NOT EXISTS idx_lazycat_machines_user_updated_at ON lazycat_machines (user_id, updated_at DESC, service_id DESC);
 CREATE INDEX IF NOT EXISTS idx_lazycat_machines_user_panel_sync ON lazycat_machines (user_id, last_panel_sync_at DESC, service_id DESC);
 CREATE INDEX IF NOT EXISTS idx_lazycat_port_mappings_user_service ON lazycat_port_mappings (user_id, service_id, family, sync_at DESC);
+CREATE INDEX IF NOT EXISTS idx_lazycat_traffic_samples_user_service ON lazycat_traffic_samples (user_id, service_id, sampled_at ASC);
+CREATE INDEX IF NOT EXISTS idx_lazycat_traffic_samples_user_cycle ON lazycat_traffic_samples (user_id, cycle_start_at DESC, service_id DESC, sampled_at ASC);
 
 CREATE INDEX IF NOT EXISTS idx_ops_events_ts ON ops_events (ts DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_ops_task_runs_ended_at ON ops_task_runs (ended_at DESC, id DESC);
@@ -1535,6 +1579,10 @@ pub async fn count_lazycat_machines(db: &SqlitePool, user_id: &str) -> anyhow::R
 
 pub async fn delete_lazycat_account_data(db: &SqlitePool, user_id: &str) -> anyhow::Result<()> {
     let mut tx = db.begin().await?;
+    sqlx::query("DELETE FROM lazycat_traffic_samples WHERE user_id = ?")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
     sqlx::query("DELETE FROM lazycat_port_mappings WHERE user_id = ?")
         .bind(user_id)
         .execute(&mut *tx)
@@ -1630,6 +1678,10 @@ pub async fn upsert_lazycat_site_machines(
     }
 
     if machines.is_empty() {
+        sqlx::query("DELETE FROM lazycat_traffic_samples WHERE user_id = ?")
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await?;
         sqlx::query("DELETE FROM lazycat_port_mappings WHERE user_id = ?")
             .bind(user_id)
             .execute(&mut *tx)
@@ -1653,6 +1705,15 @@ pub async fn upsert_lazycat_site_machines(
         }
         delete_mappings.execute(&mut *tx).await?;
 
+        let delete_samples_sql = format!(
+            "DELETE FROM lazycat_traffic_samples WHERE user_id = ? AND service_id NOT IN ({placeholders})"
+        );
+        let mut delete_samples = sqlx::query(&delete_samples_sql).bind(user_id);
+        for id in &ids {
+            delete_samples = delete_samples.bind(*id);
+        }
+        delete_samples.execute(&mut *tx).await?;
+
         let delete_machines_sql = format!(
             "DELETE FROM lazycat_machines WHERE user_id = ? AND service_id NOT IN ({placeholders})"
         );
@@ -1664,6 +1725,57 @@ pub async fn upsert_lazycat_site_machines(
     }
 
     tx.commit().await?;
+    Ok(())
+}
+
+pub async fn upsert_lazycat_traffic_sample(
+    db: &SqlitePool,
+    user_id: &str,
+    sample: &LazycatTrafficSampleRecord,
+) -> anyhow::Result<()> {
+    let now = now_rfc3339();
+    sqlx::query(
+        r#"INSERT INTO lazycat_traffic_samples (
+            user_id,
+            service_id,
+            bucket_at,
+            sampled_at,
+            cycle_start_at,
+            cycle_end_at,
+            used_gb,
+            limit_gb,
+            reset_day,
+            last_reset_at,
+            display,
+            created_at,
+            updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id, service_id, bucket_at) DO UPDATE SET
+            sampled_at = excluded.sampled_at,
+            cycle_start_at = excluded.cycle_start_at,
+            cycle_end_at = excluded.cycle_end_at,
+            used_gb = excluded.used_gb,
+            limit_gb = excluded.limit_gb,
+            reset_day = excluded.reset_day,
+            last_reset_at = excluded.last_reset_at,
+            display = excluded.display,
+            updated_at = excluded.updated_at"#,
+    )
+    .bind(user_id)
+    .bind(sample.service_id)
+    .bind(&sample.bucket_at)
+    .bind(&sample.sampled_at)
+    .bind(&sample.cycle_start_at)
+    .bind(&sample.cycle_end_at)
+    .bind(sample.used_gb)
+    .bind(sample.limit_gb)
+    .bind(sample.reset_day)
+    .bind(sample.last_reset_at.as_deref())
+    .bind(sample.display.as_deref())
+    .bind(&now)
+    .bind(&now)
+    .execute(db)
+    .await?;
     Ok(())
 }
 
@@ -1887,6 +1999,53 @@ pub async fn list_lazycat_port_mappings(
                     description: row.get::<Option<String>, _>(10),
                 },
             )
+        })
+        .collect())
+}
+
+pub async fn list_lazycat_traffic_samples(
+    db: &SqlitePool,
+    user_id: &str,
+) -> anyhow::Result<Vec<LazycatTrafficSampleRow>> {
+    let rows = sqlx::query(
+        r#"SELECT
+            user_id,
+            service_id,
+            bucket_at,
+            sampled_at,
+            cycle_start_at,
+            cycle_end_at,
+            used_gb,
+            limit_gb,
+            reset_day,
+            last_reset_at,
+            display,
+            created_at,
+            updated_at
+        FROM lazycat_traffic_samples
+        WHERE user_id = ?
+        ORDER BY service_id ASC, sampled_at ASC"#,
+    )
+    .bind(user_id)
+    .fetch_all(db)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|row| LazycatTrafficSampleRow {
+            user_id: row.get::<String, _>(0),
+            service_id: row.get::<i64, _>(1),
+            bucket_at: row.get::<String, _>(2),
+            sampled_at: row.get::<String, _>(3),
+            cycle_start_at: row.get::<String, _>(4),
+            cycle_end_at: row.get::<String, _>(5),
+            used_gb: row.get::<f64, _>(6),
+            limit_gb: row.get::<f64, _>(7),
+            reset_day: row.get::<i64, _>(8),
+            last_reset_at: row.get::<Option<String>, _>(9),
+            display: row.get::<Option<String>, _>(10),
+            created_at: row.get::<String, _>(11),
+            updated_at: row.get::<String, _>(12),
         })
         .collect())
 }

@@ -94,3 +94,30 @@ Rules:
 - failed panel/NAT sync must not eagerly delete the existing rows;
 - disconnecting an account deletes all cached mappings for that user.
 
+## lazycat_traffic_samples
+
+New table:
+
+- `user_id` TEXT NOT NULL
+- `service_id` INTEGER NOT NULL
+- `bucket_at` TEXT NOT NULL
+- `sampled_at` TEXT NOT NULL
+- `cycle_start_at` TEXT NOT NULL
+- `cycle_end_at` TEXT NOT NULL
+- `used_gb` REAL NOT NULL
+- `limit_gb` REAL NOT NULL
+- `reset_day` INTEGER NOT NULL
+- `last_reset_at` TEXT NULL
+- `display` TEXT NULL
+- `created_at` TEXT NOT NULL
+- `updated_at` TEXT NOT NULL
+
+Primary key:
+
+- `(user_id, service_id, bucket_at)`
+
+Rules:
+
+- container panel sync writes at most one row per machine per hour bucket, and overwrites that bucket with the latest successful sample in the same hour;
+- stored samples are scoped by `user_id` and deleted when the account disconnects or the machine disappears from cache;
+- `cycle_start_at` / `cycle_end_at` identify the billing cycle that the sample belongs to, so the API can return only the current cycle’s real history.

@@ -2,14 +2,22 @@ export type LazycatTrafficSnapshotInput = {
   usedGb: number;
   limitGb: number;
   resetDay: number;
+  cycleStartAt: string;
+  cycleEndAt: string;
+  history: Array<{
+    sampledAt: string;
+    usedGb: number;
+    limitGb: number;
+  }>;
   lastResetAt?: string | null;
   display?: string | null;
 };
 
 export type LazycatTrafficCyclePoint = {
-  kind: "start" | "current" | "end";
+  kind: "sample";
   ts: number;
-  usedGb: number | null;
+  usedGb: number;
+  limitGb: number;
 };
 
 export type LazycatTrafficCycleSnapshot = {
@@ -25,6 +33,7 @@ export type LazycatTrafficCycleSnapshot = {
   rangeLabel: string;
   remainingGb: number;
   remainingLabel: string;
+  sampleCountLabel: string;
   startAt: number;
   startLabel: string;
   ticks: number[];
@@ -64,30 +73,6 @@ function parseDate(value: string | null | undefined): Date | null {
   if (!value) return null;
   const parsed = new Date(value);
   return isValidDate(parsed) ? parsed : null;
-}
-
-function createMonthlyAnchor(base: Date, monthOffset: number, resetDay: number): Date {
-  const day = clampNumber(Math.trunc(resetDay) || 1, 1, 31);
-  const candidate = new Date(base);
-  candidate.setMonth(candidate.getMonth() + monthOffset, 1);
-  const lastDay = new Date(candidate.getFullYear(), candidate.getMonth() + 1, 0).getDate();
-  candidate.setDate(Math.min(day, lastDay));
-  return candidate;
-}
-
-function inferCycleStart(resetDay: number, now: Date): Date {
-  const currentMonthAnchor = createMonthlyAnchor(now, 0, resetDay);
-  if (currentMonthAnchor <= now) return currentMonthAnchor;
-  return createMonthlyAnchor(now, -1, resetDay);
-}
-
-function computeCycleStart(traffic: LazycatTrafficSnapshotInput, now: Date): Date {
-  const parsedStart = parseDate(traffic.lastResetAt);
-  if (isValidDate(parsedStart)) {
-    const parsedEnd = createMonthlyAnchor(parsedStart, 1, traffic.resetDay);
-    if (parsedStart <= now && parsedEnd > now) return parsedStart;
-  }
-  return inferCycleStart(traffic.resetDay, now);
 }
 
 function buildTicks(startAt: number, currentAt: number, endAt: number): number[] {
@@ -134,30 +119,57 @@ function buildTrafficYTicks(limitGb: number): number[] {
 
 export function buildLazycatTrafficCycle(
   traffic: LazycatTrafficSnapshotInput,
-  now = new Date(),
-): LazycatTrafficCycleSnapshot {
-  const cycleStart = computeCycleStart(traffic, now);
-  const cycleEnd = createMonthlyAnchor(cycleStart, 1, traffic.resetDay);
+): LazycatTrafficCycleSnapshot | null {
+  const cycleStart = parseDate(traffic.cycleStartAt);
+  const cycleEnd = parseDate(traffic.cycleEndAt);
+  if (!isValidDate(cycleStart) || !isValidDate(cycleEnd) || cycleEnd <= cycleStart) {
+    return null;
+  }
 
-  const safeCurrentAt = clampNumber(
-    now.getTime(),
-    cycleStart.getTime() + 60_000,
-    cycleEnd.getTime() - 60_000,
-  );
+  const points = traffic.history
+    .map((point) => {
+      const sampledAt = parseDate(point.sampledAt);
+      if (!isValidDate(sampledAt)) return null;
+      return {
+        kind: "sample" as const,
+        ts: sampledAt.getTime(),
+        usedGb: point.usedGb,
+        limitGb: point.limitGb,
+      };
+    })
+    .filter((point): point is LazycatTrafficCyclePoint => {
+      return Boolean(
+        point &&
+          Number.isFinite(point.usedGb) &&
+          Number.isFinite(point.limitGb) &&
+          point.ts >= cycleStart.getTime() &&
+          point.ts <= cycleEnd.getTime(),
+      );
+    })
+    .sort((left, right) => left.ts - right.ts);
+
+  if (points.length === 0) {
+    return null;
+  }
 
   const displayUnit = traffic.display?.trim() || "GB";
   const usagePct = traffic.limitGb > 0 ? (traffic.usedGb / traffic.limitGb) * 100 : 0;
   const remainingGb = traffic.limitGb - traffic.usedGb;
-  const usageTop = Math.max(traffic.limitGb, traffic.usedGb, 1);
-  const points: LazycatTrafficCyclePoint[] = [
-    { kind: "start", ts: cycleStart.getTime(), usedGb: 0 },
-    { kind: "current", ts: safeCurrentAt, usedGb: traffic.usedGb },
-    { kind: "end", ts: cycleEnd.getTime(), usedGb: null },
-  ];
+  const currentAt = clampNumber(
+    points[points.length - 1]?.ts ?? cycleStart.getTime(),
+    cycleStart.getTime(),
+    cycleEnd.getTime(),
+  );
+  const usageTop = Math.max(
+    traffic.limitGb,
+    traffic.usedGb,
+    ...points.map((point) => point.usedGb),
+    1,
+  );
 
   return {
-    currentAt: safeCurrentAt,
-    currentLabel: formatDateTime(safeCurrentAt),
+    currentAt,
+    currentLabel: formatDateTime(currentAt),
     displayUnit,
     endAt: cycleEnd.getTime(),
     endLabel: formatDateTime(cycleEnd.getTime()),
@@ -173,9 +185,10 @@ export function buildLazycatTrafficCycle(
       remainingGb >= 0
         ? `${formatTrafficValue(remainingGb)} ${displayUnit} 剩余`
         : `超出 ${formatTrafficValue(Math.abs(remainingGb))} ${displayUnit}`,
+    sampleCountLabel: `${points.length} 个小时样本`,
     startAt: cycleStart.getTime(),
     startLabel: formatDateTime(cycleStart.getTime()),
-    ticks: buildTicks(cycleStart.getTime(), safeCurrentAt, cycleEnd.getTime()),
+    ticks: buildTicks(cycleStart.getTime(), currentAt, cycleEnd.getTime()),
     yTicks: buildTrafficYTicks(usageTop),
     usageLabel: `${formatTrafficValue(traffic.usedGb)} / ${formatTrafficValue(traffic.limitGb)} ${displayUnit}`,
     usagePct,

@@ -63,35 +63,34 @@ function TrafficTooltip({ active, payload, snapshot }: TrafficTooltipProps) {
   if (!active || !payload?.length) return null;
   const point = payload[0]?.payload as
     | {
-        kind?: "start" | "current" | "end";
+        kind?: "sample";
         ts?: number;
         usedGb?: number;
+        limitGb?: number;
       }
     | undefined;
 
   if (!point) return null;
 
-  const title =
-    point.kind === "start" ? "账期开始" : point.kind === "end" ? "下次重置" : "当前累计";
-  const timeLabel =
-    point.kind === "start"
-      ? snapshot.startLabel
-      : point.kind === "end"
-        ? snapshot.endLabel
-        : snapshot.currentLabel;
-
   return (
     <div className="machines-traffic-tooltip">
-      <div className="machines-traffic-tooltip-label">{title}</div>
-      <div className="machines-traffic-tooltip-time">{timeLabel}</div>
+      <div className="machines-traffic-tooltip-label">每小时采样</div>
+      <div className="machines-traffic-tooltip-time">{formatTrafficTick(point.ts ?? 0)}</div>
+      <div className="machines-traffic-tooltip-time">
+        {new Intl.DateTimeFormat(undefined, {
+          month: "2-digit",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: false,
+        }).format(new Date(point.ts ?? 0))}
+      </div>
       <div className="machines-traffic-tooltip-value">
         {`${formatTrafficValue(point.usedGb ?? 0)} ${snapshot.displayUnit}`}
       </div>
-      {point.kind === "current" ? (
-        <div className="machines-traffic-tooltip-meta">
-          {`${snapshot.remainingLabel} · ${formatTrafficPercent(snapshot.usagePct)}%`}
-        </div>
-      ) : null}
+      <div className="machines-traffic-tooltip-meta">
+        {`上限 ${formatTrafficValue(point.limitGb ?? snapshot.limitGb)} ${snapshot.displayUnit}`}
+      </div>
     </div>
   );
 }
@@ -203,7 +202,8 @@ export function LazycatTrafficCycleChart({ serviceId, snapshot }: LazycatTraffic
 
       <div className="machines-traffic-panel-foot">
         <span>{`上限 ${snapshot.limitLabel}`}</span>
-        <span>{`当前点 ${snapshot.currentLabel}`}</span>
+        <span>{`最新样本 ${snapshot.currentLabel}`}</span>
+        <span>{snapshot.sampleCountLabel}</span>
         <span>虚线 = 流量上限</span>
       </div>
     </div>

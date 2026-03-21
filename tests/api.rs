@@ -351,6 +351,27 @@ async fn seed_lazycat_machine(
         .await
         .unwrap();
 
+    for (bucket_at, sampled_at, used_gb) in [
+        ("2026-03-18T00:00:00Z", "2026-03-18T00:20:00Z", 88.2),
+        ("2026-03-19T00:00:00Z", "2026-03-19T00:20:00Z", 123.4),
+    ] {
+        let sample = catnap::db::LazycatTrafficSampleRecord {
+            service_id,
+            bucket_at: bucket_at.to_string(),
+            sampled_at: sampled_at.to_string(),
+            cycle_start_at: "2026-03-11T00:00:00Z".to_string(),
+            cycle_end_at: "2026-04-11T00:00:00Z".to_string(),
+            used_gb,
+            limit_gb: 800.0,
+            reset_day: 11,
+            last_reset_at: Some("2026-03-11T00:00:00Z".to_string()),
+            display: Some("GB".to_string()),
+        };
+        catnap::db::upsert_lazycat_traffic_sample(&t.db, user_id, &sample)
+            .await
+            .unwrap();
+    }
+
     let mapping = catnap::db::LazycatPortMappingRecord {
         family: "v4".to_string(),
         mapping_key: format!("map-{service_id}"),
@@ -583,6 +604,16 @@ async fn lazycat_machines_are_user_scoped_and_disconnect_cleans_current_user() {
         json_u1["items"][0]["traffic"]["resetDay"].as_i64(),
         Some(11)
     );
+    assert_eq!(
+        json_u1["items"][0]["traffic"]["cycleStartAt"].as_str(),
+        Some("2026-03-11T00:00:00Z")
+    );
+    assert_eq!(
+        json_u1["items"][0]["traffic"]["history"]
+            .as_array()
+            .map(Vec::len),
+        Some(2)
+    );
 
     let (status_u2, json_u2) =
         authed_json(&t, "u_2", Method::GET, "/api/lazycat/machines", None).await;
@@ -634,9 +665,17 @@ async fn lazycat_machines_are_user_scoped_and_disconnect_cleans_current_user() {
             .await
             .unwrap()
             .get::<i64, _>(0);
+    let lazycat_traffic_sample_count_u1 =
+        sqlx::query("SELECT COUNT(*) FROM lazycat_traffic_samples WHERE user_id = ?")
+            .bind("u_1")
+            .fetch_one(&t.db)
+            .await
+            .unwrap()
+            .get::<i64, _>(0);
     assert_eq!(lazycat_account_count_u1, 0);
     assert_eq!(lazycat_machine_count_u1, 0);
     assert_eq!(lazycat_mapping_count_u1, 0);
+    assert_eq!(lazycat_traffic_sample_count_u1, 0);
 
     let (status_u2_after, json_u2_after) =
         authed_json(&t, "u_2", Method::GET, "/api/lazycat/machines", None).await;
