@@ -301,6 +301,8 @@ function MachinesViewDemo({
     );
     const nextItems = cloneMachines(syncNextItems ?? itemsRef.current);
 
+    accountRef.current = nextAccount;
+    itemsRef.current = nextItems;
     setAccount(nextAccount);
     setItems(nextItems);
     return nextAccount;

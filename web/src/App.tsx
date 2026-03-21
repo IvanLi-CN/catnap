@@ -30,6 +30,11 @@ import {
   useRef,
   useState,
 } from "react";
+import { LazycatTrafficCycleChart } from "./ui/charts/LazycatTrafficCycleChart";
+import {
+  buildLazycatTrafficCycle,
+  formatTrafficValue as formatLazycatTrafficValue,
+} from "./ui/charts/lazycatTrafficCycle";
 import { MonitorToggle, type MonitorToggleState } from "./ui/controls/MonitorToggle";
 import { SettingsFeedbackBubble } from "./ui/feedback/SettingsFeedbackBubble";
 import { AppShell } from "./ui/layout/AppShell";
@@ -725,17 +730,9 @@ function formatLocalTime(iso: string | null | undefined): string {
   return new Date(t).toLocaleString();
 }
 
-function formatLazycatTrafficValue(value: number): string {
-  if (!Number.isFinite(value)) return "—";
-  return new Intl.NumberFormat(undefined, {
-    minimumFractionDigits: value >= 100 ? 0 : 1,
-    maximumFractionDigits: value >= 100 ? 1 : 2,
-  }).format(value);
-}
-
 function formatLazycatTraffic(traffic?: LazycatTrafficView | null): string {
   if (!traffic) return "—";
-  return `${formatLazycatTrafficValue(traffic.usedGb)} / ${formatLazycatTrafficValue(traffic.limitGb)} GB`;
+  return `${formatLazycatTrafficValue(traffic.usedGb)} / ${formatLazycatTrafficValue(traffic.limitGb)} ${traffic.display?.trim() || "GB"}`;
 }
 
 function lazycatMachineStatusClass(status: string): string {
@@ -3735,47 +3732,14 @@ export function MachinesView({
           <div className="machines-list">
             {items.map((item) => {
               const expanded = expandedServiceId === item.serviceId;
+              const trafficSnapshot = item.traffic ? buildLazycatTrafficCycle(item.traffic) : null;
               return (
                 <section className="machines-card" key={item.serviceId}>
                   <div className="machines-card-head">
-                    <div className="machines-card-main">
-                      <div className="machines-card-title-row">
-                        <div className="machines-card-title-wrap">
-                          <div className="machines-card-title">{item.serviceName}</div>
-                          <div className="machines-card-code mono">{item.serviceCode}</div>
-                        </div>
-                      </div>
-                      <div className="machines-card-grid">
-                        <div>
-                          <span className="machines-kv-label">主地址</span>
-                          <div className="machines-kv-value mono">
-                            {formatLazycatAddress(item.primaryAddress)}
-                          </div>
-                        </div>
-                        <div>
-                          <span className="machines-kv-label">到期时间</span>
-                          <div className="machines-kv-value">{formatLocalTime(item.expiresAt)}</div>
-                        </div>
-                        <div>
-                          <span className="machines-kv-label">续费价格</span>
-                          <div className="machines-kv-value">{item.renewPrice ?? "—"}</div>
-                        </div>
-                        <div>
-                          <span className="machines-kv-label">流量</span>
-                          <div className="machines-kv-value">
-                            {formatLazycatTraffic(item.traffic)}
-                          </div>
-                        </div>
-                        <div>
-                          <span className="machines-kv-label">支付周期</span>
-                          <div className="machines-kv-value">{item.billingCycle ?? "—"}</div>
-                        </div>
-                        <div>
-                          <span className="machines-kv-label">附加地址</span>
-                          <div className="machines-kv-value">
-                            {item.extraAddresses.length > 0 ? item.extraAddresses.join(" · ") : "—"}
-                          </div>
-                        </div>
+                    <div className="machines-card-title-row">
+                      <div className="machines-card-title-wrap">
+                        <div className="machines-card-title">{item.serviceName}</div>
+                        <div className="machines-card-code mono">{item.serviceCode}</div>
                       </div>
                     </div>
                     <div className="machines-card-side">
@@ -3799,6 +3763,62 @@ export function MachinesView({
                         {expanded ? "收起详情" : "展开详情"}
                       </button>
                     </div>
+                  </div>
+
+                  <div className="machines-card-body">
+                    <div className="machines-card-main">
+                      <div className="machines-card-grid">
+                        <div>
+                          <span className="machines-kv-label">主地址</span>
+                          <div className="machines-kv-value mono">
+                            {formatLazycatAddress(item.primaryAddress)}
+                          </div>
+                        </div>
+                        <div>
+                          <span className="machines-kv-label">到期时间</span>
+                          <div className="machines-kv-value">{formatLocalTime(item.expiresAt)}</div>
+                        </div>
+                        <div>
+                          <span className="machines-kv-label">续费价格</span>
+                          <div className="machines-kv-value">{item.renewPrice ?? "—"}</div>
+                        </div>
+                        <div>
+                          <span className="machines-kv-label">支付周期</span>
+                          <div className="machines-kv-value">{item.billingCycle ?? "—"}</div>
+                        </div>
+                        <div>
+                          <span className="machines-kv-label">最近面板同步</span>
+                          <div className="machines-kv-value mono">
+                            {formatLocalTime(item.lastPanelSyncAt)}
+                          </div>
+                        </div>
+                        <div>
+                          <span className="machines-kv-label">附加地址</span>
+                          <div className="machines-kv-value">
+                            {item.extraAddresses.length > 0 ? item.extraAddresses.join(" · ") : "—"}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    {trafficSnapshot ? (
+                      <LazycatTrafficCycleChart
+                        serviceId={item.serviceId}
+                        snapshot={trafficSnapshot}
+                      />
+                    ) : (
+                      <div className="machines-traffic-panel machines-traffic-panel--empty">
+                        <div className="machines-traffic-panel-copy">
+                          <span className="machines-traffic-panel-label">账期流量</span>
+                          <strong className="machines-traffic-empty-title">暂无面板流量缓存</strong>
+                        </div>
+                        <div className="machines-traffic-panel-range">
+                          同步到机器明细后，这里会显示账期面积图与流量上限标记。
+                        </div>
+                        <div className="machines-traffic-empty-copy">
+                          当前仍可在详情区查看同步状态和缓存错误原因。
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {expanded ? (
@@ -3826,32 +3846,45 @@ export function MachinesView({
                         </div>
                       </div>
 
-                      {item.traffic ? (
+                      {trafficSnapshot ? (
                         <div className="machines-detail-block">
-                          <div className="machines-detail-title">流量与重置</div>
+                          <div className="machines-detail-title">流量账期</div>
                           <div className="machines-detail-grid">
                             <div>
-                              <span className="machines-kv-label">已用 / 上限</span>
-                              <div className="machines-kv-value">
-                                {formatLazycatTraffic(item.traffic)}
+                              <span className="machines-kv-label">账期范围</span>
+                              <div className="machines-kv-value mono">
+                                {trafficSnapshot.rangeLabel}
                               </div>
                             </div>
                             <div>
+                              <span className="machines-kv-label">当前累计</span>
+                              <div className="machines-kv-value">{trafficSnapshot.usageLabel}</div>
+                            </div>
+                            <div>
                               <span className="machines-kv-label">重置日</span>
-                              <div className="machines-kv-value">{item.traffic.resetDay} 日</div>
+                              <div className="machines-kv-value">{item.traffic?.resetDay} 日</div>
                             </div>
                             <div>
                               <span className="machines-kv-label">最近重置</span>
                               <div className="machines-kv-value mono">
-                                {formatLocalTime(item.traffic.lastResetAt)}
+                                {trafficSnapshot.lastResetLabel}
+                              </div>
+                            </div>
+                            <div>
+                              <span className="machines-kv-label">剩余额度</span>
+                              <div className="machines-kv-value">
+                                {trafficSnapshot.remainingLabel}
                               </div>
                             </div>
                             <div>
                               <span className="machines-kv-label">展示口径</span>
                               <div className="machines-kv-value">
-                                {item.traffic.display ?? "GB"}
+                                {item.traffic?.display ?? "GB"}
                               </div>
                             </div>
+                          </div>
+                          <div className="machines-detail-note muted">
+                            图表按当前账期累计快照绘制，虚线段表示当前累计值到流量上限的距离。
                           </div>
                         </div>
                       ) : null}
