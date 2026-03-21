@@ -2318,7 +2318,9 @@ select {
 
 .machines-traffic-chart {
   height: 118px;
-  margin: 0 -4px;
+  margin: 0;
+  overflow: hidden;
+  border-radius: 10px;
 }
 
 .machines-traffic-panel-foot {

@@ -129,10 +129,10 @@ export function LazycatTrafficCycleChart({ serviceId, snapshot }: LazycatTraffic
         aria-label={`当前账期流量 ${snapshot.usageLabel}，可用周期 ${snapshot.rangeLabel}`}
         role="img"
       >
-        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={208}>
+        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={118}>
           <AreaChart
             data={snapshot.points}
-            margin={{ top: 12, right: 8, bottom: 0, left: -18 }}
+            margin={{ top: 10, right: 2, bottom: 0, left: 2 }}
             title={`Traffic cycle ${snapshot.usageLabel}, range ${snapshot.rangeLabel}`}
           >
             <defs>
@@ -192,14 +192,10 @@ export function LazycatTrafficCycleChart({ serviceId, snapshot }: LazycatTraffic
             />
             <ReferenceLine
               ifOverflow="extendDomain"
-              segment={[
-                { x: snapshot.currentAt, y: snapshot.usedGb },
-                { x: snapshot.currentAt, y: snapshot.limitGb },
-              ]}
+              y={snapshot.limitGb}
               stroke="var(--machines-traffic-dash)"
               strokeDasharray="6 5"
-              strokeLinecap="round"
-              strokeWidth={2}
+              strokeWidth={1.5}
             />
           </AreaChart>
         </ResponsiveContainer>
@@ -208,7 +204,7 @@ export function LazycatTrafficCycleChart({ serviceId, snapshot }: LazycatTraffic
       <div className="machines-traffic-panel-foot">
         <span>{`上限 ${snapshot.limitLabel}`}</span>
         <span>{`当前点 ${snapshot.currentLabel}`}</span>
-        <span>虚线段 = 当前累计到上限</span>
+        <span>虚线 = 流量上限</span>
       </div>
     </div>
   );
