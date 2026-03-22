@@ -711,7 +711,7 @@ async fn lazycat_machine_vnc_url_returns_live_console_url() {
             }),
         )
         .route(
-            "/api/user/console/create-token",
+            "/api/container/console/create-token",
             axum::routing::post(
                 move |headers: axum::http::HeaderMap, body: String| {
                     let received_hostname = received_hostname_for_route.clone();

@@ -754,7 +754,7 @@ impl LazycatService {
             .panel_post_json(
                 &access.dashboard_url,
                 &access.panel_hash,
-                "/api/user/console/create-token",
+                "/api/container/console/create-token",
                 &json!({ "hostname": hostname }),
             )
             .await?;
@@ -1936,7 +1936,7 @@ fn normalize_console_url_candidate(base_url: &Url, candidate: &str) -> Option<St
         .trim_matches('"')
         .trim_matches('\'')
         .trim();
-    if trimmed.is_empty() || !trimmed.contains("console?token=") {
+    if trimmed.is_empty() || !trimmed.contains("console?token=") || trimmed.contains("${") {
         return None;
     }
 
@@ -2279,6 +2279,23 @@ mod tests {
             super::extract_console_url_from_panel_html(&base_url, html).as_deref(),
             Some("https://edge-node-24.example.net:8443/console?token=live-token-123")
         );
+    }
+
+    #[test]
+    fn ignores_console_template_literals_in_panel_html() {
+        let base_url = Url::parse("https://edge-node-24.example.net:8443/container/dashboard?hash=abc")
+            .unwrap();
+        let html = r#"
+<html>
+  <body>
+    <script>
+      const consoleUrl = `/console?token=${result.data.token}`;
+      window.open(consoleUrl, "_blank");
+    </script>
+  </body>
+</html>
+"#;
+        assert_eq!(super::extract_console_url_from_panel_html(&base_url, html), None);
     }
 
     #[test]

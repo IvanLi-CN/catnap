@@ -26,7 +26,7 @@
 
 | ID   | Title | Status | Spec | Last | Notes |
 |-----:|-------|--------|------|------|-------|
-| j3zhd | 机器资产：VNC 新窗口按钮 | 已完成 | `j3zhd-machines-vnc-open-button/SPEC.md` | 2026-03-22 | 机器卡片新增 VNC 按钮；点击时由服务端实时解析网页 console URL，并只打开真实 `/console?token=...` 链接 |
+| j3zhd | 机器资产：面板与 VNC 新窗口按钮 | 已完成 | `j3zhd-machines-vnc-open-button/SPEC.md` | 2026-03-22 | 机器卡片同时提供“打开面板”与“打开 VNC”；前者直达缓存 Web 面板，后者点击时实时解析真实 `/console?token=...` 链接 |
 | za4kp | 懒猫云账号接入与机器资产面板 | 已完成 | `za4kp-lazycat-account-machines/SPEC.md` | 2026-03-21 | spec-sync：流量小时样本入库、机器页真实账期图表与视觉证据已完成，PR #82 待合并 |
 | kqcgt | Telegram 多目标群/频道通知 | 部分完成（3/4） | `kqcgt-telegram-multi-target-notify/SPEC.md` | 2026-03-14 | spec-sync：多目标 settings / test / notification-record 实现已完成，待 PR / review-loop 收口 |
 | jpguk | 手动刷新单个可用区 | 已完成 | `jpguk-manual-region-refresh/SPEC.md` | 2026-03-15 | PR #70：单可用区手动刷新、局部回拉反馈与 review-loop 收口 |

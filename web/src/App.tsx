@@ -581,6 +581,17 @@ function canResolveLazycatMachineVnc(machine: Pick<LazycatMachineView, "panelKin
   return machine.panelKind === "container";
 }
 
+function hasLazycatMachinePanel(machine: Pick<LazycatMachineView, "panelUrl">): boolean {
+  return Boolean(machine.panelUrl?.trim());
+}
+
+function lazycatMachinePanelButtonTitle(machine: Pick<LazycatMachineView, "panelUrl">): string {
+  if (!hasLazycatMachinePanel(machine)) {
+    return "当前机器没有可用的 Web 面板入口";
+  }
+  return `打开 Web 面板\n${machine.panelUrl?.trim()}`;
+}
+
 function lazycatMachineVncButtonTitle(
   machine: Pick<LazycatMachineView, "panelKind">,
   resolving: boolean,
@@ -3603,20 +3614,13 @@ export function MachinesView({
   const [error, setError] = useState<string | null>(null);
   const [expandedServiceId, setExpandedServiceId] = useState<number | null>(null);
   const [resolvingVncServiceId, setResolvingVncServiceId] = useState<number | null>(null);
+  const machineSourceKey = bootstrap.lazycat.connected
+    ? (bootstrap.lazycat.email?.trim().toLowerCase() ?? "__connected__")
+    : "__disconnected__";
+  const previousMachineSourceKeyRef = useRef<string | null>(null);
 
   const loadMachines = useCallback(
     async (mode: "load" | "refresh" = "load") => {
-      if (!bootstrap.lazycat.connected) {
-        setAccount(bootstrap.lazycat);
-        setItems([]);
-        setLoading(false);
-        setRefreshing(false);
-        setError(null);
-        setExpandedServiceId(null);
-        setResolvingVncServiceId(null);
-        return;
-      }
-
       if (mode === "load") {
         setLoading(true);
       } else {
@@ -3643,13 +3647,39 @@ export function MachinesView({
         }
       }
     },
-    [bootstrap.lazycat, fetchMachines],
+    [fetchMachines],
   );
 
   useEffect(() => {
     setAccount(bootstrap.lazycat);
+    if (bootstrap.lazycat.connected) {
+      return;
+    }
+    setItems([]);
+    setLoading(false);
+    setRefreshing(false);
+    setError(null);
+    setExpandedServiceId(null);
+    setResolvingVncServiceId(null);
+  }, [bootstrap.lazycat]);
+
+  useEffect(() => {
+    const previousKey = previousMachineSourceKeyRef.current;
+    previousMachineSourceKeyRef.current = machineSourceKey;
+
+    if (!bootstrap.lazycat.connected) {
+      return;
+    }
+
+    if (previousKey === machineSourceKey) {
+      return;
+    }
+
+    setItems([]);
+    setExpandedServiceId(null);
+    setResolvingVncServiceId(null);
     void loadMachines("load");
-  }, [bootstrap.lazycat, loadMachines]);
+  }, [bootstrap.lazycat.connected, machineSourceKey, loadMachines]);
 
   useEffect(() => {
     if (!(account.state === "syncing" || account.state === "authenticating")) {
@@ -3755,11 +3785,11 @@ export function MachinesView({
             </div>
           </div>
           <div className="panel-subtitle">
-            展开某台机器可查看端口映射、流量重置时间和明细同步状态；容器面板机器可在点击时实时获取网页
-            VNC 链接并以新窗口打开。
+            展开某台机器可查看端口映射、流量重置时间和明细同步状态；有面板入口的机器可直接打开 Web
+            面板，容器面板机器还可在点击时实时获取网页 VNC 链接并以新窗口打开。
           </div>
 
-          {loading ? <div className="empty">正在读取机器缓存…</div> : null}
+          {loading && items.length === 0 ? <div className="empty">正在读取机器缓存…</div> : null}
           {!loading && items.length === 0 ? (
             <div className="empty">
               账号已连接，但本地还没有机器缓存。稍等同步完成或手动触发一次同步。
@@ -3770,6 +3800,7 @@ export function MachinesView({
             {items.map((item) => {
               const expanded = expandedServiceId === item.serviceId;
               const trafficSnapshot = item.traffic ? buildLazycatTrafficCycle(item.traffic) : null;
+              const hasPanel = hasLazycatMachinePanel(item);
               const canResolveVnc = canResolveLazycatMachineVnc(item);
               const resolvingVnc = resolvingVncServiceId === item.serviceId;
               return (
@@ -3791,6 +3822,18 @@ export function MachinesView({
                         </span>
                       </div>
                       <div className="machines-card-actions">
+                        <button
+                          type="button"
+                          className="pill machines-vnc-btn"
+                          disabled={!hasPanel}
+                          title={lazycatMachinePanelButtonTitle(item)}
+                          onClick={() => {
+                            if (!item.panelUrl) return;
+                            window.open(item.panelUrl, "_blank", "noopener,noreferrer");
+                          }}
+                        >
+                          打开面板
+                        </button>
                         <button
                           type="button"
                           className="pill machines-vnc-btn"

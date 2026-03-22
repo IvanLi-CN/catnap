@@ -20,6 +20,8 @@ type DemoProps = {
   syncNextAccount?: LazycatAccountView;
   syncNextItems?: LazycatMachineView[];
   syncError?: string | null;
+  backgroundAccountAfterMs?: number;
+  backgroundNextAccount?: LazycatAccountView | null;
   resolveVncDelayMs?: number;
   resolveVncError?: string | null;
   resolvedVncUrls?: Partial<Record<number, string>>;
@@ -304,6 +306,8 @@ function MachinesViewDemo({
   syncNextAccount,
   syncNextItems,
   syncError = null,
+  backgroundAccountAfterMs,
+  backgroundNextAccount = null,
   resolveVncDelayMs = 0,
   resolveVncError = null,
   resolvedVncUrls = demoResolvedVncUrls,
@@ -328,6 +332,18 @@ function MachinesViewDemo({
   useEffect(() => {
     itemsRef.current = items;
   }, [items]);
+
+  useEffect(() => {
+    if (backgroundAccountAfterMs == null || !backgroundNextAccount) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      const nextAccount = structuredClone(backgroundNextAccount);
+      accountRef.current = nextAccount;
+      setAccount(nextAccount);
+    }, backgroundAccountAfterMs);
+    return () => window.clearTimeout(timer);
+  }, [backgroundAccountAfterMs, backgroundNextAccount]);
 
   const fetchMachines = async (): Promise<LazycatMachinesResponse> => {
     if (fetchDelayMs > 0) {
@@ -443,13 +459,18 @@ export const VncAction: Story = {
 
     try {
       const vncCard = findMachineCard(canvasElement as HTMLElement, "港湾 Transit Basic");
+      await userEvent.click(within(vncCard).getByRole("button", { name: "打开面板" }));
       await userEvent.click(within(vncCard).getByRole("button", { name: "打开 VNC" }));
-      await waitFor(() => expect(openCalls.length).toBe(1));
+      await waitFor(() => expect(openCalls.length).toBe(2));
       expect(openCalls[0]).toBe(
+        "https://edge-node-24.example.net:8443/container/dashboard?hash=8d1f0c27b4a9e3f2",
+      );
+      expect(openCalls[1]).toBe(
         "https://edge-node-24.example.net:8443/console?token=demo-console-token-2312",
       );
 
       const noVncCard = findMachineCard(canvasElement as HTMLElement, "Apex Compute Lite");
+      expect(within(noVncCard).getByRole("button", { name: "打开面板" })).toBeDisabled();
       expect(within(noVncCard).getByRole("button", { name: "打开 VNC" })).toBeDisabled();
     } finally {
       window.open = originalOpen;
@@ -523,6 +544,31 @@ export const SyncActionFlow: Story = {
     await waitFor(() => {
       expect(syncSummary?.textContent).not.toBe(previousSummaryText);
     });
+  },
+};
+
+export const BackgroundSyncKeepsListStable: Story = {
+  args: {
+    bootstrap: buildBootstrapWithLazycat({
+      ...readyAccount,
+      machineCount: healthyMachines.length,
+    }),
+    items: healthyMachines,
+    backgroundAccountAfterMs: 200,
+    backgroundNextAccount: {
+      ...syncingAccount,
+      machineCount: healthyMachines.length,
+    },
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await canvas.findByText("港湾 Transit Basic");
+    await waitFor(
+      () => {
+        expect(canvas.queryByText("正在读取机器缓存…")).toBeNull();
+      },
+      { timeout: 1500 },
+    );
   },
 };
 
