@@ -3805,88 +3805,14 @@ export function MachinesView({
               const resolvingVnc = resolvingVncServiceId === item.serviceId;
               return (
                 <section className="machines-card" key={item.serviceId}>
-                  <div className="machines-card-layout">
-                    <div className="machines-card-main">
-                      <div className="machines-card-head">
-                        <div className="machines-card-title-row">
-                          <div className="machines-card-title-wrap">
-                            <div className="machines-card-title">{item.serviceName}</div>
-                            <div className="machines-card-code mono">{item.serviceCode}</div>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="machines-card-body">
-                        <div className="machines-card-grid">
-                          <div>
-                            <span className="machines-kv-label">主地址</span>
-                            <div className="machines-kv-value mono">
-                              {formatLazycatAddress(item.primaryAddress)}
-                            </div>
-                          </div>
-                          <div>
-                            <span className="machines-kv-label">到期时间</span>
-                            <div className="machines-kv-value">
-                              {formatLocalTime(item.expiresAt)}
-                            </div>
-                          </div>
-                          <div>
-                            <span className="machines-kv-label">续费价格</span>
-                            <div className="machines-kv-value">{item.renewPrice ?? "—"}</div>
-                          </div>
-                          <div>
-                            <span className="machines-kv-label">支付周期</span>
-                            <div className="machines-kv-value">{item.billingCycle ?? "—"}</div>
-                          </div>
-                          <div>
-                            <span className="machines-kv-label">附加地址</span>
-                            <div className="machines-kv-value">
-                              {item.extraAddresses.length > 0
-                                ? item.extraAddresses.join(" · ")
-                                : "—"}
-                            </div>
-                          </div>
-                        </div>
-                        {trafficSnapshot?.hasSamples ? (
-                          <LazycatTrafficCycleChart
-                            serviceId={item.serviceId}
-                            snapshot={trafficSnapshot}
-                          />
-                        ) : (
-                          <div className="machines-traffic-panel machines-traffic-panel--empty">
-                            <div className="machines-traffic-panel-head">
-                              <div className="machines-traffic-panel-copy">
-                                <span className="machines-traffic-panel-label">账期流量</span>
-                                <strong
-                                  className={
-                                    trafficSnapshot ? undefined : "machines-traffic-empty-title"
-                                  }
-                                >
-                                  {trafficSnapshot?.usageLabel ?? "暂无可绘制的小时样本"}
-                                </strong>
-                              </div>
-                              {trafficSnapshot ? (
-                                <div className="machines-traffic-panel-stats">
-                                  <span className="machines-traffic-chip">
-                                    {trafficSnapshot.remainingLabel}
-                                  </span>
-                                </div>
-                              ) : null}
-                            </div>
-                            {trafficSnapshot ? (
-                              <div className="machines-traffic-panel-range">
-                                {trafficSnapshot.rangeLabel}
-                              </div>
-                            ) : null}
-                            <div className="machines-traffic-empty-copy">
-                              {trafficSnapshot
-                                ? "暂无可绘制的小时样本，当前先显示最近一次成功同步的缓存摘要；有首条小时样本后会自动切换为图表。"
-                                : "面板同步成功后，系统会按小时把流量写入历史；当前账期至少有一条样本后才显示图表。"}
-                            </div>
-                          </div>
-                        )}
+                  <div className="machines-card-head">
+                    <div className="machines-card-title-row">
+                      <div className="machines-card-title-wrap">
+                        <div className="machines-card-title">{item.serviceName}</div>
+                        <div className="machines-card-code mono">{item.serviceCode}</div>
                       </div>
                     </div>
-                    <div className="machines-card-side">
+                    <div className="machines-card-toolbar">
                       <div className="machines-card-badges">
                         <span className={lazycatMachineStatusClass(item.status)}>
                           {item.status}
@@ -3951,6 +3877,73 @@ export function MachinesView({
                         </button>
                       </div>
                     </div>
+                  </div>
+
+                  <div className="machines-card-body">
+                    <div className="machines-card-grid">
+                      <div>
+                        <span className="machines-kv-label">主地址</span>
+                        <div className="machines-kv-value mono">
+                          {formatLazycatAddress(item.primaryAddress)}
+                        </div>
+                      </div>
+                      <div>
+                        <span className="machines-kv-label">到期时间</span>
+                        <div className="machines-kv-value">{formatLocalTime(item.expiresAt)}</div>
+                      </div>
+                      <div>
+                        <span className="machines-kv-label">续费价格</span>
+                        <div className="machines-kv-value">{item.renewPrice ?? "—"}</div>
+                      </div>
+                      <div>
+                        <span className="machines-kv-label">支付周期</span>
+                        <div className="machines-kv-value">{item.billingCycle ?? "—"}</div>
+                      </div>
+                      <div>
+                        <span className="machines-kv-label">附加地址</span>
+                        <div className="machines-kv-value">
+                          {item.extraAddresses.length > 0 ? item.extraAddresses.join(" · ") : "—"}
+                        </div>
+                      </div>
+                    </div>
+                    {trafficSnapshot?.hasSamples ? (
+                      <LazycatTrafficCycleChart
+                        serviceId={item.serviceId}
+                        snapshot={trafficSnapshot}
+                      />
+                    ) : (
+                      <div className="machines-traffic-panel machines-traffic-panel--empty">
+                        <div className="machines-traffic-panel-head">
+                          <div className="machines-traffic-panel-copy">
+                            <span className="machines-traffic-panel-label">账期流量</span>
+                            <strong
+                              className={
+                                trafficSnapshot ? undefined : "machines-traffic-empty-title"
+                              }
+                            >
+                              {trafficSnapshot?.usageLabel ?? "暂无可绘制的小时样本"}
+                            </strong>
+                          </div>
+                          {trafficSnapshot ? (
+                            <div className="machines-traffic-panel-stats">
+                              <span className="machines-traffic-chip">
+                                {trafficSnapshot.remainingLabel}
+                              </span>
+                            </div>
+                          ) : null}
+                        </div>
+                        {trafficSnapshot ? (
+                          <div className="machines-traffic-panel-range">
+                            {trafficSnapshot.rangeLabel}
+                          </div>
+                        ) : null}
+                        <div className="machines-traffic-empty-copy">
+                          {trafficSnapshot
+                            ? "暂无可绘制的小时样本，当前先显示最近一次成功同步的缓存摘要；有首条小时样本后会自动切换为图表。"
+                            : "面板同步成功后，系统会按小时把流量写入历史；当前账期至少有一条样本后才显示图表。"}
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {expanded ? (
