@@ -2133,13 +2133,21 @@ select {
   pointer-events: none;
 }
 
-.machines-card-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 14px;
+.machines-card-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0 22px;
+  align-items: start;
   position: relative;
   z-index: 1;
+}
+
+.machines-card-main {
+  min-width: 0;
+}
+
+.machines-card-head {
+  position: relative;
 }
 
 .machines-card-body {
@@ -2148,7 +2156,6 @@ select {
   flex-direction: column;
   gap: 12px;
   position: relative;
-  z-index: 1;
 }
 
 .machines-card-title-row {
@@ -2183,12 +2190,13 @@ select {
 
 .machines-card-side {
   flex: 0 0 auto;
-  min-width: 138px;
+  min-width: 146px;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  justify-content: space-between;
   gap: 12px;
+  position: relative;
+  z-index: 1;
 }
 
 .machines-card-actions {
@@ -2196,6 +2204,7 @@ select {
   flex-direction: column;
   align-items: stretch;
   gap: 10px;
+  width: 146px;
 }
 
 .machines-card-grid,
@@ -3463,10 +3472,14 @@ select {
   }
 
   .machines-card-head,
-  .machines-card-title-row,
   .machines-traffic-panel-head {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .machines-card-layout {
+    grid-template-columns: 1fr;
+    gap: 12px;
   }
 
   .machines-card-badges {
@@ -3475,7 +3488,12 @@ select {
 
   .machines-card-side {
     width: 100%;
+    min-width: 0;
     align-items: flex-start;
+  }
+
+  .machines-card-actions {
+    width: 100%;
   }
 
   .machines-expand-btn {
