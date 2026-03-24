@@ -64,7 +64,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route(
             "/lazycat/machines/:service_id/vnc-console",
-            get(get_lazycat_machine_vnc_console),
+            post(post_lazycat_machine_vnc_console),
         )
         .route("/logs", get(get_logs))
         .route("/notifications/records", get(get_notification_records))
@@ -992,7 +992,7 @@ async fn post_lazycat_machine_vnc_url(
         .map_err(|err| json_invalid_argument_with_message(err.to_string()))
 }
 
-async fn get_lazycat_machine_vnc_console(
+async fn post_lazycat_machine_vnc_console(
     State(state): State<AppState>,
     user: axum::extract::Extension<UserView>,
     Path(service_id): Path<i64>,

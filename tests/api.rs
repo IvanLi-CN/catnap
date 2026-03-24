@@ -992,7 +992,7 @@ async fn lazycat_machine_vnc_console_redirects_to_live_console_url() {
         .clone()
         .oneshot(
             Request::builder()
-                .method(Method::GET)
+                .method(Method::POST)
                 .uri("/api/lazycat/machines/2312/vnc-console")
                 .header("host", "example.com")
                 .header("x-user", "u_1")

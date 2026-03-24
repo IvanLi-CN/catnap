@@ -589,10 +589,8 @@ function getLazycatMachinePanelUrl(machine: Pick<LazycatMachineView, "panelUrl">
   }
 }
 
-function canResolveLazycatMachineVnc(
-  machine: Pick<LazycatMachineView, "panelKind" | "panelUrl">,
-): boolean {
-  return machine.panelKind === "container" && getLazycatMachinePanelUrl(machine) !== null;
+function canResolveLazycatMachineVnc(machine: Pick<LazycatMachineView, "panelKind">): boolean {
+  return machine.panelKind === "container";
 }
 
 function lazycatMachinePanelButtonTitle(machine: Pick<LazycatMachineView, "panelUrl">): string {
@@ -603,11 +601,9 @@ function lazycatMachinePanelButtonTitle(machine: Pick<LazycatMachineView, "panel
   return `打开 Web 面板\n${url}`;
 }
 
-function lazycatMachineVncButtonTitle(
-  machine: Pick<LazycatMachineView, "panelKind" | "panelUrl">,
-): string {
+function lazycatMachineVncButtonTitle(machine: Pick<LazycatMachineView, "panelKind">): string {
   if (!canResolveLazycatMachineVnc(machine)) {
-    return "当前机器没有可用的 Web 面板入口，无法获取网页 VNC 入口";
+    return "当前机器没有可用的容器面板，无法获取网页 VNC 入口";
   }
   return "点击时实时解析并跳转到网页 VNC 控制台";
 }
@@ -617,6 +613,30 @@ function buildLazycatMachineVncConsoleUrl(serviceId: number): string {
     `/api/lazycat/machines/${serviceId}/vnc-console`,
     window.location.origin,
   ).toString();
+}
+
+function openLazycatMachineVncConsole(serviceId: number): boolean {
+  const target = `lazycat-vnc-${serviceId}-${Date.now()}`;
+  const popup = window.open("", target);
+  if (!popup) return false;
+  try {
+    popup.opener = null;
+  } catch {
+    // Ignore browsers that expose opener as read-only.
+  }
+
+  const form = document.createElement("form");
+  form.method = "POST";
+  form.action = buildLazycatMachineVncConsoleUrl(serviceId);
+  form.target = target;
+  form.style.display = "none";
+  document.body.appendChild(form);
+  try {
+    form.submit();
+  } finally {
+    form.remove();
+  }
+  return true;
 }
 
 const DEFAULT_FETCH_LAZYCAT_MACHINES = () => api<LazycatMachinesResponse>("/api/lazycat/machines");
@@ -3834,12 +3854,7 @@ export function MachinesView({
                         onClick={() => {
                           if (!canResolveVnc) return;
                           setError(null);
-                          const popup = window.open(
-                            buildLazycatMachineVncConsoleUrl(item.serviceId),
-                            "_blank",
-                            "noopener,noreferrer",
-                          );
-                          if (!popup) {
+                          if (!openLazycatMachineVncConsole(item.serviceId)) {
                             setError("浏览器拦截了新窗口，请允许当前站点弹窗后重试。");
                           }
                         }}

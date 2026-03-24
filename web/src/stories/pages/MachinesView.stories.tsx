@@ -200,7 +200,7 @@ const healthyMachines: LazycatMachineView[] = [
     billingCycle: "monthly",
     renewPrice: "¥0.00元/月付",
     firstPrice: "¥0.00元/月付",
-    panelKind: null,
+    panelKind: "container",
     panelUrl: null,
     traffic: {
       usedGb: 0,
@@ -409,28 +409,57 @@ export const VncAction: Story = {
     const canvas = within(canvasElement);
     await canvas.findByTestId("page-machines");
 
-    const openCalls: string[] = [];
+    const openCalls: Array<{ url: string; target: string }> = [];
+    const submitCalls: Array<{ action: string; method: string; target: string }> = [];
     const originalOpen = window.open;
-    window.open = ((url?: string | URL) => {
-      openCalls.push(url == null ? "" : String(url));
-      return {} as Window;
+    const originalSubmit = HTMLFormElement.prototype.submit;
+    window.open = ((url?: string | URL, target?: string) => {
+      openCalls.push({
+        url: url == null ? "" : String(url),
+        target: target == null ? "" : String(target),
+      });
+      return { opener: window } as Window;
     }) as typeof window.open;
+    HTMLFormElement.prototype.submit = function submit() {
+      submitCalls.push({
+        action: this.action,
+        method: this.method.toUpperCase(),
+        target: this.target,
+      });
+    };
 
     try {
       const vncCard = findMachineCard(canvasElement as HTMLElement, "港湾 Transit Basic");
       await userEvent.click(within(vncCard).getByRole("button", { name: "打开面板" }));
       await userEvent.click(within(vncCard).getByRole("button", { name: "打开 VNC" }));
       await waitFor(() => expect(openCalls.length).toBe(2));
-      expect(openCalls[0]).toBe(
+      expect(openCalls[0]?.url).toBe(
         "https://edge-node-24.example.net:8443/container/dashboard?hash=8d1f0c27b4a9e3f2",
       );
-      expect(openCalls[1]).toBe(`${window.location.origin}/api/lazycat/machines/2312/vnc-console`);
+      expect(openCalls[1]?.url).toBe("");
+      expect(openCalls[1]?.target).toMatch(/^lazycat-vnc-2312-/);
+      expect(submitCalls[0]).toEqual({
+        action: `${window.location.origin}/api/lazycat/machines/2312/vnc-console`,
+        method: "POST",
+        target: openCalls[1]?.target ?? "",
+      });
 
       const noVncCard = findMachineCard(canvasElement as HTMLElement, "Apex Compute Lite");
       expect(within(noVncCard).getByRole("button", { name: "打开面板" })).toBeDisabled();
-      expect(within(noVncCard).getByRole("button", { name: "打开 VNC" })).toBeDisabled();
+      const liveVncButton = within(noVncCard).getByRole("button", { name: "打开 VNC" });
+      expect(liveVncButton).toBeEnabled();
+      await userEvent.click(liveVncButton);
+      await waitFor(() => expect(openCalls.length).toBe(3));
+      expect(openCalls[2]?.url).toBe("");
+      expect(openCalls[2]?.target).toMatch(/^lazycat-vnc-2314-/);
+      expect(submitCalls[1]).toEqual({
+        action: `${window.location.origin}/api/lazycat/machines/2314/vnc-console`,
+        method: "POST",
+        target: openCalls[2]?.target ?? "",
+      });
     } finally {
       window.open = originalOpen;
+      HTMLFormElement.prototype.submit = originalSubmit;
     }
   },
 };
