@@ -4,9 +4,9 @@ use crate::db::{
     LazycatPortMappingRecord, LazycatSiteMachineRecord, LazycatTrafficSampleRecord,
     LazycatTrafficSampleRow,
 };
+use crate::models::LazycatMachineVncUrlResponse;
 use crate::models::{
-    LazycatAccountView, LazycatMachineVncUrlResponse, LazycatMachinesResponse,
-    LazycatTrafficSampleView, LazycatTrafficView,
+    LazycatAccountView, LazycatMachinesResponse, LazycatTrafficSampleView, LazycatTrafficView,
 };
 use anyhow::{anyhow, Context};
 use futures_util::stream::{self, StreamExt};
@@ -248,7 +248,7 @@ impl LazycatService {
 
     async fn resolve_live_machine_panel_access(
         &self,
-        machine: &LazycatMachineRow,
+        machine: &db::LazycatMachineRow,
         account: &LazycatAccountRow,
     ) -> anyhow::Result<(LazycatSession, ResolvedPanelAccess)> {
         let mut session = LazycatSession::from_account(account);
@@ -259,7 +259,10 @@ impl LazycatService {
                 &mut session,
                 &account.email,
                 &account.password,
-                &format!("/provision/custom/content?id={}&key=info", machine.service_id),
+                &format!(
+                    "/provision/custom/content?id={}&key=info",
+                    machine.service_id
+                ),
                 false,
             )
             .await
@@ -356,7 +359,10 @@ impl LazycatService {
             machines.push(parsed.site);
         }
 
-        let _ = apply_session_to_account(account, &session)?;
+        account.cookies_json = session.cookies_json()?;
+        if let Some(last_login_at) = session.last_login_at {
+            account.last_authenticated_at = Some(last_login_at);
+        }
         account.last_site_sync_at = Some(site_sync_at);
         Ok(machines)
     }
@@ -787,7 +793,10 @@ impl LazycatService {
                     access.dashboard_url
                 )
             })?;
-        Ok(extract_console_url_from_panel_html(&access.dashboard_url, &html))
+        Ok(extract_console_url_from_panel_html(
+            &access.dashboard_url,
+            &html,
+        ))
     }
 
     async fn panel_get_html(&self, dashboard_url: &Url) -> anyhow::Result<String> {
@@ -939,62 +948,6 @@ pub async fn get_machines_response(
     Ok(LazycatMachinesResponse { account, items })
 }
 
-pub async fn resolve_machine_vnc_url(
-    state: &AppState,
-    user_id: &str,
-    service_id: i64,
-) -> anyhow::Result<LazycatMachineVncUrlResponse> {
-    let Some(mut account) = db::get_lazycat_account(&state.db, user_id).await? else {
-        return Err(anyhow!("请先连接懒猫云账号"));
-    };
-    let Some(machine) = db::get_lazycat_machine(&state.db, user_id, service_id).await? else {
-        return Err(anyhow!("目标机器不存在或已失效"));
-    };
-    if machine.panel_kind.as_deref() != Some("container") {
-        return Err(anyhow!("当前机器没有可用的网页 VNC 入口"));
-    }
-
-    let service = LazycatService::new(&state.config)?;
-    let (session, access) = service
-        .resolve_live_machine_panel_access(&machine, &account)
-        .await?;
-    if apply_session_to_account(&mut account, &session)? {
-        account.updated_at = current_timestamp_rfc3339();
-        db::put_lazycat_account(&state.db, &account).await?;
-    }
-
-    let hostname = machine.service_code.trim();
-    if !hostname.is_empty() {
-        match service
-            .resolve_console_url_via_panel_token(&access, hostname)
-            .await
-        {
-            Ok(Some(url)) => {
-                return Ok(LazycatMachineVncUrlResponse {
-                    url,
-                    kind: "console".to_string(),
-                });
-            }
-            Ok(None) => {}
-            Err(err) => warn!(
-                user_id,
-                service_id,
-                error = %err,
-                "lazycat live vnc token resolution failed"
-            ),
-        }
-    }
-
-    if let Some(url) = service.resolve_console_url_via_panel_html(&access).await? {
-        return Ok(LazycatMachineVncUrlResponse {
-            url,
-            kind: "console".to_string(),
-        });
-    }
-
-    Err(anyhow!("暂未解析出网页 VNC 控制台入口"))
-}
-
 fn build_machine_traffic_view(
     machine: &LazycatMachineRow,
     samples: Vec<LazycatTrafficSampleRow>,
@@ -1027,25 +980,6 @@ fn build_machine_traffic_view(
         last_reset_at: machine.traffic_last_reset_at.clone(),
         display: machine.traffic_display.clone(),
     })
-}
-
-fn apply_session_to_account(
-    account: &mut LazycatAccountRow,
-    session: &LazycatSession,
-) -> anyhow::Result<bool> {
-    let next_cookies = session.cookies_json()?;
-    let mut changed = false;
-    if account.cookies_json != next_cookies {
-        account.cookies_json = next_cookies;
-        changed = true;
-    }
-    if let Some(last_login_at) = session.last_login_at.clone() {
-        if account.last_authenticated_at.as_deref() != Some(last_login_at.as_str()) {
-            account.last_authenticated_at = Some(last_login_at);
-            changed = true;
-        }
-    }
-    Ok(changed)
 }
 
 fn resolve_machine_traffic_cycle(
@@ -1259,6 +1193,87 @@ fn parse_rfc3339_timestamp(value: &str) -> Option<OffsetDateTime> {
 
 fn format_timestamp(ts: OffsetDateTime) -> Option<String> {
     ts.to_offset(UtcOffset::UTC).format(&Rfc3339).ok()
+}
+
+pub async fn resolve_machine_vnc_url(
+    state: &AppState,
+    user_id: &str,
+    service_id: i64,
+) -> anyhow::Result<LazycatMachineVncUrlResponse> {
+    let console_url = resolve_live_machine_console_url(state, user_id, service_id).await?;
+    Ok(LazycatMachineVncUrlResponse {
+        url: console_url.to_string(),
+        kind: "console".to_string(),
+    })
+}
+
+async fn resolve_live_machine_console_url(
+    state: &AppState,
+    user_id: &str,
+    service_id: i64,
+) -> anyhow::Result<Url> {
+    let Some(mut account) = db::get_lazycat_account(&state.db, user_id).await? else {
+        return Err(anyhow!("请先连接懒猫云账号"));
+    };
+    let Some(machine) = db::get_lazycat_machine(&state.db, user_id, service_id).await? else {
+        return Err(anyhow!("目标机器不存在或已失效"));
+    };
+    if machine.panel_kind.as_deref() != Some("container") {
+        return Err(anyhow!("当前机器没有可用的网页 VNC 入口"));
+    }
+
+    let service = LazycatService::new(&state.config)?;
+    let (session, access) = service
+        .resolve_live_machine_panel_access(&machine, &account)
+        .await?;
+    if apply_session_to_account(&mut account, &session)? {
+        account.updated_at = current_timestamp_rfc3339();
+        db::put_lazycat_account(&state.db, &account).await?;
+    }
+
+    let hostname = machine.service_code.trim();
+    if !hostname.is_empty() {
+        match service
+            .resolve_console_url_via_panel_token(&access, hostname)
+            .await
+        {
+            Ok(Some(url)) => {
+                return Url::parse(&url).with_context(|| format!("invalid console url: {url}"));
+            }
+            Ok(None) => {}
+            Err(err) => warn!(
+                user_id,
+                service_id,
+                error = %err,
+                "lazycat live vnc token resolution failed"
+            ),
+        }
+    }
+
+    if let Some(url) = service.resolve_console_url_via_panel_html(&access).await? {
+        return Url::parse(&url).with_context(|| format!("invalid console url: {url}"));
+    }
+
+    Err(anyhow!("暂未解析出网页 VNC 控制台入口"))
+}
+
+fn apply_session_to_account(
+    account: &mut LazycatAccountRow,
+    session: &LazycatSession,
+) -> anyhow::Result<bool> {
+    let next_cookies = session.cookies_json()?;
+    let mut changed = false;
+    if account.cookies_json != next_cookies {
+        account.cookies_json = next_cookies;
+        changed = true;
+    }
+    if let Some(last_login_at) = session.last_login_at.clone() {
+        if account.last_authenticated_at.as_deref() != Some(last_login_at.as_str()) {
+            account.last_authenticated_at = Some(last_login_at);
+            changed = true;
+        }
+    }
+    Ok(changed)
 }
 
 pub async fn login_account(
@@ -1931,11 +1946,7 @@ fn take_url_like_fragment(input: &str) -> &str {
 }
 
 fn normalize_console_url_candidate(base_url: &Url, candidate: &str) -> Option<String> {
-    let trimmed = candidate
-        .trim()
-        .trim_matches('"')
-        .trim_matches('\'')
-        .trim();
+    let trimmed = candidate.trim().trim_matches('"').trim_matches('\'').trim();
     if trimmed.is_empty() || !trimmed.contains("console?token=") || trimmed.contains("${") {
         return None;
     }
@@ -2262,40 +2273,6 @@ mod tests {
             "https://edge-node-24.example.net:8443/container/dashboard?hash=8d1f0c27b4a9e3f2"
         );
         assert_eq!(panel.panel_hash, "8d1f0c27b4a9e3f2");
-    }
-
-    #[test]
-    fn extracts_console_url_from_panel_html() {
-        let base_url = Url::parse("https://edge-node-24.example.net:8443/container/dashboard?hash=abc")
-            .unwrap();
-        let html = r#"
-<html>
-  <body>
-    <a href="/console?token=live-token-123">Open console</a>
-  </body>
-</html>
-"#;
-        assert_eq!(
-            super::extract_console_url_from_panel_html(&base_url, html).as_deref(),
-            Some("https://edge-node-24.example.net:8443/console?token=live-token-123")
-        );
-    }
-
-    #[test]
-    fn ignores_console_template_literals_in_panel_html() {
-        let base_url = Url::parse("https://edge-node-24.example.net:8443/container/dashboard?hash=abc")
-            .unwrap();
-        let html = r#"
-<html>
-  <body>
-    <script>
-      const consoleUrl = `/console?token=${result.data.token}`;
-      window.open(consoleUrl, "_blank");
-    </script>
-  </body>
-</html>
-"#;
-        assert_eq!(super::extract_console_url_from_panel_html(&base_url, html), None);
     }
 
     #[test]

@@ -577,31 +577,45 @@ function formatLazycatAddress(address?: string | null): string {
   return address?.trim() ? address.trim() : "—";
 }
 
+function getLazycatMachinePanelUrl(machine: Pick<LazycatMachineView, "panelUrl">): string | null {
+  const trimmed = machine.panelUrl?.trim();
+  if (!trimmed) return null;
+  try {
+    const url = new URL(trimmed);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
 function canResolveLazycatMachineVnc(machine: Pick<LazycatMachineView, "panelKind">): boolean {
   return machine.panelKind === "container";
 }
 
-function hasLazycatMachinePanel(machine: Pick<LazycatMachineView, "panelUrl">): boolean {
-  return Boolean(machine.panelUrl?.trim());
-}
-
 function lazycatMachinePanelButtonTitle(machine: Pick<LazycatMachineView, "panelUrl">): string {
-  if (!hasLazycatMachinePanel(machine)) {
+  const url = getLazycatMachinePanelUrl(machine);
+  if (!url) {
     return "当前机器没有可用的 Web 面板入口";
   }
-  return `打开 Web 面板\n${machine.panelUrl?.trim()}`;
+  return `打开 Web 面板\n${url}`;
 }
 
-function lazycatMachineVncButtonTitle(
-  machine: Pick<LazycatMachineView, "panelKind">,
-  resolving: boolean,
-): string {
-  if (resolving) return "正在实时获取网页 VNC 链接…";
+function lazycatMachineVncButtonTitle(machine: Pick<LazycatMachineView, "panelKind">): string {
   if (!canResolveLazycatMachineVnc(machine)) {
     return "当前机器没有可用的容器面板，无法获取网页 VNC 入口";
   }
-  return "点击时实时获取网页 VNC 链接";
+  return "点击时实时解析并跳转到网页 VNC 控制台";
 }
+
+function buildLazycatMachineVncConsoleUrl(serviceId: number): string {
+  return new URL(
+    `/api/lazycat/machines/${serviceId}/vnc-console`,
+    window.location.origin,
+  ).toString();
+}
+
+const DEFAULT_FETCH_LAZYCAT_MACHINES = () => api<LazycatMachinesResponse>("/api/lazycat/machines");
 
 type OrderLinkMode = "configureproduct";
 type OrderLink = { url: string; mode: OrderLinkMode };
@@ -1505,6 +1519,8 @@ export function App() {
   }, [applyProductsResponse, hasBootstrap, route]);
 
   useEffect(() => {
+    if (!hasBootstrap) return;
+    if (route !== "monitoring" && route !== "products") return;
     const intervalSeconds = bootstrap?.monitoring.poll.intervalSeconds;
     if (!intervalSeconds) return;
 
@@ -1527,7 +1543,7 @@ export function App() {
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [applyProductsResponse, bootstrap?.monitoring.poll.intervalSeconds]);
+  }, [applyProductsResponse, bootstrap?.monitoring.poll.intervalSeconds, hasBootstrap, route]);
 
   async function startCatalogRefresh() {
     if (catalogRefresh?.state === "running") return;
@@ -3594,17 +3610,12 @@ export function MonitoringSection({
 export function MachinesView({
   bootstrap,
   onSync,
-  fetchMachines = () => api<LazycatMachinesResponse>("/api/lazycat/machines"),
-  resolveMachineVncUrl = (serviceId) =>
-    api<LazycatMachineVncUrlResponse>(`/api/lazycat/machines/${serviceId}/vnc-url`, {
-      method: "POST",
-    }),
+  fetchMachines = DEFAULT_FETCH_LAZYCAT_MACHINES,
 }: {
   bootstrap: BootstrapResponse;
   onSync: () => Promise<LazycatAccountView>;
   onRefreshAccount: () => Promise<LazycatAccountView>;
   fetchMachines?: () => Promise<LazycatMachinesResponse>;
-  resolveMachineVncUrl?: (serviceId: number) => Promise<LazycatMachineVncUrlResponse>;
 }) {
   const [account, setAccount] = useState<LazycatAccountView>(() => bootstrap.lazycat);
   const [items, setItems] = useState<LazycatMachineView[]>([]);
@@ -3613,14 +3624,19 @@ export function MachinesView({
   const [syncPending, setSyncPending] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [expandedServiceId, setExpandedServiceId] = useState<number | null>(null);
-  const [resolvingVncServiceId, setResolvingVncServiceId] = useState<number | null>(null);
-  const machineSourceKey = bootstrap.lazycat.connected
-    ? (bootstrap.lazycat.email?.trim().toLowerCase() ?? "__connected__")
-    : "__disconnected__";
-  const previousMachineSourceKeyRef = useRef<string | null>(null);
 
   const loadMachines = useCallback(
     async (mode: "load" | "refresh" = "load") => {
+      if (!bootstrap.lazycat.connected) {
+        setAccount(bootstrap.lazycat);
+        setItems([]);
+        setLoading(false);
+        setRefreshing(false);
+        setError(null);
+        setExpandedServiceId(null);
+        return;
+      }
+
       if (mode === "load") {
         setLoading(true);
       } else {
@@ -3647,39 +3663,13 @@ export function MachinesView({
         }
       }
     },
-    [fetchMachines],
+    [bootstrap.lazycat, fetchMachines],
   );
 
   useEffect(() => {
     setAccount(bootstrap.lazycat);
-    if (bootstrap.lazycat.connected) {
-      return;
-    }
-    setItems([]);
-    setLoading(false);
-    setRefreshing(false);
-    setError(null);
-    setExpandedServiceId(null);
-    setResolvingVncServiceId(null);
-  }, [bootstrap.lazycat]);
-
-  useEffect(() => {
-    const previousKey = previousMachineSourceKeyRef.current;
-    previousMachineSourceKeyRef.current = machineSourceKey;
-
-    if (!bootstrap.lazycat.connected) {
-      return;
-    }
-
-    if (previousKey === machineSourceKey) {
-      return;
-    }
-
-    setItems([]);
-    setExpandedServiceId(null);
-    setResolvingVncServiceId(null);
     void loadMachines("load");
-  }, [bootstrap.lazycat.connected, machineSourceKey, loadMachines]);
+  }, [bootstrap.lazycat, loadMachines]);
 
   useEffect(() => {
     if (!(account.state === "syncing" || account.state === "authenticating")) {
@@ -3800,9 +3790,8 @@ export function MachinesView({
             {items.map((item) => {
               const expanded = expandedServiceId === item.serviceId;
               const trafficSnapshot = item.traffic ? buildLazycatTrafficCycle(item.traffic) : null;
-              const hasPanel = hasLazycatMachinePanel(item);
+              const panelUrl = getLazycatMachinePanelUrl(item);
               const canResolveVnc = canResolveLazycatMachineVnc(item);
-              const resolvingVnc = resolvingVncServiceId === item.serviceId;
               return (
                 <section className="machines-card" key={item.serviceId}>
                   <div className="machines-card-head">
@@ -3811,8 +3800,6 @@ export function MachinesView({
                         <div className="machines-card-title">{item.serviceName}</div>
                         <div className="machines-card-code mono">{item.serviceCode}</div>
                       </div>
-                    </div>
-                    <div className="machines-card-toolbar">
                       <div className="machines-card-badges">
                         <span className={lazycatMachineStatusClass(item.status)}>
                           {item.status}
@@ -3821,130 +3808,117 @@ export function MachinesView({
                           {lazycatDetailLabel(item.detailState)}
                         </span>
                       </div>
-                      <div className="machines-card-actions">
-                        <button
-                          type="button"
-                          className="pill machines-vnc-btn"
-                          disabled={!hasPanel}
-                          title={lazycatMachinePanelButtonTitle(item)}
-                          onClick={() => {
-                            if (!item.panelUrl) return;
-                            window.open(item.panelUrl, "_blank", "noopener,noreferrer");
-                          }}
-                        >
-                          打开面板
-                        </button>
-                        <button
-                          type="button"
-                          className="pill machines-vnc-btn"
-                          disabled={!canResolveVnc || resolvingVnc}
-                          title={lazycatMachineVncButtonTitle(item, resolvingVnc)}
-                          onClick={async () => {
-                            if (!canResolveVnc || resolvingVnc) return;
-                            setResolvingVncServiceId(item.serviceId);
-                            setError(null);
-                            try {
-                              const resolved = await resolveMachineVncUrl(item.serviceId);
-                              window.open(resolved.url, "_blank", "noopener,noreferrer");
-                            } catch (e) {
-                              setError(e instanceof Error ? e.message : String(e));
-                            } finally {
-                              setResolvingVncServiceId((current) =>
-                                current === item.serviceId ? null : current,
-                              );
-                            }
-                          }}
-                        >
-                          {resolvingVnc ? (
-                            <>
-                              <InlineSpinner />
-                              <span>获取中</span>
-                            </>
-                          ) : (
-                            "打开 VNC"
-                          )}
-                        </button>
-                        <button
-                          type="button"
-                          className="pill machines-expand-btn"
-                          onClick={() => {
-                            setExpandedServiceId((current) =>
-                              current === item.serviceId ? null : item.serviceId,
-                            );
-                          }}
-                        >
-                          {expanded ? "收起详情" : "展开详情"}
-                        </button>
+                    </div>
+                    <div className="machines-card-actions">
+                      <button
+                        type="button"
+                        className="pill machines-vnc-btn"
+                        disabled={!panelUrl}
+                        title={lazycatMachinePanelButtonTitle(item)}
+                        onClick={() => {
+                          if (!panelUrl) return;
+                          window.open(panelUrl, "_blank", "noopener,noreferrer");
+                        }}
+                      >
+                        打开面板
+                      </button>
+                      <button
+                        type="button"
+                        className="pill machines-vnc-btn"
+                        disabled={!canResolveVnc}
+                        title={lazycatMachineVncButtonTitle(item)}
+                        onClick={() => {
+                          if (!canResolveVnc) return;
+                          setError(null);
+                          const popup = window.open(
+                            buildLazycatMachineVncConsoleUrl(item.serviceId),
+                            "_blank",
+                            "noopener,noreferrer",
+                          );
+                          if (!popup) {
+                            setError("浏览器拦截了新窗口，请允许当前站点弹窗后重试。");
+                          }
+                        }}
+                      >
+                        打开 VNC
+                      </button>
+                      <button
+                        type="button"
+                        className="pill machines-expand-btn"
+                        onClick={() => {
+                          setExpandedServiceId((current) =>
+                            current === item.serviceId ? null : item.serviceId,
+                          );
+                        }}
+                      >
+                        {expanded ? "收起详情" : "展开详情"}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="machines-card-grid">
+                    <div className="machines-card-field machines-card-field--wide">
+                      <span className="machines-kv-label">主地址</span>
+                      <div className="machines-kv-value mono">
+                        {formatLazycatAddress(item.primaryAddress)}
+                      </div>
+                    </div>
+                    <div className="machines-card-field">
+                      <span className="machines-kv-label">到期时间</span>
+                      <div className="machines-kv-value">{formatLocalTime(item.expiresAt)}</div>
+                    </div>
+                    <div className="machines-card-field">
+                      <span className="machines-kv-label">续费价格</span>
+                      <div className="machines-kv-value">{item.renewPrice ?? "—"}</div>
+                    </div>
+                    <div className="machines-card-field">
+                      <span className="machines-kv-label">支付周期</span>
+                      <div className="machines-kv-value">{item.billingCycle ?? "—"}</div>
+                    </div>
+                    <div className="machines-card-field machines-card-field--wide">
+                      <span className="machines-kv-label">附加地址</span>
+                      <div className="machines-kv-value">
+                        {item.extraAddresses.length > 0 ? item.extraAddresses.join(" · ") : "—"}
                       </div>
                     </div>
                   </div>
 
-                  <div className="machines-card-body">
-                    <div className="machines-card-grid">
-                      <div>
-                        <span className="machines-kv-label">主地址</span>
-                        <div className="machines-kv-value mono">
-                          {formatLazycatAddress(item.primaryAddress)}
-                        </div>
-                      </div>
-                      <div>
-                        <span className="machines-kv-label">到期时间</span>
-                        <div className="machines-kv-value">{formatLocalTime(item.expiresAt)}</div>
-                      </div>
-                      <div>
-                        <span className="machines-kv-label">续费价格</span>
-                        <div className="machines-kv-value">{item.renewPrice ?? "—"}</div>
-                      </div>
-                      <div>
-                        <span className="machines-kv-label">支付周期</span>
-                        <div className="machines-kv-value">{item.billingCycle ?? "—"}</div>
-                      </div>
-                      <div>
-                        <span className="machines-kv-label">附加地址</span>
-                        <div className="machines-kv-value">
-                          {item.extraAddresses.length > 0 ? item.extraAddresses.join(" · ") : "—"}
-                        </div>
-                      </div>
-                    </div>
-                    {trafficSnapshot?.hasSamples ? (
-                      <LazycatTrafficCycleChart
-                        serviceId={item.serviceId}
-                        snapshot={trafficSnapshot}
-                      />
-                    ) : (
-                      <div className="machines-traffic-panel machines-traffic-panel--empty">
-                        <div className="machines-traffic-panel-head">
-                          <div className="machines-traffic-panel-copy">
-                            <span className="machines-traffic-panel-label">账期流量</span>
-                            <strong
-                              className={
-                                trafficSnapshot ? undefined : "machines-traffic-empty-title"
-                              }
-                            >
-                              {trafficSnapshot?.usageLabel ?? "暂无可绘制的小时样本"}
-                            </strong>
-                          </div>
-                          {trafficSnapshot ? (
-                            <div className="machines-traffic-panel-stats">
-                              <span className="machines-traffic-chip">
-                                {trafficSnapshot.remainingLabel}
-                              </span>
-                            </div>
-                          ) : null}
+                  {trafficSnapshot?.hasSamples ? (
+                    <LazycatTrafficCycleChart
+                      serviceId={item.serviceId}
+                      snapshot={trafficSnapshot}
+                    />
+                  ) : (
+                    <div className="machines-traffic-panel machines-traffic-panel--empty">
+                      <div className="machines-traffic-panel-head">
+                        <div className="machines-traffic-panel-copy">
+                          <span className="machines-traffic-panel-label">账期流量</span>
+                          <strong
+                            className={trafficSnapshot ? undefined : "machines-traffic-empty-title"}
+                          >
+                            {trafficSnapshot?.usageLabel ?? "暂无可绘制的小时样本"}
+                          </strong>
                         </div>
                         {trafficSnapshot ? (
-                          <div className="machines-traffic-panel-range">
-                            {trafficSnapshot.rangeLabel}
+                          <div className="machines-traffic-panel-stats">
+                            <span className="machines-traffic-chip">
+                              {trafficSnapshot.remainingLabel}
+                            </span>
                           </div>
                         ) : null}
-                        <div className="machines-traffic-empty-copy">
-                          {trafficSnapshot
-                            ? "暂无可绘制的小时样本，当前先显示最近一次成功同步的缓存摘要；有首条小时样本后会自动切换为图表。"
-                            : "面板同步成功后，系统会按小时把流量写入历史；当前账期至少有一条样本后才显示图表。"}
-                        </div>
                       </div>
-                    )}
-                  </div>
+                      {trafficSnapshot ? (
+                        <div className="machines-traffic-panel-range">
+                          {trafficSnapshot.rangeLabel}
+                        </div>
+                      ) : null}
+                      <div className="machines-traffic-empty-copy">
+                        {trafficSnapshot
+                          ? "暂无可绘制的小时样本，当前先显示最近一次成功同步的缓存摘要；有首条小时样本后会自动切换为图表。"
+                          : "面板同步成功后，系统会按小时把流量写入历史；当前账期至少有一条样本后才显示图表。"}
+                      </div>
+                    </div>
+                  )}
 
                   {expanded ? (
                     <div className="machines-detail">

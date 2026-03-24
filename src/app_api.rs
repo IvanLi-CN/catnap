@@ -62,6 +62,10 @@ pub fn router(state: AppState) -> Router {
             "/lazycat/machines/:service_id/vnc-url",
             post(post_lazycat_machine_vnc_url),
         )
+        .route(
+            "/lazycat/machines/:service_id/vnc-console",
+            get(get_lazycat_machine_vnc_console),
+        )
         .route("/logs", get(get_logs))
         .route("/notifications/records", get(get_notification_records))
         .route(
@@ -986,6 +990,133 @@ async fn post_lazycat_machine_vnc_url(
         .await
         .map(Json)
         .map_err(|err| json_invalid_argument_with_message(err.to_string()))
+}
+
+async fn get_lazycat_machine_vnc_console(
+    State(state): State<AppState>,
+    user: axum::extract::Extension<UserView>,
+    Path(service_id): Path<i64>,
+) -> Response<Body> {
+    if db::ensure_user(&state.db, &state.config, &user.0.id)
+        .await
+        .is_err()
+    {
+        return lazycat_console_error_response(
+            StatusCode::BAD_REQUEST,
+            "网页 VNC 打开失败",
+            "无法确认当前用户身份，请刷新页面后重试。",
+        );
+    }
+
+    match crate::lazycat::resolve_machine_vnc_url(&state, &user.0.id, service_id).await {
+        Ok(resolved) => {
+            let mut response = Response::new(Body::empty());
+            *response.status_mut() = StatusCode::TEMPORARY_REDIRECT;
+            response.headers_mut().insert(
+                header::LOCATION,
+                header::HeaderValue::from_str(&resolved.url)
+                    .unwrap_or_else(|_| header::HeaderValue::from_static("/")),
+            );
+            response.headers_mut().insert(
+                header::CACHE_CONTROL,
+                header::HeaderValue::from_static("no-store"),
+            );
+            response
+        }
+        Err(err) => lazycat_console_error_response(
+            StatusCode::BAD_GATEWAY,
+            "网页 VNC 打开失败",
+            &err.to_string(),
+        ),
+    }
+}
+
+fn lazycat_console_error_response(
+    status: StatusCode,
+    title: &str,
+    message: &str,
+) -> Response<Body> {
+    let html = format!(
+        r#"<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <style>
+      :root {{
+        color-scheme: dark;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          sans-serif;
+        --bg: #091120;
+        --surface: #0f1d37;
+        --line: rgba(86, 111, 163, 0.25);
+        --text: #f0f5ff;
+        --muted: #a7b7d8;
+        --warn: #ff8c8c;
+      }}
+      * {{ box-sizing: border-box; }}
+      body {{
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        background: radial-gradient(circle at top, rgba(48, 88, 170, 0.22), transparent 40%), var(--bg);
+        color: var(--text);
+      }}
+      .card {{
+        width: min(100%, 640px);
+        border: 1px solid var(--line);
+        border-radius: 20px;
+        background: linear-gradient(180deg, rgba(15, 29, 55, 0.98), rgba(10, 18, 34, 0.98));
+        padding: 28px;
+        box-shadow: 0 20px 70px rgba(0, 0, 0, 0.35);
+      }}
+      h1 {{ margin: 0 0 12px; font-size: 24px; }}
+      p {{ margin: 0; line-height: 1.7; color: var(--muted); }}
+      .error {{
+        margin-top: 18px;
+        padding: 14px 16px;
+        border-radius: 14px;
+        border: 1px solid rgba(255, 140, 140, 0.35);
+        background: rgba(88, 24, 32, 0.28);
+        color: var(--warn);
+        white-space: pre-wrap;
+      }}
+    </style>
+  </head>
+  <body>
+    <main class="card">
+      <h1>{title}</h1>
+      <p>控制台页未能成功跳转到上游网页 VNC 页面。关闭此页后回到机器列表重试；如果问题持续存在，请把这页内容反馈给主人。</p>
+      <div class="error">{message}</div>
+    </main>
+  </body>
+</html>"#,
+        title = html_escape(title),
+        message = html_escape(message),
+    );
+
+    let mut response = Response::new(Body::from(html));
+    *response.status_mut() = status;
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        header::HeaderValue::from_static("text/html; charset=utf-8"),
+    );
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("no-store"),
+    );
+    response
+}
+
+fn html_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 #[derive(Debug, Deserialize)]

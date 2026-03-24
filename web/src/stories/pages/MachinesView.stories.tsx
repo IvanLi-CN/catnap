@@ -5,7 +5,6 @@ import {
   type BootstrapResponse,
   type LazycatAccountView,
   type LazycatMachineView,
-  type LazycatMachineVncUrlResponse,
   type LazycatMachinesResponse,
   MachinesView,
 } from "../../App";
@@ -20,11 +19,6 @@ type DemoProps = {
   syncNextAccount?: LazycatAccountView;
   syncNextItems?: LazycatMachineView[];
   syncError?: string | null;
-  backgroundAccountAfterMs?: number;
-  backgroundNextAccount?: LazycatAccountView | null;
-  resolveVncDelayMs?: number;
-  resolveVncError?: string | null;
-  resolvedVncUrls?: Partial<Record<number, string>>;
 };
 
 function cloneBootstrap(bootstrap: BootstrapResponse = demoBootstrap): BootstrapResponse {
@@ -76,10 +70,6 @@ const disconnectedAccount: LazycatAccountView = {
   lastSiteSyncAt: null,
   lastPanelSyncAt: null,
   lastError: null,
-};
-
-const demoResolvedVncUrls: Partial<Record<number, string>> = {
-  2312: "https://edge-node-24.example.net:8443/console?token=demo-console-token-2312",
 };
 
 const healthyMachines: LazycatMachineView[] = [
@@ -244,6 +234,8 @@ const degradedMachines: LazycatMachineView[] = [
     billingCycle: "monthly",
     renewPrice: "¥1.50元/月付",
     firstPrice: "¥1.50元/月付",
+    panelKind: null,
+    panelUrl: null,
     traffic: null,
     portMappings: [
       {
@@ -274,6 +266,8 @@ const degradedMachines: LazycatMachineView[] = [
     billingCycle: "free",
     renewPrice: "¥0.00元/免费",
     firstPrice: "¥0.00元/免费",
+    panelKind: null,
+    panelUrl: null,
     traffic: null,
     portMappings: [],
     lastSiteSyncAt: "2026-03-20T00:46:13Z",
@@ -306,11 +300,6 @@ function MachinesViewDemo({
   syncNextAccount,
   syncNextItems,
   syncError = null,
-  backgroundAccountAfterMs,
-  backgroundNextAccount = null,
-  resolveVncDelayMs = 0,
-  resolveVncError = null,
-  resolvedVncUrls = demoResolvedVncUrls,
 }: DemoProps) {
   const bootstrap = useMemo(() => cloneBootstrap(initialBootstrap), [initialBootstrap]);
   const [account, setAccount] = useState<LazycatAccountView>(() =>
@@ -332,18 +321,6 @@ function MachinesViewDemo({
   useEffect(() => {
     itemsRef.current = items;
   }, [items]);
-
-  useEffect(() => {
-    if (backgroundAccountAfterMs == null || !backgroundNextAccount) {
-      return;
-    }
-    const timer = window.setTimeout(() => {
-      const nextAccount = structuredClone(backgroundNextAccount);
-      accountRef.current = nextAccount;
-      setAccount(nextAccount);
-    }, backgroundAccountAfterMs);
-    return () => window.clearTimeout(timer);
-  }, [backgroundAccountAfterMs, backgroundNextAccount]);
 
   const fetchMachines = async (): Promise<LazycatMachinesResponse> => {
     if (fetchDelayMs > 0) {
@@ -381,30 +358,12 @@ function MachinesViewDemo({
     return nextAccount;
   };
 
-  const resolveMachineVncUrl = async (serviceId: number): Promise<LazycatMachineVncUrlResponse> => {
-    if (resolveVncDelayMs > 0) {
-      await delay(resolveVncDelayMs);
-    }
-    if (resolveVncError) {
-      throw new Error(resolveVncError);
-    }
-    const resolvedUrl = resolvedVncUrls[serviceId];
-    if (!resolvedUrl) {
-      throw new Error(`Missing mocked VNC url for service ${serviceId}`);
-    }
-    return {
-      url: resolvedUrl,
-      kind: "console",
-    };
-  };
-
   return (
     <MachinesView
       bootstrap={{ ...bootstrap, lazycat: account }}
       onSync={onSync}
       onRefreshAccount={async () => structuredClone(accountRef.current)}
       fetchMachines={fetchMachines}
-      resolveMachineVncUrl={resolveMachineVncUrl}
     />
   );
 }
@@ -453,8 +412,8 @@ export const VncAction: Story = {
     const openCalls: string[] = [];
     const originalOpen = window.open;
     window.open = ((url?: string | URL) => {
-      openCalls.push(String(url));
-      return null;
+      openCalls.push(url == null ? "" : String(url));
+      return {} as Window;
     }) as typeof window.open;
 
     try {
@@ -465,9 +424,7 @@ export const VncAction: Story = {
       expect(openCalls[0]).toBe(
         "https://edge-node-24.example.net:8443/container/dashboard?hash=8d1f0c27b4a9e3f2",
       );
-      expect(openCalls[1]).toBe(
-        "https://edge-node-24.example.net:8443/console?token=demo-console-token-2312",
-      );
+      expect(openCalls[1]).toBe(`${window.location.origin}/api/lazycat/machines/2312/vnc-console`);
 
       const noVncCard = findMachineCard(canvasElement as HTMLElement, "Apex Compute Lite");
       expect(within(noVncCard).getByRole("button", { name: "打开面板" })).toBeDisabled();
@@ -544,31 +501,6 @@ export const SyncActionFlow: Story = {
     await waitFor(() => {
       expect(syncSummary?.textContent).not.toBe(previousSummaryText);
     });
-  },
-};
-
-export const BackgroundSyncKeepsListStable: Story = {
-  args: {
-    bootstrap: buildBootstrapWithLazycat({
-      ...readyAccount,
-      machineCount: healthyMachines.length,
-    }),
-    items: healthyMachines,
-    backgroundAccountAfterMs: 200,
-    backgroundNextAccount: {
-      ...syncingAccount,
-      machineCount: healthyMachines.length,
-    },
-  },
-  play: async ({ canvasElement }) => {
-    const canvas = within(canvasElement);
-    await canvas.findByText("港湾 Transit Basic");
-    await waitFor(
-      () => {
-        expect(canvas.queryByText("正在读取机器缓存…")).toBeNull();
-      },
-      { timeout: 1500 },
-    );
   },
 };
 
