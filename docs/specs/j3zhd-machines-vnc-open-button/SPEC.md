@@ -81,6 +81,19 @@
 - 假设：懒猫缓存里的 `panel_url` 已经是面向用户可直接打开的新窗口入口。
 - 风险：上游面板 token 接口变化时，实时 VNC 跳转可能失效，需要同步调整服务端解析链路。
 
+## Visual Evidence (PR)
+
+- source_type: storybook_canvas
+  target_program: mock-only
+  capture_scope: browser-viewport
+  sensitive_exclusion: N/A
+  submission_gate: pending-owner-approval
+  story_id_or_title: Pages/MachinesView/Vnc Action
+  state: panel and vnc action availability
+  evidence_note: 机器卡片在列表层同时展示“打开面板 / 打开 VNC / 展开详情”，并正确区分可点击与禁用状态。
+  image:
+  ![Machines VNC actions story](./assets/machines-vnc-actions-story.png)
+
 ## 变更记录（Change log）
 
 - 2026-03-21: 初始化规格，并完成机器列表 VNC 按钮、禁用态和 Storybook 交互覆盖。
