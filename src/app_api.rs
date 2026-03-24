@@ -1011,7 +1011,7 @@ async fn post_lazycat_machine_vnc_console(
     match crate::lazycat::resolve_machine_vnc_url(&state, &user.0.id, service_id).await {
         Ok(resolved) => {
             let mut response = Response::new(Body::empty());
-            *response.status_mut() = StatusCode::TEMPORARY_REDIRECT;
+            *response.status_mut() = StatusCode::SEE_OTHER;
             response.headers_mut().insert(
                 header::LOCATION,
                 header::HeaderValue::from_str(&resolved.url)

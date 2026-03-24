@@ -1003,7 +1003,7 @@ async fn lazycat_machine_vnc_console_redirects_to_live_console_url() {
         .await
         .unwrap();
 
-    assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT);
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
     assert_eq!(
         response
             .headers()
