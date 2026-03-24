@@ -152,7 +152,7 @@ const healthyMachines: LazycatMachineView[] = [
     billingCycle: "monthly",
     renewPrice: "¥9.34元/月付",
     firstPrice: "¥9.34元/月付",
-    panelKind: null,
+    panelKind: "container",
     panelUrl: null,
     traffic: {
       usedGb: 702,

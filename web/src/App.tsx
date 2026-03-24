@@ -589,8 +589,10 @@ function getLazycatMachinePanelUrl(machine: Pick<LazycatMachineView, "panelUrl">
   }
 }
 
-function canResolveLazycatMachineVnc(machine: Pick<LazycatMachineView, "panelKind">): boolean {
-  return machine.panelKind === "container";
+function canResolveLazycatMachineVnc(
+  machine: Pick<LazycatMachineView, "panelKind" | "panelUrl">,
+): boolean {
+  return machine.panelKind === "container" && getLazycatMachinePanelUrl(machine) !== null;
 }
 
 function lazycatMachinePanelButtonTitle(machine: Pick<LazycatMachineView, "panelUrl">): string {
@@ -601,9 +603,11 @@ function lazycatMachinePanelButtonTitle(machine: Pick<LazycatMachineView, "panel
   return `打开 Web 面板\n${url}`;
 }
 
-function lazycatMachineVncButtonTitle(machine: Pick<LazycatMachineView, "panelKind">): string {
+function lazycatMachineVncButtonTitle(
+  machine: Pick<LazycatMachineView, "panelKind" | "panelUrl">,
+): string {
   if (!canResolveLazycatMachineVnc(machine)) {
-    return "当前机器没有可用的容器面板，无法获取网页 VNC 入口";
+    return "当前机器没有可用的 Web 面板入口，无法获取网页 VNC 入口";
   }
   return "点击时实时解析并跳转到网页 VNC 控制台";
 }
