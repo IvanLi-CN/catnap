@@ -34,7 +34,8 @@ export default defineConfig({
     proxy: {
       "/api": {
         target: process.env.API_PROXY_TARGET ?? "http://localhost:18080",
-        changeOrigin: true,
+        // Preserve the browser-facing Host so backend same-origin checks continue to pass in dev.
+        changeOrigin: false,
         ...(apiProxyUser
           ? {
               headers: {

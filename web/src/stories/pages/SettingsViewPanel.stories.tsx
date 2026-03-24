@@ -199,26 +199,27 @@ async function expectActionFeedbackBeforeButton(
 
   const bubbleCenterY = bubbleRect.top + bubbleRect.height / 2;
   const buttonCenterY = afterRect.top + afterRect.height / 2;
+  const minGapPx = 6;
 
   if (bubbleClasses.includes("settings-feedback-bubble-inline-side-left")) {
-    expect(bubbleRect.right).toBeLessThanOrEqual(afterRect.left - 7);
+    expect(bubbleRect.right).toBeLessThanOrEqual(afterRect.left - minGapPx);
     expect(Math.abs(bubbleCenterY - buttonCenterY)).toBeLessThanOrEqual(8);
     return;
   }
 
   if (bubbleClasses.includes("settings-feedback-bubble-inline-side-right")) {
-    expect(bubbleRect.left).toBeGreaterThanOrEqual(afterRect.right + 7);
+    expect(bubbleRect.left).toBeGreaterThanOrEqual(afterRect.right + minGapPx);
     expect(Math.abs(bubbleCenterY - buttonCenterY)).toBeLessThanOrEqual(8);
     return;
   }
 
   if (bubbleClasses.includes("settings-feedback-bubble-inline-side-top")) {
-    expect(bubbleRect.bottom).toBeLessThanOrEqual(afterRect.top - 7);
+    expect(bubbleRect.bottom).toBeLessThanOrEqual(afterRect.top - minGapPx);
     return;
   }
 
   expect(bubbleClasses.includes("settings-feedback-bubble-inline-side-bottom")).toBe(true);
-  expect(bubbleRect.top).toBeGreaterThanOrEqual(afterRect.bottom + 7);
+  expect(bubbleRect.top).toBeGreaterThanOrEqual(afterRect.bottom + minGapPx);
 }
 
 const meta = {

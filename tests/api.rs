@@ -596,6 +596,11 @@ async fn lazycat_machines_are_user_scoped_and_disconnect_cleans_current_user() {
     );
     assert_eq!(json_u1["items"].as_array().map(Vec::len), Some(1));
     assert_eq!(json_u1["items"][0]["serviceId"].as_i64(), Some(2312));
+    assert_eq!(json_u1["items"][0]["panelKind"].as_str(), Some("container"));
+    assert_eq!(
+        json_u1["items"][0]["panelUrl"].as_str(),
+        Some("https://panel-2312.example.test:8443/container/dashboard")
+    );
     assert_eq!(
         json_u1["items"][0]["portMappings"].as_array().map(Vec::len),
         Some(1)
@@ -857,6 +862,154 @@ async fn lazycat_sync_requires_connected_account() {
     assert_eq!(
         json["error"]["message"].as_str(),
         Some("请先连接懒猫云账号")
+    );
+}
+
+#[tokio::test]
+async fn lazycat_machine_vnc_url_returns_live_console_url() {
+    let received_hostname = Arc::new(Mutex::new(None::<String>));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let base = format!("http://{addr}");
+    let info_base = base.clone();
+    let received_hostname_for_route = received_hostname.clone();
+    let stub = axum::Router::new()
+        .route(
+            "/provision/custom/content",
+            axum::routing::get(move || {
+                let info_base = info_base.clone();
+                async move {
+                    axum::response::Html(format!(
+                        r#"<a href="{info_base}/container/dashboard?hash=live-hash-2312">控制台</a>"#
+                    ))
+                }
+            }),
+        )
+        .route(
+            "/api/container/console/create-token",
+            axum::routing::post(
+                move |headers: axum::http::HeaderMap, body: String| {
+                    let received_hostname = received_hostname_for_route.clone();
+                    async move {
+                        assert_eq!(
+                            headers.get("x-container-hash").and_then(|value| value.to_str().ok()),
+                            Some("live-hash-2312")
+                        );
+                        let payload: serde_json::Value = serde_json::from_str(&body).unwrap();
+                        *received_hostname.lock().unwrap() =
+                            payload["hostname"].as_str().map(str::to_string);
+                        axum::Json(serde_json::json!({
+                            "code": 200,
+                            "data": { "token": "live-console-token-2312" }
+                        }))
+                    }
+                },
+            ),
+        );
+    tokio::spawn(async move {
+        axum::serve(listener, stub).await.unwrap();
+    });
+
+    let mut cfg = test_config();
+    cfg.lazycat_base_url = base.clone();
+    let t = make_app_with_config(cfg).await;
+    seed_lazycat_machine(
+        &t,
+        "u_1",
+        2312,
+        "first@example.com",
+        "港湾 Transit Mini",
+        "edge-user-1.example.net",
+    )
+    .await;
+
+    let (status, json) = authed_json(
+        &t,
+        "u_1",
+        Method::POST,
+        "/api/lazycat/machines/2312/vnc-url",
+        None,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["kind"].as_str(), Some("console"));
+    let expected_url = format!("{base}/console?token=live-console-token-2312");
+    assert_eq!(json["url"].as_str(), Some(expected_url.as_str()));
+    assert_eq!(
+        received_hostname.lock().unwrap().as_deref(),
+        Some("svc-2312")
+    );
+}
+
+#[tokio::test]
+async fn lazycat_machine_vnc_console_redirects_to_live_console_url() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let base = format!("http://{addr}");
+    let info_base = base.clone();
+    let stub = axum::Router::new()
+        .route(
+            "/provision/custom/content",
+            axum::routing::get(move || {
+                let info_base = info_base.clone();
+                async move {
+                    axum::response::Html(format!(
+                        r#"<a href="{info_base}/container/dashboard?hash=live-hash-2312">控制台</a>"#
+                    ))
+                }
+            }),
+        )
+        .route(
+            "/api/container/console/create-token",
+            axum::routing::post(|| async {
+                axum::Json(serde_json::json!({
+                    "code": 200,
+                    "data": { "token": "live-console-token-2312" }
+                }))
+            }),
+        )
+        .route("/console", axum::routing::get(|| async { axum::response::Html("<div>ok</div>") }));
+    tokio::spawn(async move {
+        axum::serve(listener, stub).await.unwrap();
+    });
+
+    let mut cfg = test_config();
+    cfg.lazycat_base_url = base.clone();
+    let t = make_app_with_config(cfg).await;
+    seed_lazycat_machine(
+        &t,
+        "u_1",
+        2312,
+        "first@example.com",
+        "港湾 Transit Mini",
+        "edge-user-1.example.net",
+    )
+    .await;
+
+    let response = t
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/lazycat/machines/2312/vnc-console")
+                .header("host", "example.com")
+                .header("x-user", "u_1")
+                .header("origin", "http://example.com")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    assert_eq!(
+        response
+            .headers()
+            .get("location")
+            .and_then(|value| value.to_str().ok()),
+        Some(format!("{base}/console?token=live-console-token-2312").as_str())
     );
 }
 

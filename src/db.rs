@@ -323,6 +323,8 @@ impl LazycatMachineRow {
             billing_cycle: self.billing_cycle.clone(),
             renew_price: self.renew_price.clone(),
             first_price: self.first_price.clone(),
+            panel_kind: self.panel_kind.clone(),
+            panel_url: self.panel_url.clone(),
             traffic,
             port_mappings,
             last_site_sync_at: self.last_site_sync_at.clone(),
@@ -2080,6 +2082,77 @@ pub async fn list_lazycat_machines(
             updated_at: row.get::<String, _>(25),
         })
         .collect())
+}
+
+pub async fn get_lazycat_machine(
+    db: &SqlitePool,
+    user_id: &str,
+    service_id: i64,
+) -> anyhow::Result<Option<LazycatMachineRow>> {
+    let row = sqlx::query(
+        r#"SELECT
+            user_id,
+            service_id,
+            service_name,
+            service_code,
+            status,
+            os,
+            primary_address,
+            extra_addresses_json,
+            billing_cycle,
+            renew_price,
+            first_price,
+            expires_at,
+            panel_kind,
+            panel_url,
+            panel_hash,
+            traffic_used_gb,
+            traffic_limit_gb,
+            traffic_reset_day,
+            traffic_last_reset_at,
+            traffic_display,
+            last_site_sync_at,
+            last_panel_sync_at,
+            detail_state,
+            detail_error,
+            created_at,
+            updated_at
+        FROM lazycat_machines
+        WHERE user_id = ? AND service_id = ?"#,
+    )
+    .bind(user_id)
+    .bind(service_id)
+    .fetch_optional(db)
+    .await?;
+
+    Ok(row.map(|row| LazycatMachineRow {
+        user_id: row.get::<String, _>(0),
+        service_id: row.get::<i64, _>(1),
+        service_name: row.get::<String, _>(2),
+        service_code: row.get::<String, _>(3),
+        status: row.get::<String, _>(4),
+        os: row.get::<Option<String>, _>(5),
+        primary_address: row.get::<Option<String>, _>(6),
+        extra_addresses: parse_string_list_json(row.get::<Option<String>, _>(7).as_deref()),
+        billing_cycle: row.get::<Option<String>, _>(8),
+        renew_price: row.get::<Option<String>, _>(9),
+        first_price: row.get::<Option<String>, _>(10),
+        expires_at: row.get::<Option<String>, _>(11),
+        panel_kind: row.get::<Option<String>, _>(12),
+        panel_url: row.get::<Option<String>, _>(13),
+        panel_hash: row.get::<Option<String>, _>(14),
+        traffic_used_gb: row.get::<Option<f64>, _>(15),
+        traffic_limit_gb: row.get::<Option<f64>, _>(16),
+        traffic_reset_day: row.get::<Option<i64>, _>(17),
+        traffic_last_reset_at: row.get::<Option<String>, _>(18),
+        traffic_display: row.get::<Option<String>, _>(19),
+        last_site_sync_at: row.get::<Option<String>, _>(20),
+        last_panel_sync_at: row.get::<Option<String>, _>(21),
+        detail_state: row.get::<String, _>(22),
+        detail_error: row.get::<Option<String>, _>(23),
+        created_at: row.get::<String, _>(24),
+        updated_at: row.get::<String, _>(25),
+    }))
 }
 
 pub async fn list_lazycat_port_mappings(

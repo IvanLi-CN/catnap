@@ -4,6 +4,7 @@ use crate::db::{
     LazycatPortMappingRecord, LazycatSiteMachineRecord, LazycatTrafficSampleRecord,
     LazycatTrafficSampleRow,
 };
+use crate::models::LazycatMachineVncUrlResponse;
 use crate::models::{
     LazycatAccountView, LazycatMachinesResponse, LazycatTrafficSampleView, LazycatTrafficView,
 };
@@ -12,6 +13,7 @@ use futures_util::stream::{self, StreamExt};
 use reqwest::header::{COOKIE, LOCATION, SET_COOKIE};
 use reqwest::{Method, Url};
 use scraper::{Html, Selector};
+use serde_json::json;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -192,6 +194,12 @@ struct PanelSyncResult {
 }
 
 #[derive(Debug, Clone)]
+struct ResolvedPanelAccess {
+    dashboard_url: Url,
+    panel_hash: String,
+}
+
+#[derive(Debug, Clone)]
 struct LazycatService {
     base_url: Url,
     site_client: reqwest::Client,
@@ -235,6 +243,55 @@ impl LazycatService {
             session
                 .last_login_at
                 .unwrap_or_else(current_timestamp_rfc3339),
+        ))
+    }
+
+    async fn resolve_live_machine_panel_access(
+        &self,
+        machine: &db::LazycatMachineRow,
+        account: &LazycatAccountRow,
+    ) -> anyhow::Result<(LazycatSession, ResolvedPanelAccess)> {
+        let mut session = LazycatSession::from_account(account);
+        let mut panel_url = machine.panel_url.clone();
+        let mut panel_hash = machine.panel_hash.clone();
+        let info_html = self
+            .site_get_html_with_reauth(
+                &mut session,
+                &account.email,
+                &account.password,
+                &format!(
+                    "/provision/custom/content?id={}&key=info",
+                    machine.service_id
+                ),
+                false,
+            )
+            .await
+            .ok();
+        if let Some(info_html) = info_html.as_deref() {
+            if let Some(panel) = parse_container_panel_snapshot(info_html) {
+                panel_url = Some(panel.panel_url);
+                panel_hash = Some(panel.panel_hash);
+            }
+        }
+
+        let panel_url = panel_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| anyhow!("当前机器没有可用的容器面板入口"))?;
+        let panel_hash = panel_hash
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| anyhow!("当前机器缺少容器面板访问凭证"))?;
+
+        Ok((
+            session,
+            ResolvedPanelAccess {
+                dashboard_url: Url::parse(panel_url)
+                    .with_context(|| format!("invalid lazycat panel url: {panel_url}"))?,
+                panel_hash: panel_hash.to_string(),
+            },
         ))
     }
 
@@ -641,6 +698,135 @@ impl LazycatService {
         serde_json::from_str::<Value>(&body)
             .with_context(|| format!("invalid panel json response from {endpoint_url}"))
     }
+
+    async fn panel_post_json(
+        &self,
+        dashboard_url: &Url,
+        panel_hash: &str,
+        endpoint: &str,
+        body: &Value,
+    ) -> anyhow::Result<Value> {
+        let mut endpoint_url = dashboard_url.clone();
+        endpoint_url.set_query(None);
+        endpoint_url.set_path(endpoint);
+
+        match self
+            .panel_post_request_json(&endpoint_url, panel_hash, body, false)
+            .await
+        {
+            Ok(value) => Ok(value),
+            Err(err) if should_retry_insecure(&endpoint_url, &err, self.allow_invalid_tls) => {
+                self.panel_post_request_json(&endpoint_url, panel_hash, body, true)
+                    .await
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    async fn panel_post_request_json(
+        &self,
+        endpoint_url: &Url,
+        panel_hash: &str,
+        body: &Value,
+        insecure: bool,
+    ) -> anyhow::Result<Value> {
+        let client = reqwest::Client::builder()
+            .user_agent("catnap/0.1 (+https://example.invalid)")
+            .timeout(std::time::Duration::from_millis(
+                self.panel_timeout_ms.max(500) as u64,
+            ))
+            .danger_accept_invalid_certs(insecure)
+            .danger_accept_invalid_hostnames(insecure)
+            .build()?;
+
+        let response = client
+            .post(endpoint_url.clone())
+            .header("x-container-hash", panel_hash)
+            .header("x-requested-with", "XMLHttpRequest")
+            .json(body)
+            .send()
+            .await?;
+        let body = response.text().await?;
+        serde_json::from_str::<Value>(&body)
+            .with_context(|| format!("invalid panel json response from {endpoint_url}"))
+    }
+
+    async fn resolve_console_url_via_panel_token(
+        &self,
+        access: &ResolvedPanelAccess,
+        hostname: &str,
+    ) -> anyhow::Result<Option<String>> {
+        let response = self
+            .panel_post_json(
+                &access.dashboard_url,
+                &access.panel_hash,
+                "/api/container/console/create-token",
+                &json!({ "hostname": hostname }),
+            )
+            .await?;
+        let token = response
+            .get("data")
+            .and_then(|data| data.get("token"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let Some(token) = token else {
+            return Ok(None);
+        };
+
+        let mut console_url = access.dashboard_url.clone();
+        console_url.set_query(Some(&format!("token={token}")));
+        console_url.set_path("/console");
+        Ok(Some(console_url.to_string()))
+    }
+
+    async fn resolve_console_url_via_panel_html(
+        &self,
+        access: &ResolvedPanelAccess,
+    ) -> anyhow::Result<Option<String>> {
+        let html = self
+            .panel_get_html(&access.dashboard_url)
+            .await
+            .with_context(|| {
+                format!(
+                    "fetch lazycat panel html failed from {}",
+                    access.dashboard_url
+                )
+            })?;
+        Ok(extract_console_url_from_panel_html(
+            &access.dashboard_url,
+            &html,
+        ))
+    }
+
+    async fn panel_get_html(&self, dashboard_url: &Url) -> anyhow::Result<String> {
+        match self.panel_request_text(dashboard_url, false).await {
+            Ok(value) => Ok(value),
+            Err(err) if should_retry_insecure(dashboard_url, &err, self.allow_invalid_tls) => {
+                self.panel_request_text(dashboard_url, true).await
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    async fn panel_request_text(&self, url: &Url, insecure: bool) -> anyhow::Result<String> {
+        let client = reqwest::Client::builder()
+            .user_agent("catnap/0.1 (+https://example.invalid)")
+            .timeout(std::time::Duration::from_millis(
+                self.panel_timeout_ms.max(500) as u64,
+            ))
+            .danger_accept_invalid_certs(insecure)
+            .danger_accept_invalid_hostnames(insecure)
+            .build()?;
+
+        client
+            .get(url.clone())
+            .send()
+            .await?
+            .text()
+            .await
+            .map_err(Into::into)
+    }
 }
 
 pub fn empty_account_view() -> LazycatAccountView {
@@ -1007,6 +1193,87 @@ fn parse_rfc3339_timestamp(value: &str) -> Option<OffsetDateTime> {
 
 fn format_timestamp(ts: OffsetDateTime) -> Option<String> {
     ts.to_offset(UtcOffset::UTC).format(&Rfc3339).ok()
+}
+
+pub async fn resolve_machine_vnc_url(
+    state: &AppState,
+    user_id: &str,
+    service_id: i64,
+) -> anyhow::Result<LazycatMachineVncUrlResponse> {
+    let console_url = resolve_live_machine_console_url(state, user_id, service_id).await?;
+    Ok(LazycatMachineVncUrlResponse {
+        url: console_url.to_string(),
+        kind: "console".to_string(),
+    })
+}
+
+async fn resolve_live_machine_console_url(
+    state: &AppState,
+    user_id: &str,
+    service_id: i64,
+) -> anyhow::Result<Url> {
+    let Some(mut account) = db::get_lazycat_account(&state.db, user_id).await? else {
+        return Err(anyhow!("请先连接懒猫云账号"));
+    };
+    let Some(machine) = db::get_lazycat_machine(&state.db, user_id, service_id).await? else {
+        return Err(anyhow!("目标机器不存在或已失效"));
+    };
+    if machine.panel_kind.as_deref() != Some("container") {
+        return Err(anyhow!("当前机器没有可用的网页 VNC 入口"));
+    }
+
+    let service = LazycatService::new(&state.config)?;
+    let (session, access) = service
+        .resolve_live_machine_panel_access(&machine, &account)
+        .await?;
+    if apply_session_to_account(&mut account, &session)? {
+        account.updated_at = current_timestamp_rfc3339();
+        db::put_lazycat_account(&state.db, &account).await?;
+    }
+
+    let hostname = machine.service_code.trim();
+    if !hostname.is_empty() {
+        match service
+            .resolve_console_url_via_panel_token(&access, hostname)
+            .await
+        {
+            Ok(Some(url)) => {
+                return Url::parse(&url).with_context(|| format!("invalid console url: {url}"));
+            }
+            Ok(None) => {}
+            Err(err) => warn!(
+                user_id,
+                service_id,
+                error = %err,
+                "lazycat live vnc token resolution failed"
+            ),
+        }
+    }
+
+    if let Some(url) = service.resolve_console_url_via_panel_html(&access).await? {
+        return Url::parse(&url).with_context(|| format!("invalid console url: {url}"));
+    }
+
+    Err(anyhow!("暂未解析出网页 VNC 控制台入口"))
+}
+
+fn apply_session_to_account(
+    account: &mut LazycatAccountRow,
+    session: &LazycatSession,
+) -> anyhow::Result<bool> {
+    let next_cookies = session.cookies_json()?;
+    let mut changed = false;
+    if account.cookies_json != next_cookies {
+        account.cookies_json = next_cookies;
+        changed = true;
+    }
+    if let Some(last_login_at) = session.last_login_at.clone() {
+        if account.last_authenticated_at.as_deref() != Some(last_login_at.as_str()) {
+            account.last_authenticated_at = Some(last_login_at);
+            changed = true;
+        }
+    }
+    Ok(changed)
 }
 
 pub async fn login_account(
@@ -1634,6 +1901,70 @@ fn normalize_panel_dashboard_url(input: &str) -> anyhow::Result<String> {
         url.set_path("/container/dashboard");
     }
     Ok(url.to_string())
+}
+
+fn extract_console_url_from_panel_html(base_url: &Url, html: &str) -> Option<String> {
+    let document = Html::parse_document(html);
+    for raw_selector in [r#"[href*="console?token="]"#, r#"[src*="console?token="]"#] {
+        let Ok(selector) = Selector::parse(raw_selector) else {
+            continue;
+        };
+        for node in document.select(&selector) {
+            let attr = node
+                .value()
+                .attr("href")
+                .or_else(|| node.value().attr("src"))?;
+            if let Some(url) = normalize_console_url_candidate(base_url, attr) {
+                return Some(url);
+            }
+        }
+    }
+
+    extract_console_url_from_text(base_url, html)
+}
+
+fn extract_console_url_from_text(base_url: &Url, text: &str) -> Option<String> {
+    for needle in ["https://", "http://", "/console?token=", "console?token="] {
+        let mut search_start = 0_usize;
+        while let Some(relative_index) = text[search_start..].find(needle) {
+            let start = search_start + relative_index;
+            let candidate = take_url_like_fragment(&text[start..]);
+            if let Some(url) = normalize_console_url_candidate(base_url, candidate) {
+                return Some(url);
+            }
+            search_start = start + needle.len();
+        }
+    }
+    None
+}
+
+fn take_url_like_fragment(input: &str) -> &str {
+    let end = input
+        .find(|ch: char| ch.is_whitespace() || matches!(ch, '"' | '\'' | '<' | '>' | '(' | ')'))
+        .unwrap_or(input.len());
+    input[..end].trim_end_matches([';', ','])
+}
+
+fn normalize_console_url_candidate(base_url: &Url, candidate: &str) -> Option<String> {
+    let trimmed = candidate.trim().trim_matches('"').trim_matches('\'').trim();
+    if trimmed.is_empty() || !trimmed.contains("console?token=") || trimmed.contains("${") {
+        return None;
+    }
+
+    let url = if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        Url::parse(trimmed).ok()?
+    } else if trimmed.starts_with('/') {
+        base_url.join(trimmed).ok()?
+    } else {
+        base_url.join(&format!("/{trimmed}")).ok()?
+    };
+    let has_token = url
+        .query_pairs()
+        .any(|(key, value)| key == "token" && !value.trim().is_empty());
+    if !has_token || !url.path().contains("/console") {
+        return None;
+    }
+    Some(url.to_string())
 }
 
 fn parse_panel_detail(json: &Value) -> anyhow::Result<PanelDetailSnapshot> {
