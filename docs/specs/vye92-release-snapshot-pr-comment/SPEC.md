@@ -85,7 +85,7 @@
   - `latest` 仅允许由当前仍未被更新 stable snapshot 超车的 stable release 更新。
   - 自动 run 完成后若仍存在 pending snapshot，必须自动 dispatch 下一次 `Release` 直到队列清空。
   - 手动补发 `workflow_dispatch(commit_sha)` 必须拒绝未通过 `CI Main` 的 commit。
-  - 对曾修改 `.github/workflows/**` 的历史 commit，release 必须支持使用独立 override token 创建 tag / GitHub Release；默认 `GITHUB_TOKEN` 不足时要 fail fast 并明确指出需要 `RELEASE_WORKFLOW_TOKEN`。
+  - 对 tree 中包含 `.github/workflows/**` 的 release target，release 必须支持使用独立 override token 创建 tag / GitHub Release；默认 `GITHUB_TOKEN` 不足时要 fail fast，并在重型构建前明确指出需要 `RELEASE_WORKFLOW_TOKEN`。
   - `Release Publish (tag/assets/image)` job 在执行任意 `git notes add` / notes push 前，必须显式配置 git identity，避免 `Mark snapshot published` 因 `Author identity unknown` 失败。
   - `Mark snapshot published` 进行 notes push 时，必须显式复用 release publish token 注入 `http.https://github.com/.extraheader`，不能依赖 `actions/checkout` 的默认凭据。
 - PR 评论
@@ -157,3 +157,4 @@
 - 2026-03-17: 线上补发进一步暴露 GitHub 对 workflow commit 的 tag/release 权限限制；补充 `RELEASE_WORKFLOW_TOKEN` override 要求与 fail-fast 约束。
 - 2026-03-25: `Release #28` 在 `Mark snapshot published` 因缺少 git identity 失败；补充 `Release Publish` job 的 bot 身份配置与 contract 约束，避免 git notes 更新再次阻断发布队列。
 - 2026-03-25: `Release #29` 进一步暴露 `Mark snapshot published` 的 notes push 未携带认证头；补充 release publish token 的 git extraheader 注入，确保 `refs/notes/release-snapshots` 可发布。
+- 2026-03-25: `Release #31` 暴露 workflow token fail-fast 只检查 commit diff，未覆盖“目标树包含 workflow 文件”的 tag 权限约束；改为按 target tree 判定并在重型构建前提前探测 tag 权限。
