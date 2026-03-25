@@ -113,6 +113,12 @@ def validate_release(path: Path) -> None:
     require_text(text, "Require workflow-capable token for workflow commits", "release.yml")
     require_text(text, "Probe workflow-commit tag permission", "release.yml")
     require_text(text, 'git ls-tree -r --name-only "${TARGET_SHA}" .github/workflows', "release.yml")
+    require_text(text, "Workflow-bearing target detected but RELEASE_WORKFLOW_TOKEN is unavailable.", "release.yml")
+    require_text(
+        text,
+        'if [[ "${RELEASE_AUTH_MODE}" != "release_workflow_token" ]]; then',
+        "release.yml",
+    )
     require_text(text, "Configured RELEASE_WORKFLOW_TOKEN still cannot tag workflow-bearing commit", "release.yml")
     require_text(text, "persist-credentials: false", "release.yml")
     require_text(text, "Configure git identity for release notes", "release.yml")

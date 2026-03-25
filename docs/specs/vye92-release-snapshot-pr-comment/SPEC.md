@@ -158,3 +158,4 @@
 - 2026-03-25: `Release #28` 在 `Mark snapshot published` 因缺少 git identity 失败；补充 `Release Publish` job 的 bot 身份配置与 contract 约束，避免 git notes 更新再次阻断发布队列。
 - 2026-03-25: `Release #29` 进一步暴露 `Mark snapshot published` 的 notes push 未携带认证头；补充 release publish token 的 git extraheader 注入，确保 `refs/notes/release-snapshots` 可发布。
 - 2026-03-25: `Release #31` 暴露 workflow token fail-fast 只检查 commit diff，未覆盖“目标树包含 workflow 文件”的 tag 权限约束；改为按 target tree 判定并在重型构建前提前探测 tag 权限。
+- 2026-03-25: `Release #32` 暴露 workflow-bearing fail-fast 的 grep 正则转义错误，导致缺少 `RELEASE_WORKFLOW_TOKEN` 时未在第一个门禁停下；修正 guard 正则，并要求 probe 在 `release_workflow_token` 之外的 auth mode 一律硬失败，避免误导日志。

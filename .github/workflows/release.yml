@@ -259,7 +259,7 @@ jobs:
           RELEASE_AUTH_MODE: ${{ steps.release-auth.outputs.auth_mode }}
         run: |
           set -euo pipefail
-          if ! git ls-tree -r --name-only "${TARGET_SHA}" .github/workflows | grep -Eq '^\\.github/workflows/'; then
+          if ! git ls-tree -r --name-only "${TARGET_SHA}" .github/workflows | grep -Eq '^\.github/workflows/'; then
             exit 0
           fi
 
@@ -276,11 +276,18 @@ jobs:
         shell: bash
         env:
           TARGET_SHA: ${{ needs.release-meta.outputs.target_sha }}
+          RELEASE_AUTH_MODE: ${{ steps.release-auth.outputs.auth_mode }}
           RELEASE_PUBLISH_TOKEN: ${{ steps.release-auth.outputs.token }}
         run: |
           set -euo pipefail
           if ! git ls-tree -r --name-only "${TARGET_SHA}" .github/workflows | grep -Eq '^\.github/workflows/'; then
             exit 0
+          fi
+
+          if [[ "${RELEASE_AUTH_MODE}" != "release_workflow_token" ]]; then
+            echo "Workflow-bearing target detected but RELEASE_WORKFLOW_TOKEN is unavailable." >&2
+            echo "The fail-fast gate should stop this run before probe; check the guard if this path executes." >&2
+            exit 1
           fi
 
           probe_tag="__release_probe_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
