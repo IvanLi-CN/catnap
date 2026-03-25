@@ -247,6 +247,22 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Require workflow-capable release token
+        if: github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository
+        shell: bash
+        env:
+          RELEASE_WORKFLOW_TOKEN: ${{ secrets.RELEASE_WORKFLOW_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${RELEASE_WORKFLOW_TOKEN}" ]]; then
+            echo "Workflow-capable release token is configured."
+            exit 0
+          fi
+
+          echo "Missing repository secret RELEASE_WORKFLOW_TOKEN." >&2
+          echo "Release workflow requires workflows-capable credentials to publish this repository because release targets carry .github/workflows/** in-tree." >&2
+          exit 1
+
       - name: Mark job start
         id: job-start
         shell: bash

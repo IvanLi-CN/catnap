@@ -78,6 +78,14 @@ def validate_ci_pr(path: Path) -> None:
     require_text(text, "merge_group:", "ci-pr.yml")
     require_text(text, "checks_requested", "ci-pr.yml")
     require_text(text, "Release Chain Smoke (PR)", "ci-pr.yml")
+    require_text(text, "Require workflow-capable release token", "ci-pr.yml")
+    require_text(text, "RELEASE_WORKFLOW_TOKEN", "ci-pr.yml")
+    require_text(text, "Missing repository secret RELEASE_WORKFLOW_TOKEN.", "ci-pr.yml")
+    require_text(
+        text,
+        "Release workflow requires workflows-capable credentials to publish this repository because release targets carry .github/workflows/** in-tree.",
+        "ci-pr.yml",
+    )
     require_text(text, "test-release-snapshot.sh", "ci-pr.yml")
     forbid_text(text, "release-intent.sh", "ci-pr.yml")
     forbid_text(text, "workflow_dispatch:", "ci-pr.yml")

@@ -69,6 +69,7 @@
 
 - workflow 拆分
   - `CI PR` 承接 PR / merge queue required checks，保留 `Path Gate`、`Lint & Checks`、`Backend Tests`、`Release Chain Smoke (PR)` 这些 check name。
+  - 对同仓 PR / merge queue，`Release Chain Smoke (PR)` 必须在重型构建前预检 `RELEASE_WORKFLOW_TOKEN`；若仓库缺少该 secret，必须直接失败并给出明确提示，避免把“release 必定失败”的仓库状态继续合入 `main`。
   - `CI Main` 只负责 `push main` 校验与 snapshot 固化，不直接发布。
   - `Release` 只接受 `workflow_run(CI Main success)` 或 `workflow_dispatch(commit_sha)`。
 - snapshot
@@ -159,3 +160,4 @@
 - 2026-03-25: `Release #29` 进一步暴露 `Mark snapshot published` 的 notes push 未携带认证头；补充 release publish token 的 git extraheader 注入，确保 `refs/notes/release-snapshots` 可发布。
 - 2026-03-25: `Release #31` 暴露 workflow token fail-fast 只检查 commit diff，未覆盖“目标树包含 workflow 文件”的 tag 权限约束；改为按 target tree 判定并在重型构建前提前探测 tag 权限。
 - 2026-03-25: `Release #32` 暴露 workflow-bearing fail-fast 的 grep 正则转义错误，导致缺少 `RELEASE_WORKFLOW_TOKEN` 时未在第一个门禁停下；修正 guard 正则，并要求 probe 在 `release_workflow_token` 之外的 auth mode 一律硬失败，避免误导日志。
+- 2026-03-25: `Release #33` 证明缺少 `RELEASE_WORKFLOW_TOKEN` 时问题已不是 release 逻辑误判，而是仓库配置阻断；补充 `CI PR` 预检，要求在 PR 阶段就阻断缺失 workflow-capable release token 的同仓变更。
