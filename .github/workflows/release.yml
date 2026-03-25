@@ -591,9 +591,13 @@ jobs:
       - name: Mark snapshot published
         shell: bash
         env:
+          RELEASE_PUBLISH_TOKEN: ${{ steps.release-auth.outputs.token }}
           TARGET_SHA: ${{ needs.release-meta.outputs.target_sha }}
         run: |
           set -euo pipefail
+          auth_header="$(printf 'x-access-token:%s' "${RELEASE_PUBLISH_TOKEN}" | base64 | tr -d '\n')"
+          git config --local http.https://github.com/.extraheader "AUTHORIZATION: basic ${auth_header}"
+          trap 'git config --local --unset-all http.https://github.com/.extraheader || true' EXIT
           git fetch --no-tags origin "+${RELEASE_SNAPSHOT_NOTES_REF}:${RELEASE_SNAPSHOT_NOTES_REF}" || true
           python3 "${RELEASE_TOOLING_ROOT}/.github/scripts/release_snapshot.py" mark-published \
             --target-sha "${TARGET_SHA}" \
