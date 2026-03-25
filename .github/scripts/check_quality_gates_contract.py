@@ -114,6 +114,13 @@ def validate_release(path: Path) -> None:
     require_text(text, "Probe workflow-commit tag permission", "release.yml")
     require_text(text, "Configured RELEASE_WORKFLOW_TOKEN still cannot tag workflow-changing commit", "release.yml")
     require_text(text, "persist-credentials: false", "release.yml")
+    require_text(text, "Configure git identity for release notes", "release.yml")
+    require_text(text, 'git config user.name "github-actions[bot]"', "release.yml")
+    require_text(
+        text,
+        'git config user.email "41898282+github-actions[bot]@users.noreply.github.com"',
+        "release.yml",
+    )
     require_text(text, "publish_github_release.py", "release.yml")
     require_text(text, "Ensure release tag exists on target commit", "release.yml")
     require_text(text, "git config --local --unset-all http.https://github.com/.extraheader || true", "release.yml")
