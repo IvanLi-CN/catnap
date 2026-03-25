@@ -9,7 +9,7 @@
   "pr_head_sha": "70cbc7fd3054e122f6906bcc3c12536c54ba278f",
   "pr_number": 81,
   "pr_title": "feat: add lazycat account sync and machines assets page",
-  "published_at": "",
+  "published_at": "2026-03-25T09:41:52Z",
   "registry": "ghcr.io",
   "release_bump": "minor",
   "release_channel": "stable",
