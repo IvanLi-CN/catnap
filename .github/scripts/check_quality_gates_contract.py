@@ -136,6 +136,12 @@ def validate_release(path: Path) -> None:
         'python3 "${RELEASE_TOOLING_ROOT}/.github/scripts/release_snapshot.py" mark-published',
         "release.yml",
     )
+    require_text(text, "RELEASE_PUBLISH_TOKEN: ${{ steps.release-auth.outputs.token }}", "release.yml")
+    require_text(
+        text,
+        'git config --local http.https://github.com/.extraheader "AUTHORIZATION: basic ${auth_header}"',
+        "release.yml",
+    )
     require_text(
         text,
         'python3 "${RELEASE_TOOLING_ROOT}/.github/scripts/release_snapshot.py" next-pending',
