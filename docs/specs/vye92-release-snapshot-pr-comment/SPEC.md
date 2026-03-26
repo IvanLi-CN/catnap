@@ -85,7 +85,7 @@
   - `latest` 仅允许由当前仍未被更新 stable snapshot 超车的 stable release 更新。
   - 自动 run 完成后若仍存在 pending snapshot，必须自动 dispatch 下一次 `Release` 直到队列清空。
   - 手动补发 `workflow_dispatch(commit_sha)` 必须拒绝未通过 `CI Main` 的 commit。
-  - 对未修改 `.github/workflows/**` 的 release target，必须优先走 GitHub Release API 按 `target_sha` 自动落 tag，不能无条件退回 `git push refs/tags/*`。
+  - 对未修改 `.github/workflows/**` 的 release target，必须优先走 GitHub Release API 落 tag；但若 release tag 已由人工或前置步骤创建，创建/更新 GitHub Release 时不得再传 `target_sha` 触发二次建 tag。
   - 对真正修改 `.github/workflows/**` 的 release target，release 必须支持使用独立 override token 创建 tag / GitHub Release；默认 `GITHUB_TOKEN` 不足时要 fail fast，并在重型构建前明确指出需要 `RELEASE_WORKFLOW_TOKEN`。
   - `Release Publish (tag/assets/image)` job 在执行任意 `git notes add` / notes push 前，必须显式配置 git identity，避免 `Mark snapshot published` 因 `Author identity unknown` 失败。
   - `Mark snapshot published` 进行 notes push 时，必须显式复用 release publish token 注入 `http.https://github.com/.extraheader`，不能依赖 `actions/checkout` 的默认凭据。
@@ -162,3 +162,4 @@
 - 2026-03-25: `Release #32` 暴露 workflow-bearing fail-fast 的 grep 正则转义错误，导致缺少 `RELEASE_WORKFLOW_TOKEN` 时未在第一个门禁停下；修正 guard 正则，并要求 probe 在 `release_workflow_token` 之外的 auth mode 一律硬失败，避免误导日志。
 - 2026-03-25: `Release #33` 暴露 tree-based workflow token 门禁过宽，连未修改 workflow 的 PR #82 也被错误阻断；恢复到按 commit diff 判定 workflow-changing release target，并只对这类目标要求 `RELEASE_WORKFLOW_TOKEN`。
 - 2026-03-26: `Release #34` 证明即使 target commit 本身未修改 workflow，直接 `git push refs/tags/*` 仍会因目标树包含 workflow 文件而被 GitHub App 拒绝；恢复“普通 target 走 GitHub Release API + target_sha 自动建 tag、仅 workflow-changing target 走预建 tag”这条分叉。
+- 2026-03-26: `Release #35` 进一步证明即使 release tag 已预先存在，只要 `POST /releases` 继续携带 `target_sha`，GitHub 仍会把它当成需要创建/更新 workflow-bearing ref 而返回 403；修正为“仅在确实需要 API 建 tag 时才传 `target_sha`，已有 tag 时只按 tag_name 创建/更新 Release”。
