@@ -9,7 +9,7 @@
   "pr_head_sha": "aa82327f2bd1ec039115e8202129ba3c77d135fd",
   "pr_number": 82,
   "pr_title": "feat: add lazycat hourly traffic history charts",
-  "published_at": "",
+  "published_at": "2026-03-26T08:24:04Z",
   "registry": "ghcr.io",
   "release_bump": "minor",
   "release_channel": "stable",
