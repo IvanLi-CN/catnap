@@ -259,17 +259,17 @@ jobs:
           RELEASE_AUTH_MODE: ${{ steps.release-auth.outputs.auth_mode }}
         run: |
           set -euo pipefail
-          if ! git ls-tree -r --name-only "${TARGET_SHA}" .github/workflows | grep -Eq '^\.github/workflows/'; then
+          if ! git diff-tree --no-commit-id --name-only -r "${TARGET_SHA}" | grep -Eq '^\.github/workflows/'; then
             exit 0
           fi
 
           if [[ "${RELEASE_AUTH_MODE}" == "release_workflow_token" ]]; then
-            echo "Workflow-bearing target detected; release auth override is present."
+            echo "Workflow-changing target detected; release auth override is present."
             exit 0
           fi
 
-          echo "Target commit ${TARGET_SHA} includes .github/workflows/** in its tree." >&2
-          echo "Configure secret RELEASE_WORKFLOW_TOKEN with workflows-capable GitHub credentials before releasing this snapshot." >&2
+          echo "Target commit ${TARGET_SHA} changes .github/workflows/**." >&2
+          echo "Configure secret RELEASE_WORKFLOW_TOKEN with workflow-capable GitHub credentials before backfilling this release." >&2
           exit 1
 
       - name: Probe workflow-commit tag permission
@@ -280,12 +280,12 @@ jobs:
           RELEASE_PUBLISH_TOKEN: ${{ steps.release-auth.outputs.token }}
         run: |
           set -euo pipefail
-          if ! git ls-tree -r --name-only "${TARGET_SHA}" .github/workflows | grep -Eq '^\.github/workflows/'; then
+          if ! git diff-tree --no-commit-id --name-only -r "${TARGET_SHA}" | grep -Eq '^\.github/workflows/'; then
             exit 0
           fi
 
           if [[ "${RELEASE_AUTH_MODE}" != "release_workflow_token" ]]; then
-            echo "Workflow-bearing target detected but RELEASE_WORKFLOW_TOKEN is unavailable." >&2
+            echo "Workflow-changing target detected but RELEASE_WORKFLOW_TOKEN is unavailable." >&2
             echo "The fail-fast gate should stop this run before probe; check the guard if this path executes." >&2
             exit 1
           fi
@@ -303,7 +303,7 @@ jobs:
           git tag "${probe_tag}" "${TARGET_SHA}"
           if ! git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${auth_header}" \
             push origin "refs/tags/${probe_tag}:refs/tags/${probe_tag}"; then
-            echo "Configured RELEASE_WORKFLOW_TOKEN still cannot tag workflow-bearing commit ${TARGET_SHA}." >&2
+            echo "Configured RELEASE_WORKFLOW_TOKEN still cannot tag workflow-changing commit ${TARGET_SHA}." >&2
             echo "Provide a token with workflows permission or create tag ${probe_tag} manually to verify access." >&2
             exit 1
           fi

@@ -254,13 +254,19 @@ jobs:
           RELEASE_WORKFLOW_TOKEN: ${{ secrets.RELEASE_WORKFLOW_TOKEN }}
         run: |
           set -euo pipefail
-          if [[ -n "${RELEASE_WORKFLOW_TOKEN}" ]]; then
-            echo "Workflow-capable release token is configured."
+          git fetch --no-tags origin main
+          base_sha="$(git merge-base HEAD origin/main)"
+          if ! git diff --name-only "${base_sha}"..HEAD -- .github/workflows | grep -Eq '^\.github/workflows/'; then
             exit 0
           fi
 
-          echo "Missing repository secret RELEASE_WORKFLOW_TOKEN." >&2
-          echo "Release workflow requires workflows-capable credentials to publish this repository because release targets carry .github/workflows/** in-tree." >&2
+          if [[ -n "${RELEASE_WORKFLOW_TOKEN}" ]]; then
+            echo "Workflow-capable release token is configured for workflow-changing PR content."
+            exit 0
+          fi
+
+          echo "This PR changes .github/workflows/** but repository secret RELEASE_WORKFLOW_TOKEN is missing." >&2
+          echo "Release would block when the queue reaches this workflow-changing commit." >&2
           exit 1
 
       - name: Mark job start
