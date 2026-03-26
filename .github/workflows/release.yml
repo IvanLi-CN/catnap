@@ -451,6 +451,7 @@ jobs:
           done
 
       - name: Ensure release tag exists on target commit
+        id: ensure_release_tag
         shell: bash
         env:
           RELEASE_PUBLISH_TOKEN: ${{ steps.release-auth.outputs.token }}
@@ -466,11 +467,13 @@ jobs:
               echo "Release tag ${RELEASE_TAG} already points to ${actual} (expected ${TARGET_SHA})" >&2
               exit 1
             fi
+            echo "release_tag_needs_api_create=false" >> "${GITHUB_OUTPUT}"
             echo "Release tag ${RELEASE_TAG} already exists on ${TARGET_SHA}."
             exit 0
           fi
 
           if ! git diff-tree --no-commit-id --name-only -r "${TARGET_SHA}" | grep -Eq '^\.github/workflows/'; then
+            echo "release_tag_needs_api_create=true" >> "${GITHUB_OUTPUT}"
             echo "Release target does not change workflows; GitHub Release API will create tag ${RELEASE_TAG}."
             exit 0
           fi
@@ -483,24 +486,30 @@ jobs:
           git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${auth_header}" \
             push origin "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
           git fetch --tags origin
+          echo "release_tag_needs_api_create=false" >> "${GITHUB_OUTPUT}"
 
       - name: Create or update GitHub Release and upload assets
         shell: bash
         env:
           RELEASE_PUBLISH_TOKEN: ${{ steps.release-auth.outputs.token }}
+          RELEASE_TAG_NEEDS_API_CREATE: ${{ steps.ensure_release_tag.outputs.release_tag_needs_api_create }}
           RELEASE_TAG: ${{ needs.release-meta.outputs.release_tag }}
           RELEASE_PRERELEASE: ${{ needs.release-meta.outputs.release_prerelease }}
           TARGET_SHA: ${{ needs.release-meta.outputs.target_sha }}
         run: |
           set -euo pipefail
-          python3 "${RELEASE_TOOLING_ROOT}/.github/scripts/publish_github_release.py" \
-            --repository "${GITHUB_REPOSITORY}" \
-            --token "${RELEASE_PUBLISH_TOKEN}" \
-            --tag "${RELEASE_TAG}" \
-            --target-sha "${TARGET_SHA}" \
-            --name "${RELEASE_TAG}" \
-            --prerelease "${RELEASE_PRERELEASE}" \
+          release_args=(
+            --repository "${GITHUB_REPOSITORY}"
+            --token "${RELEASE_PUBLISH_TOKEN}"
+            --tag "${RELEASE_TAG}"
+            --name "${RELEASE_TAG}"
+            --prerelease "${RELEASE_PRERELEASE}"
             --artifacts-dir dist/release-assets
+          )
+          if [[ "${RELEASE_TAG_NEEDS_API_CREATE}" == "true" ]]; then
+            release_args+=(--target-sha "${TARGET_SHA}")
+          fi
+          python3 "${RELEASE_TOOLING_ROOT}/.github/scripts/publish_github_release.py" "${release_args[@]}"
 
       - name: Verify release tag points to target commit
         shell: bash

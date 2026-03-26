@@ -134,7 +134,13 @@ def validate_release(path: Path) -> None:
     require_text(text, "git config --local --unset-all http.https://github.com/.extraheader || true", "release.yml")
     require_text(text, "git tag \"${RELEASE_TAG}\" \"${TARGET_SHA}\"", "release.yml")
     require_text(text, "--artifacts-dir dist/release-assets", "release.yml")
-    require_text(text, "--target-sha \"${TARGET_SHA}\"", "release.yml")
+    require_text(
+        text,
+        "RELEASE_TAG_NEEDS_API_CREATE: ${{ steps.ensure_release_tag.outputs.release_tag_needs_api_create }}",
+        "release.yml",
+    )
+    require_text(text, 'if [[ "${RELEASE_TAG_NEEDS_API_CREATE}" == "true" ]]; then', "release.yml")
+    require_text(text, 'release_args+=(--target-sha "${TARGET_SHA}")', "release.yml")
     require_text(text, "Verify release tag points to target commit", "release.yml")
     require_text(text, "issues: write", "release.yml")
     require_text(text, "pull-requests: write", "release.yml")
