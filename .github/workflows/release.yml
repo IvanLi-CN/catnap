@@ -470,6 +470,11 @@ jobs:
             exit 0
           fi
 
+          if ! git diff-tree --no-commit-id --name-only -r "${TARGET_SHA}" | grep -Eq '^\.github/workflows/'; then
+            echo "Release target does not change workflows; GitHub Release API will create tag ${RELEASE_TAG}."
+            exit 0
+          fi
+
           # actions/checkout leaves a GitHub auth header in local config; clear it so
           # the workflow token can supply the only Authorization header for the tag push.
           git config --local --unset-all http.https://github.com/.extraheader || true
@@ -485,12 +490,14 @@ jobs:
           RELEASE_PUBLISH_TOKEN: ${{ steps.release-auth.outputs.token }}
           RELEASE_TAG: ${{ needs.release-meta.outputs.release_tag }}
           RELEASE_PRERELEASE: ${{ needs.release-meta.outputs.release_prerelease }}
+          TARGET_SHA: ${{ needs.release-meta.outputs.target_sha }}
         run: |
           set -euo pipefail
           python3 "${RELEASE_TOOLING_ROOT}/.github/scripts/publish_github_release.py" \
             --repository "${GITHUB_REPOSITORY}" \
             --token "${RELEASE_PUBLISH_TOKEN}" \
             --tag "${RELEASE_TAG}" \
+            --target-sha "${TARGET_SHA}" \
             --name "${RELEASE_TAG}" \
             --prerelease "${RELEASE_PRERELEASE}" \
             --artifacts-dir dist/release-assets
