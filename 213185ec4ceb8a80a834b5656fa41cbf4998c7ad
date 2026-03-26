@@ -9,7 +9,7 @@
   "pr_head_sha": "d2c77ed9550c8541456c8f615ab1fd82c8732aa3",
   "pr_number": 83,
   "pr_title": "feat: add lazycat machine panel and vnc actions",
-  "published_at": "2026-03-26T08:42:01Z",
+  "published_at": "2026-03-26T11:43:42Z",
   "registry": "ghcr.io",
   "release_bump": "minor",
   "release_channel": "stable",
