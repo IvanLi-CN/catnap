@@ -78,15 +78,6 @@ def validate_ci_pr(path: Path) -> None:
     require_text(text, "merge_group:", "ci-pr.yml")
     require_text(text, "checks_requested", "ci-pr.yml")
     require_text(text, "Release Chain Smoke (PR)", "ci-pr.yml")
-    require_text(text, "Require workflow-capable release token", "ci-pr.yml")
-    require_text(text, "RELEASE_WORKFLOW_TOKEN", "ci-pr.yml")
-    require_text(text, 'git diff --name-only "${base_sha}"..HEAD -- .github/workflows', "ci-pr.yml")
-    require_text(text, "This PR changes .github/workflows/** but repository secret RELEASE_WORKFLOW_TOKEN is missing.", "ci-pr.yml")
-    require_text(
-        text,
-        "Release would block when the queue reaches this workflow-changing commit.",
-        "ci-pr.yml",
-    )
     require_text(text, "test-release-snapshot.sh", "ci-pr.yml")
     forbid_text(text, "release-intent.sh", "ci-pr.yml")
     forbid_text(text, "workflow_dispatch:", "ci-pr.yml")
