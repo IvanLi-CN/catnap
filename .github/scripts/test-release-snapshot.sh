@@ -136,7 +136,7 @@ with tempfile.TemporaryDirectory(prefix="release-snapshot-") as tmp:
         run("notes", f"--ref={module.DEFAULT_NOTES_REF}", "add", "-f", "-m", json.dumps(snapshot3), sha3, cwd=repo)
 
         assert module.publication_tags(snapshot1, notes_ref=module.DEFAULT_NOTES_REF, main_ref=sha3) == (
-            "ghcr.io/ivanli-cn/catnap:v0.1.1"
+            "ghcr.io/ivanli-cn/catnap:v0.1.1,ghcr.io/ivanli-cn/catnap:latest"
         )
         assert module.publication_tags(snapshot2, notes_ref=module.DEFAULT_NOTES_REF, main_ref=sha3) == (
             "ghcr.io/ivanli-cn/catnap:v0.2.0,ghcr.io/ivanli-cn/catnap:latest"
@@ -216,6 +216,86 @@ with tempfile.TemporaryDirectory(prefix="release-snapshot-") as tmp:
         assert module.snapshot_is_published(stored_snapshot1) is True
         pending = module.pending_release_targets(module.DEFAULT_NOTES_REF, sha3)
         assert pending == [sha2, sha3], (pending, sha2, sha3)
+    finally:
+        module.load_pr_for_commit = original_loader
+        os.chdir(original_cwd)
+
+with tempfile.TemporaryDirectory(prefix="release-snapshot-latest-") as tmp:
+    repo = Path(tmp)
+    run("init", cwd=repo)
+    run("config", "user.name", "Test User", cwd=repo)
+    run("config", "user.email", "test@example.com", cwd=repo)
+    run("checkout", "-b", "main", cwd=repo)
+    (repo / "Cargo.toml").write_text('[package]\nname = "demo"\nversion = "0.1.0"\n')
+    (repo / "README.md").write_text("base\n")
+    run("add", "Cargo.toml", "README.md", cwd=repo)
+    run("commit", "-m", "base", cwd=repo)
+    run("tag", "v0.1.0", cwd=repo)
+
+    (repo / "README.md").write_text("one\n")
+    run("add", "README.md", cwd=repo)
+    run("commit", "-m", "one", cwd=repo)
+    sha1 = run("rev-parse", "HEAD", cwd=repo)
+
+    (repo / "README.md").write_text("two\n")
+    run("add", "README.md", cwd=repo)
+    run("commit", "-m", "two", cwd=repo)
+    sha2 = run("rev-parse", "HEAD", cwd=repo)
+
+    prs = {
+        sha1: make_pr(201, "Patch release", sha1, ["type:patch", "channel:stable"]),
+        sha2: make_pr(202, "Minor release", sha2, ["type:minor", "channel:stable"]),
+    }
+
+    original_cwd = Path.cwd()
+    original_loader = module.load_pr_for_commit
+    try:
+        os.chdir(repo)
+        module.load_pr_for_commit = lambda api_root, repository, token, target_sha, **kwargs: prs[target_sha]
+
+        snapshot1 = module.build_snapshot(
+            target_sha=sha1,
+            repository="IvanLi-CN/catnap",
+            token="token",
+            notes_ref=module.DEFAULT_NOTES_REF,
+            registry="ghcr.io",
+            api_root="https://api.github.com",
+            snapshot_source="ci-main",
+        )
+        run("notes", f"--ref={module.DEFAULT_NOTES_REF}", "add", "-f", "-m", json.dumps(snapshot1), sha1, cwd=repo)
+
+        snapshot2 = module.build_snapshot(
+            target_sha=sha2,
+            repository="IvanLi-CN/catnap",
+            token="token",
+            notes_ref=module.DEFAULT_NOTES_REF,
+            registry="ghcr.io",
+            api_root="https://api.github.com",
+            snapshot_source="ci-main",
+        )
+        run("notes", f"--ref={module.DEFAULT_NOTES_REF}", "add", "-f", "-m", json.dumps(snapshot2), sha2, cwd=repo)
+
+        assert module.publication_tags(snapshot1, notes_ref=module.DEFAULT_NOTES_REF, main_ref=sha2) == (
+            "ghcr.io/ivanli-cn/catnap:v0.1.1,ghcr.io/ivanli-cn/catnap:latest"
+        )
+
+        run("tag", "v0.2.0", sha2, cwd=repo)
+        published_snapshot2 = dict(snapshot2)
+        published_snapshot2["published_at"] = "2026-03-26T00:00:00Z"
+        run(
+            "notes",
+            f"--ref={module.DEFAULT_NOTES_REF}",
+            "add",
+            "-f",
+            "-m",
+            json.dumps(published_snapshot2),
+            sha2,
+            cwd=repo,
+        )
+
+        assert module.publication_tags(snapshot1, notes_ref=module.DEFAULT_NOTES_REF, main_ref=sha2) == (
+            "ghcr.io/ivanli-cn/catnap:v0.1.1"
+        )
     finally:
         module.load_pr_for_commit = original_loader
         os.chdir(original_cwd)

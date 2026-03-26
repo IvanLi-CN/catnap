@@ -479,12 +479,14 @@ def commits_after_target(main_ref: str, target_sha: str) -> list[str]:
     return [commit for commit in commits.splitlines() if commit]
 
 
-def has_newer_stable_snapshot(notes_ref: str, main_ref: str, target_sha: str) -> bool:
+def has_newer_published_stable_snapshot(notes_ref: str, main_ref: str, target_sha: str) -> bool:
     for commit in commits_after_target(main_ref, target_sha):
         snapshot = read_snapshot(notes_ref, commit)
         if not snapshot or not snapshot.get("release_enabled"):
             continue
         if snapshot.get("release_channel") != "stable":
+            continue
+        if not snapshot_is_published(snapshot):
             continue
         return True
     return False
@@ -497,7 +499,7 @@ def publication_tags(snapshot: dict[str, Any], *, notes_ref: str, main_ref: str)
     image = f"{snapshot['registry']}/{snapshot['image_name_lower']}"
     release_tag = str(snapshot["release_tag"])
     tags = [f"{image}:{release_tag}"]
-    if snapshot.get("release_channel") == "stable" and not has_newer_stable_snapshot(
+    if snapshot.get("release_channel") == "stable" and not has_newer_published_stable_snapshot(
         notes_ref, main_ref, str(snapshot["target_sha"])
     ):
         tags.append(f"{image}:latest")
