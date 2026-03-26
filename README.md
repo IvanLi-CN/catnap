@@ -258,7 +258,7 @@ snapshot 使用 git notes `refs/notes/release-snapshots` 保存 `target_sha`、P
 - 镜像：`ghcr.io/<owner>/catnap`
 - Tags（最低集合）：
   - `v<semver>` 或 `v<semver>-rc.<sha7>`
-  - `latest`：仅在当前 stable snapshot 没有被更新的 stable snapshot 超车时发布
+  - `latest`：仅在当前 stable snapshot 没有被**更高版本的已发布 stable snapshot**超车时发布；未发布的 pending stable snapshot 不得提前压掉 `latest`
 - 发布链路会复用已产出的 linux gnu release binaries 来封装 GHCR 镜像，避免在多架构 Docker build 中重复编译 Rust。
 
 示例：
