@@ -82,7 +82,7 @@
   - 对历史已合并但尚未发布、且缺少 `channel:*` 的 PR，snapshot 回填允许默认映射 `channel:stable`。
 - release
   - 发布版本、tag、manifest tags、`latest` 资格全部由 snapshot 决定，不再在 release 时重新计算 `bump_level`。
-  - `latest` 仅允许由当前仍未被更新 stable snapshot 超车的 stable release 更新。
+  - `latest` 仅允许由当前仍未被更新 stable 已发布版本超车的 stable release 更新；未发布的更新 stable snapshot 不得提前剥夺当前已发布版本的 `latest` 资格。
   - 自动 run 完成后若仍存在 pending snapshot，必须自动 dispatch 下一次 `Release` 直到队列清空。
   - 手动补发 `workflow_dispatch(commit_sha)` 必须拒绝未通过 `CI Main` 的 commit。
   - 对未修改 `.github/workflows/**` 的 release target，必须优先走 GitHub Release API 落 tag；但若 release tag 已由人工或前置步骤创建，创建/更新 GitHub Release 时不得再传 `target_sha` 触发二次建 tag。
@@ -102,6 +102,7 @@
 - Given 新 PR 缺少 `type:*` 或 `channel:*`，When 触发 `PR Label Gate`，Then required check fail early。
 - Given `main` 上连续 squash merge 多个可发布 PR，When `CI Main` 与 `Release` 运行，Then 每个 commit 都会先拥有 immutable snapshot，再按顺序发布，不会因为关联 PR 反查失败而跳过。
 - Given 较新的 stable commit 已先发布，When 之后手动补发更老的 stable snapshot，Then 旧版本不会抢回 `latest`。
+- Given `main` 上存在更新的 stable snapshot 但它们尚未发布，When 发布当前 stable snapshot，Then 当前版本仍会刷新 `latest`，直到真正有更新 stable 版本发布成功。
 - Given `Release` 自动 run 因单队列只拿到较新的 `workflow_run` 触发，When notes 中仍有更早 pending snapshot，Then `next-pending` 会先发布较早 commit，再继续 drain backlog。
 - Given 发布成功，When 对应 PR 存在，Then PR 上会出现带固定 marker 的版本评论；重复发布同一 tag 时只更新原评论，不重复刷屏。
 - Given 目标 commit `ae69817350a3b5aa9924bf2f887ab11a9dd3c497` 与 `9d98e8fac9f01cd4ee27ed03e33d786b99d1c7cd`，When 修复合并后顺序手动 dispatch `release.yml commit_sha=*`，Then 分别产出 `v0.9.0` 与 `v0.10.0`，并对账 Release / GHCR / PR 评论全部成功。
@@ -163,3 +164,4 @@
 - 2026-03-25: `Release #33` 暴露 tree-based workflow token 门禁过宽，连未修改 workflow 的 PR #82 也被错误阻断；恢复到按 commit diff 判定 workflow-changing release target，并只对这类目标要求 `RELEASE_WORKFLOW_TOKEN`。
 - 2026-03-26: `Release #34` 证明即使 target commit 本身未修改 workflow，直接 `git push refs/tags/*` 仍会因目标树包含 workflow 文件而被 GitHub App 拒绝；恢复“普通 target 走 GitHub Release API + target_sha 自动建 tag、仅 workflow-changing target 走预建 tag”这条分叉。
 - 2026-03-26: `Release #35` 进一步证明即使 release tag 已预先存在，只要 `POST /releases` 继续携带 `target_sha`，GitHub 仍会把它当成需要创建/更新 workflow-bearing ref 而返回 403；修正为“仅在确实需要 API 建 tag 时才传 `target_sha`，已有 tag 时只按 tag_name 创建/更新 Release”。
+- 2026-03-26: `Release #37` 暴露 `latest` 资格判断过早按“main 上是否已有更新 stable snapshot”裁决，导致手动补发 `v0.13.0` 时虽然没有更高版本已发布，GHCR 仍未刷新 `latest`；修正为仅当存在更新 stable 已发布版本时才抑制 `latest`。
