@@ -303,6 +303,14 @@ impl LazycatService {
         let service_ids = self
             .list_service_ids(&mut session, &account.email, &account.password)
             .await?;
+        if service_ids.is_empty() {
+            warn!(
+                email = %account.email,
+                base_url = %self.base_url,
+                "lazycat empty service discovery rejected"
+            );
+            return Err(anyhow!("懒猫云机器发现结果为空，已拒绝覆盖现有缓存"));
+        }
         let site_sync_at = current_timestamp_rfc3339();
         let mut machines = Vec::new();
 
@@ -2217,6 +2225,7 @@ fn error_chain_text(err: &anyhow::Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::{response::Html, routing::get, Router};
 
     #[test]
     fn parses_login_token() {
@@ -2239,6 +2248,55 @@ mod tests {
         assert!(parsed_first.service_ids.contains(&3875));
         assert!(parsed_second.service_ids.contains(&5568));
         assert!(parsed_second.service_ids.contains(&5845));
+    }
+
+    #[tokio::test]
+    async fn sync_site_rejects_empty_service_discovery() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let stub = Router::new().route(
+            "/clientarea",
+            get(|| async {
+                Html(include_str!(
+                    "../tests/fixtures/lazycat/clientarea-empty.html"
+                ))
+            }),
+        );
+        tokio::spawn(async move {
+            axum::serve(listener, stub).await.unwrap();
+        });
+
+        let service = LazycatService {
+            base_url: Url::parse(&format!("http://{addr}")).unwrap(),
+            site_client: reqwest::Client::builder()
+                .user_agent("catnap-test/0.1")
+                .redirect(reqwest::redirect::Policy::none())
+                .timeout(std::time::Duration::from_millis(SITE_REQUEST_TIMEOUT_MS))
+                .build()
+                .unwrap(),
+            panel_timeout_ms: 5_000,
+            allow_invalid_tls: true,
+        };
+        let mut account = LazycatAccountRow {
+            user_id: "u_1".to_string(),
+            email: "owner@example.com".to_string(),
+            password: "secret".to_string(),
+            cookies_json: Some(
+                serde_json::to_string(&vec![("PHPSESSID".to_string(), "sess-1".to_string())])
+                    .unwrap(),
+            ),
+            state: "ready".to_string(),
+            last_error: None,
+            last_authenticated_at: Some("2026-03-28T00:00:00Z".to_string()),
+            last_site_sync_at: Some("2026-03-28T00:10:00Z".to_string()),
+            last_panel_sync_at: Some("2026-03-28T00:20:00Z".to_string()),
+            created_at: "2026-03-28T00:00:00Z".to_string(),
+            updated_at: "2026-03-28T00:20:00Z".to_string(),
+        };
+
+        let err = service.sync_site(&mut account).await.unwrap_err();
+
+        assert!(err.to_string().contains("发现结果为空"));
     }
 
     #[test]

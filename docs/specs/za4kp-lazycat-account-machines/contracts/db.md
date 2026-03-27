@@ -60,6 +60,7 @@ Primary key:
 Rules:
 
 - main-site sync overwrites core machine fields but must preserve last-good panel detail when a panel refresh fails;
+- a main-site discovery result with zero parsed machines is treated as a failed refresh, not authoritative emptiness, and must not delete existing rows;
 - `extra_addresses_json` stores normalized `assignedips` / extra address list;
 - `panel_hash` is cached only for the specific machine returned by lazycat main site.
 
@@ -92,6 +93,7 @@ Rules:
 
 - successful panel/NAT sync replaces the mapping set for that machine + family;
 - failed panel/NAT sync must not eagerly delete the existing rows;
+- failed main-site discovery must not eagerly delete the existing rows;
 - disconnecting an account deletes all cached mappings for that user.
 
 ## lazycat_traffic_samples
@@ -114,10 +116,11 @@ New table:
 
 Primary key:
 
-- `(user_id, service_id, bucket_at)`
+- `(user_id, service_id, cycle_start_at, bucket_at)`
 
 Rules:
 
 - container panel sync writes at most one row per machine per hour bucket, and overwrites that bucket with the latest successful sample in the same hour;
-- stored samples are scoped by `user_id` and deleted when the account disconnects or the machine disappears from cache;
+- stored samples are scoped by `user_id` and deleted when the account disconnects or the machine disappears from an authoritative non-empty cache refresh;
+- failed main-site discovery or empty parse must not be treated as machine disappearance for deletion purposes;
 - `cycle_start_at` / `cycle_end_at` identify the billing cycle that the sample belongs to, so the API can return only the current cycle’s real history.
