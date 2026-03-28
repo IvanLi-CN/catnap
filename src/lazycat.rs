@@ -554,14 +554,12 @@ impl LazycatService {
             page += 1;
         }
 
-        if service_ids.is_empty() {
-            if authoritative_empty {
-                info!(
-                    email = %email,
-                    base_url = %self.base_url,
-                    "lazycat authoritative empty service discovery accepted"
-                );
-            }
+        if service_ids.is_empty() && authoritative_empty {
+            info!(
+                email = %email,
+                base_url = %self.base_url,
+                "lazycat authoritative empty service discovery accepted"
+            );
         }
 
         Ok(service_ids)
