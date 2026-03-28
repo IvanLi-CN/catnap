@@ -21,7 +21,7 @@ use time::{
     format_description::well_known::Rfc3339, Date, Month, OffsetDateTime, PrimitiveDateTime, Time,
     UtcOffset,
 };
-use tracing::warn;
+use tracing::{info, warn};
 
 const SITE_REQUEST_TIMEOUT_MS: u64 = 10_000;
 
@@ -163,6 +163,13 @@ struct SiteResponse {
 struct ClientareaPage {
     service_ids: Vec<i64>,
     total_pages: usize,
+    empty_state: Option<ClientareaEmptyState>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClientareaEmptyState {
+    Authoritative,
+    Ambiguous,
 }
 
 #[derive(Debug, Clone)]
@@ -303,14 +310,6 @@ impl LazycatService {
         let service_ids = self
             .list_service_ids(&mut session, &account.email, &account.password)
             .await?;
-        if service_ids.is_empty() {
-            warn!(
-                email = %account.email,
-                base_url = %self.base_url,
-                "lazycat empty service discovery rejected"
-            );
-            return Err(anyhow!("懒猫云机器发现结果为空，已拒绝覆盖现有缓存"));
-        }
         let site_sync_at = current_timestamp_rfc3339();
         let mut machines = Vec::new();
 
@@ -503,6 +502,7 @@ impl LazycatService {
         let mut total_pages = 1_usize;
         let mut service_ids = Vec::new();
         let mut seen = HashSet::new();
+        let mut empty_state = None;
 
         loop {
             let html = self
@@ -516,6 +516,7 @@ impl LazycatService {
                 .await?;
             let parsed = parse_clientarea_page(&html)?;
             total_pages = total_pages.max(parsed.total_pages.max(page));
+            empty_state = merge_clientarea_empty_state(empty_state, parsed.empty_state);
             for id in parsed.service_ids {
                 if seen.insert(id) {
                     service_ids.push(id);
@@ -525,6 +526,24 @@ impl LazycatService {
                 break;
             }
             page += 1;
+        }
+
+        if service_ids.is_empty() {
+            if empty_state == Some(ClientareaEmptyState::Ambiguous) {
+                warn!(
+                    email = %email,
+                    base_url = %self.base_url,
+                    "lazycat ambiguous empty service discovery rejected"
+                );
+                return Err(anyhow!(
+                    "懒猫云机器发现结果为空且页面状态异常，已拒绝覆盖现有缓存"
+                ));
+            }
+            info!(
+                email = %email,
+                base_url = %self.base_url,
+                "lazycat authoritative empty service discovery accepted"
+            );
         }
 
         Ok(service_ids)
@@ -1726,10 +1745,63 @@ fn parse_clientarea_page(html: &str) -> anyhow::Result<ClientareaPage> {
         }
     }
 
+    let empty_state = if service_ids.is_empty() {
+        Some(classify_empty_clientarea_page(&document))
+    } else {
+        None
+    };
+
     Ok(ClientareaPage {
         service_ids,
         total_pages,
+        empty_state,
     })
+}
+
+fn merge_clientarea_empty_state(
+    current: Option<ClientareaEmptyState>,
+    next: Option<ClientareaEmptyState>,
+) -> Option<ClientareaEmptyState> {
+    match (current, next) {
+        (Some(ClientareaEmptyState::Ambiguous), _) => Some(ClientareaEmptyState::Ambiguous),
+        (_, Some(ClientareaEmptyState::Ambiguous)) => Some(ClientareaEmptyState::Ambiguous),
+        (Some(ClientareaEmptyState::Authoritative), _)
+        | (_, Some(ClientareaEmptyState::Authoritative)) => {
+            Some(ClientareaEmptyState::Authoritative)
+        }
+        (None, None) => None,
+    }
+}
+
+fn classify_empty_clientarea_page(document: &Html) -> ClientareaEmptyState {
+    let text = document
+        .root_element()
+        .text()
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let authoritative_markers = [
+        "暂无可用资源",
+        "暂无资源",
+        "暂无服务",
+        "没有可用资源",
+        "暂未开通任何服务",
+        "当前没有任何服务",
+    ];
+    if authoritative_markers
+        .iter()
+        .any(|marker| text.contains(marker))
+    {
+        return ClientareaEmptyState::Authoritative;
+    }
+
+    let ambiguous_markers = ["异常", "失败", "稍后重试", "不可用", "维护", "错误", "重试"];
+    if ambiguous_markers.iter().any(|marker| text.contains(marker)) {
+        return ClientareaEmptyState::Ambiguous;
+    }
+
+    ClientareaEmptyState::Ambiguous
 }
 
 fn parse_host_detail(
@@ -2248,6 +2320,27 @@ mod tests {
         assert!(parsed_first.service_ids.contains(&3875));
         assert!(parsed_second.service_ids.contains(&5568));
         assert!(parsed_second.service_ids.contains(&5845));
+        assert_eq!(parsed_first.empty_state, None);
+        assert_eq!(parsed_second.empty_state, None);
+    }
+
+    #[test]
+    fn parses_clientarea_empty_states() {
+        let authoritative =
+            include_str!("../tests/fixtures/lazycat/clientarea-authoritative-empty.html");
+        let ambiguous = include_str!("../tests/fixtures/lazycat/clientarea-empty.html");
+        let parsed_authoritative = parse_clientarea_page(authoritative).unwrap();
+        let parsed_ambiguous = parse_clientarea_page(ambiguous).unwrap();
+        assert!(parsed_authoritative.service_ids.is_empty());
+        assert_eq!(
+            parsed_authoritative.empty_state,
+            Some(ClientareaEmptyState::Authoritative)
+        );
+        assert!(parsed_ambiguous.service_ids.is_empty());
+        assert_eq!(
+            parsed_ambiguous.empty_state,
+            Some(ClientareaEmptyState::Ambiguous)
+        );
     }
 
     #[tokio::test]
@@ -2296,7 +2389,57 @@ mod tests {
 
         let err = service.sync_site(&mut account).await.unwrap_err();
 
-        assert!(err.to_string().contains("发现结果为空"));
+        assert!(err.to_string().contains("页面状态异常"));
+    }
+
+    #[tokio::test]
+    async fn sync_site_accepts_authoritative_empty_service_discovery_page() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let stub = Router::new().route(
+            "/clientarea",
+            get(|| async {
+                Html(include_str!(
+                    "../tests/fixtures/lazycat/clientarea-authoritative-empty.html"
+                ))
+            }),
+        );
+        tokio::spawn(async move {
+            axum::serve(listener, stub).await.unwrap();
+        });
+
+        let service = LazycatService {
+            base_url: Url::parse(&format!("http://{addr}")).unwrap(),
+            site_client: reqwest::Client::builder()
+                .user_agent("catnap-test/0.1")
+                .redirect(reqwest::redirect::Policy::none())
+                .timeout(std::time::Duration::from_millis(SITE_REQUEST_TIMEOUT_MS))
+                .build()
+                .unwrap(),
+            panel_timeout_ms: 5_000,
+            allow_invalid_tls: true,
+        };
+        let mut account = LazycatAccountRow {
+            user_id: "u_1".to_string(),
+            email: "owner@example.com".to_string(),
+            password: "secret".to_string(),
+            cookies_json: Some(
+                serde_json::to_string(&vec![("PHPSESSID".to_string(), "sess-1".to_string())])
+                    .unwrap(),
+            ),
+            state: "ready".to_string(),
+            last_error: None,
+            last_authenticated_at: Some("2026-03-28T00:00:00Z".to_string()),
+            last_site_sync_at: Some("2026-03-28T00:10:00Z".to_string()),
+            last_panel_sync_at: Some("2026-03-28T00:20:00Z".to_string()),
+            created_at: "2026-03-28T00:00:00Z".to_string(),
+            updated_at: "2026-03-28T00:20:00Z".to_string(),
+        };
+
+        let machines = service.sync_site(&mut account).await.unwrap();
+
+        assert!(machines.is_empty());
+        assert!(account.last_site_sync_at.is_some());
     }
 
     #[test]

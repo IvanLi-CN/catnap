@@ -190,5 +190,6 @@ Rules:
 - `items` are filtered by current `X-User-Id`;
 - `detailState` is implementation-defined but must distinguish at least `ready`, `error`, and stale-cache scenarios;
 - panel/NAT failures must not remove core machine fields returned from main-site sync.
-- failed main-site discovery must not wipe cached `items`; `lastError` should describe the rejected empty discovery while last-good machine data remains readable.
+- ambiguous empty main-site discovery must not wipe cached `items`; `lastError` should describe the rejected discovery while last-good machine data remains readable.
+- authoritative empty main-site discovery may return `items=[]` and clear cached machine/port/traffic rows for that user.
 - `traffic.history` only contains persisted hourly samples for the current billing cycle; it must not be synthesized from a single latest snapshot.

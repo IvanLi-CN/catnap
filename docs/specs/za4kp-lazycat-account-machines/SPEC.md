@@ -60,7 +60,7 @@
 - 账号与机器缓存必须按 `X-User-Id` 隔离；断开账号时只清除当前用户的懒猫云账号、机器与端口映射数据。
 - 普通容器机面板同步成功后，必须把流量快照按“每小时最多 1 条”的粒度写入历史表；同一小时只保留最新样本。
 - `GET /api/lazycat/machines` 返回的图表数据必须来自数据库中的真实小时样本，不得由前端基于单次快照推导伪趋势。
-- 若主站 `clientarea` 可访问但本轮未解析出任何机器，必须把该结果视为非权威空发现并终止同步；不得据此清除 last-good 机器缓存、端口映射或流量历史。
+- 若主站 `clientarea` 可访问但本轮未解析出任何机器，只有在页面明确表达“当前没有任何资源/服务”时才允许视为权威空态并清除缓存；其余歧义空页必须终止同步，不得据此清除 last-good 机器缓存、端口映射或流量历史。
 
 ### SHOULD
 
@@ -234,8 +234,8 @@
   sensitive_exclusion: seeded local account only
   submission_gate: pending-owner-approval
   story_id_or_title: `/#machines` seeded failure-preserves-history preview
-  state: empty discovery rejected while last-good traffic history remains visible
-  evidence_note: 验证本次回归修复，证明一次被拒绝的空机器发现不会抹掉既有机器卡片、流量历史图表与错误提示。
+  state: ambiguous empty discovery rejected while last-good traffic history remains visible
+  evidence_note: 验证本次回归修复，证明一次被拒绝的歧义空机器发现不会抹掉既有机器卡片、流量历史图表与错误提示。
   image:
   ![Local preview keeps history after empty discovery rejection](./assets/lazycat-empty-discovery-preserves-history.png)
 
@@ -245,4 +245,4 @@
 - 2026-03-19: 完成懒猫云后端同步模块、`/api/lazycat/*`、设置页账号卡片、`#machines` 页面，以及解析/隔离/断开相关测试与质量门。
 - 2026-03-21: 刷新 Storybook 视觉证据，补充当前默认态与部分失败态截图。
 - 2026-03-21: 补充流量小时样本历史要求，明确图表只能消费数据库中的真实账期样本。
-- 2026-03-28: 收紧主站 zero-discovery 语义；当 `clientarea` 返回空机器发现时 fail closed，并保留 last-good 机器缓存、端口映射与流量小时历史。
+- 2026-03-28: 收紧主站 zero-discovery 语义；歧义空页必须 fail closed 并保留 last-good 机器缓存、端口映射与流量小时历史，只有权威空态才允许清空缓存。

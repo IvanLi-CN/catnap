@@ -60,7 +60,7 @@ Primary key:
 Rules:
 
 - main-site sync overwrites core machine fields but must preserve last-good panel detail when a panel refresh fails;
-- a main-site discovery result with zero parsed machines is treated as a failed refresh, not authoritative emptiness, and must not delete existing rows;
+- a main-site discovery result with zero parsed machines may delete existing rows only when the parsed page explicitly indicates an authoritative empty inventory; ambiguous zero-machine pages must be treated as failed refreshes;
 - `extra_addresses_json` stores normalized `assignedips` / extra address list;
 - `panel_hash` is cached only for the specific machine returned by lazycat main site.
 

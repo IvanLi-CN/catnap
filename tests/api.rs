@@ -924,7 +924,7 @@ async fn lazycat_sync_preserves_cached_data_when_service_discovery_page_is_ambig
     assert!(after_account
         .last_error
         .as_deref()
-        .is_some_and(|message| message.contains("发现结果为空")));
+        .is_some_and(|message| message.contains("页面状态异常")));
 
     let lazycat_machine_count =
         sqlx::query("SELECT COUNT(*) FROM lazycat_machines WHERE user_id = ?")
@@ -964,6 +964,89 @@ async fn lazycat_sync_preserves_cached_data_when_service_discovery_page_is_ambig
         json["account"]["lastError"].as_str(),
         after_account.last_error.as_deref()
     );
+}
+
+#[tokio::test]
+async fn lazycat_sync_clears_cached_data_when_service_discovery_is_authoritatively_empty() {
+    let stub = axum::Router::new().route(
+        "/clientarea",
+        axum::routing::get(|| async {
+            axum::response::Html(include_str!(
+                "fixtures/lazycat/clientarea-authoritative-empty.html"
+            ))
+        }),
+    );
+    let base = spawn_stub_server(stub).await;
+
+    let mut cfg = test_config();
+    cfg.lazycat_base_url = base;
+    let t = make_app_with_config(cfg).await;
+    seed_lazycat_machine(
+        &t,
+        "u_1",
+        2312,
+        "first@example.com",
+        "港湾 Transit Mini",
+        "edge-user-1.example.net",
+    )
+    .await;
+
+    let before_account = catnap::db::get_lazycat_account(&t.db, "u_1")
+        .await
+        .unwrap()
+        .unwrap();
+
+    let account_view = catnap::lazycat::request_sync(&t.state, "u_1")
+        .await
+        .unwrap();
+    assert_eq!(account_view.state, "syncing");
+
+    let mut after_account = None;
+    for _ in 0..80 {
+        let row = catnap::db::get_lazycat_account(&t.db, "u_1")
+            .await
+            .unwrap()
+            .unwrap();
+        if row.state != "syncing" {
+            after_account = Some(row);
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    let after_account = after_account.expect("lazycat sync should finish");
+
+    assert_eq!(after_account.state, "ready");
+    assert_ne!(
+        after_account.last_site_sync_at,
+        before_account.last_site_sync_at
+    );
+    assert!(after_account.last_panel_sync_at.is_some());
+    assert_eq!(after_account.last_error, None);
+
+    let lazycat_machine_count =
+        sqlx::query("SELECT COUNT(*) FROM lazycat_machines WHERE user_id = ?")
+            .bind("u_1")
+            .fetch_one(&t.db)
+            .await
+            .unwrap()
+            .get::<i64, _>(0);
+    let lazycat_mapping_count =
+        sqlx::query("SELECT COUNT(*) FROM lazycat_port_mappings WHERE user_id = ?")
+            .bind("u_1")
+            .fetch_one(&t.db)
+            .await
+            .unwrap()
+            .get::<i64, _>(0);
+    let lazycat_traffic_sample_count =
+        sqlx::query("SELECT COUNT(*) FROM lazycat_traffic_samples WHERE user_id = ?")
+            .bind("u_1")
+            .fetch_one(&t.db)
+            .await
+            .unwrap()
+            .get::<i64, _>(0);
+    assert_eq!(lazycat_machine_count, 0);
+    assert_eq!(lazycat_mapping_count, 0);
+    assert_eq!(lazycat_traffic_sample_count, 0);
 }
 
 #[tokio::test]
