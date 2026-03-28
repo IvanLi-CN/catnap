@@ -1789,16 +1789,16 @@ fn classify_empty_clientarea_page(document: &Html) -> ClientareaEmptyState {
         "暂未开通任何服务",
         "当前没有任何服务",
     ];
+    let ambiguous_markers = ["异常", "失败", "稍后重试", "不可用", "维护", "错误", "重试"];
+    if ambiguous_markers.iter().any(|marker| text.contains(marker)) {
+        return ClientareaEmptyState::Ambiguous;
+    }
+
     if authoritative_markers
         .iter()
         .any(|marker| text.contains(marker))
     {
         return ClientareaEmptyState::Authoritative;
-    }
-
-    let ambiguous_markers = ["异常", "失败", "稍后重试", "不可用", "维护", "错误", "重试"];
-    if ambiguous_markers.iter().any(|marker| text.contains(marker)) {
-        return ClientareaEmptyState::Ambiguous;
     }
 
     ClientareaEmptyState::Ambiguous
@@ -2329,8 +2329,10 @@ mod tests {
         let authoritative =
             include_str!("../tests/fixtures/lazycat/clientarea-authoritative-empty.html");
         let ambiguous = include_str!("../tests/fixtures/lazycat/clientarea-empty.html");
+        let mixed = include_str!("../tests/fixtures/lazycat/clientarea-mixed-empty.html");
         let parsed_authoritative = parse_clientarea_page(authoritative).unwrap();
         let parsed_ambiguous = parse_clientarea_page(ambiguous).unwrap();
+        let parsed_mixed = parse_clientarea_page(mixed).unwrap();
         assert!(parsed_authoritative.service_ids.is_empty());
         assert_eq!(
             parsed_authoritative.empty_state,
@@ -2339,6 +2341,11 @@ mod tests {
         assert!(parsed_ambiguous.service_ids.is_empty());
         assert_eq!(
             parsed_ambiguous.empty_state,
+            Some(ClientareaEmptyState::Ambiguous)
+        );
+        assert!(parsed_mixed.service_ids.is_empty());
+        assert_eq!(
+            parsed_mixed.empty_state,
             Some(ClientareaEmptyState::Ambiguous)
         );
     }
