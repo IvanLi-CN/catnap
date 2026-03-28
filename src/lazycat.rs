@@ -1799,7 +1799,7 @@ fn bare_clientarea_page_link_is_pagination(
 ) -> bool {
     looks_like_pagination_label(link_text, page)
         || has_pagination_hint_in_ancestors(link, page)
-        || (link_text_allows_pagination_peer_inference(link_text)
+        || (link_allows_pagination_peer_inference(link, link_text)
             && has_explicit_clientarea_pagination_peer(link, base_url))
 }
 
@@ -1893,8 +1893,13 @@ fn element_has_pagination_hint(element: ElementRef<'_>, page: usize) -> bool {
     false
 }
 
-fn link_text_allows_pagination_peer_inference(link_text: &str) -> bool {
+fn link_allows_pagination_peer_inference(link: ElementRef<'_>, link_text: &str) -> bool {
     let normalized = link_text.trim();
+    if normalized.is_empty() {
+        return link
+            .descendent_elements()
+            .any(|element| matches!(element.value().name(), "img" | "svg" | "span" | "i"));
+    }
     !normalized.is_empty()
         && normalized.chars().all(|ch| {
             !ch.is_ascii_alphanumeric()
@@ -1905,7 +1910,8 @@ fn link_text_allows_pagination_peer_inference(link_text: &str) -> bool {
 }
 
 fn has_explicit_clientarea_pagination_peer(link: ElementRef<'_>, base_url: &Url) -> bool {
-    link.ancestors()
+    let non_body_peer = link
+        .ancestors()
         .filter_map(ElementRef::wrap)
         .skip(1)
         .take_while(|element| !matches!(element.value().name(), "html" | "body"))
@@ -1913,7 +1919,17 @@ fn has_explicit_clientarea_pagination_peer(link: ElementRef<'_>, base_url: &Url)
             ancestor.descendent_elements().any(|element| {
                 clientarea_page_link_has_explicit_pagination_signal(element, base_url)
             })
-        })
+        });
+    if non_body_peer {
+        return true;
+    }
+    let Some(parent) = link.parent().and_then(ElementRef::wrap) else {
+        return false;
+    };
+    parent.value().name() == "body"
+        && parent
+            .child_elements()
+            .any(|element| clientarea_page_link_has_explicit_pagination_signal(element, base_url))
 }
 
 fn classify_empty_clientarea_page(document: &Html) -> ClientareaEmptyState {
@@ -1978,7 +1994,7 @@ fn classify_empty_clientarea_page(document: &Html) -> ClientareaEmptyState {
         .any(|text| text_contains_any_marker(text, &hard_ambiguous_markers));
     let signal_has_soft_ambiguous = signal_regions
         .iter()
-        .any(|text| text_contains_any_marker(text, &soft_ambiguous_markers));
+        .any(|text| text_contains_unconditional_soft_error(text, &soft_ambiguous_markers));
 
     let fallback_regions = collect_clientarea_authoritative_fallback_regions(document);
     let fallback_has_authoritative = fallback_regions
@@ -1989,18 +2005,18 @@ fn classify_empty_clientarea_page(document: &Html) -> ClientareaEmptyState {
         .any(|text| text_contains_any_marker(text, &hard_ambiguous_markers));
     let fallback_has_soft_ambiguous = fallback_regions
         .iter()
-        .any(|text| text_contains_any_marker(text, &soft_ambiguous_markers));
+        .any(|text| text_contains_unconditional_soft_error(text, &soft_ambiguous_markers));
 
     if signal_has_hard_ambiguous || signal_has_soft_ambiguous || fallback_has_hard_ambiguous {
         return ClientareaEmptyState::Ambiguous;
     }
 
-    if signal_has_authoritative || fallback_has_authoritative {
-        return ClientareaEmptyState::Authoritative;
-    }
-
     if fallback_has_soft_ambiguous {
         return ClientareaEmptyState::Ambiguous;
+    }
+
+    if signal_has_authoritative || fallback_has_authoritative {
+        return ClientareaEmptyState::Authoritative;
     }
 
     ClientareaEmptyState::Ambiguous
@@ -2029,6 +2045,25 @@ fn clientarea_page_link_has_explicit_pagination_signal(
 fn text_contains_any_marker(text: &str, markers: &[&str]) -> bool {
     let normalized = text.to_lowercase();
     markers.iter().any(|marker| normalized.contains(marker))
+}
+
+fn text_contains_unconditional_soft_error(text: &str, markers: &[&str]) -> bool {
+    let normalized = text.to_lowercase();
+    let conditional_phrases = [
+        "如页面加载失败",
+        "如果页面加载失败",
+        "若页面加载失败",
+        "如頁面載入失敗",
+        "如果頁面載入失敗",
+        "若頁面載入失敗",
+        "if page failed to load",
+        "if the page failed to load",
+        "if failed to load",
+    ];
+    markers.iter().any(|marker| normalized.contains(marker))
+        && !conditional_phrases
+            .iter()
+            .any(|phrase| normalized.contains(phrase))
 }
 
 fn collect_clientarea_empty_signal_regions(document: &Html) -> Vec<String> {
@@ -2642,6 +2677,18 @@ mod tests {
     <a href="/clientarea?page=4" aria-label="next"><span aria-hidden="true">⇥</span></a>
   </body>
 </html>"#;
+        let body_siblings = r#"<!DOCTYPE html>
+<html lang="zh-CN">
+  <body>
+    <table>
+      <tbody>
+        <tr><td><a href="/servicedetail?id=6455">Seoul Mini(srvS6E4O2U1)</a></td></tr>
+      </tbody>
+    </table>
+    <a href="/clientarea?action=list&page=1">1</a>
+    <a href="/clientarea?page=4"><span aria-hidden="true">⇥</span></a>
+  </body>
+</html>"#;
         let non_pagination_sidebar = r#"<!DOCTYPE html>
 <html lang="zh-CN">
   <body>
@@ -2660,14 +2707,17 @@ mod tests {
         let parsed_labeled = parse_clientarea_page(labeled).unwrap();
         let parsed_clustered = parse_clientarea_page(clustered).unwrap();
         let parsed_aria_labeled = parse_clientarea_page(aria_labeled).unwrap();
+        let parsed_body_siblings = parse_clientarea_page(body_siblings).unwrap();
         let parsed_non_pagination_sidebar = parse_clientarea_page(non_pagination_sidebar).unwrap();
         assert_eq!(parsed_labeled.total_pages, 3);
         assert_eq!(parsed_clustered.total_pages, 4);
         assert_eq!(parsed_aria_labeled.total_pages, 4);
+        assert_eq!(parsed_body_siblings.total_pages, 4);
         assert_eq!(parsed_non_pagination_sidebar.total_pages, 1);
         assert!(parsed_labeled.service_ids.contains(&2312));
         assert!(parsed_clustered.service_ids.contains(&5568));
         assert!(parsed_aria_labeled.service_ids.contains(&6123));
+        assert!(parsed_body_siblings.service_ids.contains(&6455));
         assert!(parsed_non_pagination_sidebar.service_ids.contains(&7001));
     }
 
@@ -2774,7 +2824,7 @@ mod tests {
         assert_eq!(parsed_mixed_plain_text.total_pages, 1);
         assert_eq!(
             parsed_mixed_signal_and_fallback.empty_state,
-            Some(ClientareaEmptyState::Authoritative)
+            Some(ClientareaEmptyState::Ambiguous)
         );
     }
 
