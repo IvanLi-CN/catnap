@@ -1830,15 +1830,22 @@ fn classify_empty_clientarea_page(document: &Html) -> ClientareaEmptyState {
         return ClientareaEmptyState::Ambiguous;
     }
 
-    if collect_clientarea_authoritative_fallback_regions(document)
+    let fallback_regions = collect_clientarea_authoritative_fallback_regions(document);
+    let fallback_has_authoritative = fallback_regions.iter().any(|text| {
+        authoritative_markers
+            .iter()
+            .any(|marker| text.contains(marker))
+    });
+    let fallback_has_ambiguous = fallback_regions
         .iter()
-        .any(|text| {
-            authoritative_markers
-                .iter()
-                .any(|marker| text.contains(marker))
-        })
-    {
-        return ClientareaEmptyState::Authoritative;
+        .any(|text| ambiguous_markers.iter().any(|marker| text.contains(marker)));
+
+    if fallback_has_authoritative {
+        return if fallback_has_ambiguous {
+            ClientareaEmptyState::Ambiguous
+        } else {
+            ClientareaEmptyState::Authoritative
+        };
     }
 
     ClientareaEmptyState::Ambiguous
@@ -2429,6 +2436,8 @@ mod tests {
         );
         let ambiguous = include_str!("../tests/fixtures/lazycat/clientarea-empty.html");
         let mixed = include_str!("../tests/fixtures/lazycat/clientarea-mixed-empty.html");
+        let mixed_plain_text =
+            include_str!("../tests/fixtures/lazycat/clientarea-mixed-plain-text.html");
         let parsed_authoritative = parse_clientarea_page(authoritative).unwrap();
         let parsed_authoritative_with_footer =
             parse_clientarea_page(authoritative_with_footer).unwrap();
@@ -2438,6 +2447,7 @@ mod tests {
             parse_clientarea_page(authoritative_with_support_notice).unwrap();
         let parsed_ambiguous = parse_clientarea_page(ambiguous).unwrap();
         let parsed_mixed = parse_clientarea_page(mixed).unwrap();
+        let parsed_mixed_plain_text = parse_clientarea_page(mixed_plain_text).unwrap();
         assert!(parsed_authoritative.service_ids.is_empty());
         assert_eq!(
             parsed_authoritative.empty_state,
@@ -2470,6 +2480,11 @@ mod tests {
             parsed_mixed.empty_state,
             Some(ClientareaEmptyState::Ambiguous)
         );
+        assert!(parsed_mixed_plain_text.service_ids.is_empty());
+        assert_eq!(
+            parsed_mixed_plain_text.empty_state,
+            Some(ClientareaEmptyState::Ambiguous)
+        );
     }
 
     #[tokio::test]
@@ -2481,6 +2496,55 @@ mod tests {
             get(|| async {
                 Html(include_str!(
                     "../tests/fixtures/lazycat/clientarea-empty.html"
+                ))
+            }),
+        );
+        tokio::spawn(async move {
+            axum::serve(listener, stub).await.unwrap();
+        });
+
+        let service = LazycatService {
+            base_url: Url::parse(&format!("http://{addr}")).unwrap(),
+            site_client: reqwest::Client::builder()
+                .user_agent("catnap-test/0.1")
+                .redirect(reqwest::redirect::Policy::none())
+                .timeout(std::time::Duration::from_millis(SITE_REQUEST_TIMEOUT_MS))
+                .build()
+                .unwrap(),
+            panel_timeout_ms: 5_000,
+            allow_invalid_tls: true,
+        };
+        let mut account = LazycatAccountRow {
+            user_id: "u_1".to_string(),
+            email: "owner@example.com".to_string(),
+            password: "secret".to_string(),
+            cookies_json: Some(
+                serde_json::to_string(&vec![("PHPSESSID".to_string(), "sess-1".to_string())])
+                    .unwrap(),
+            ),
+            state: "ready".to_string(),
+            last_error: None,
+            last_authenticated_at: Some("2026-03-28T00:00:00Z".to_string()),
+            last_site_sync_at: Some("2026-03-28T00:10:00Z".to_string()),
+            last_panel_sync_at: Some("2026-03-28T00:20:00Z".to_string()),
+            created_at: "2026-03-28T00:00:00Z".to_string(),
+            updated_at: "2026-03-28T00:20:00Z".to_string(),
+        };
+
+        let err = service.sync_site(&mut account).await.unwrap_err();
+
+        assert!(err.to_string().contains("页面状态异常"));
+    }
+
+    #[tokio::test]
+    async fn sync_site_rejects_plain_text_ambiguous_service_discovery_page() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let stub = Router::new().route(
+            "/clientarea",
+            get(|| async {
+                Html(include_str!(
+                    "../tests/fixtures/lazycat/clientarea-mixed-plain-text.html"
                 ))
             }),
         );
