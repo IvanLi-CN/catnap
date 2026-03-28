@@ -502,7 +502,7 @@ impl LazycatService {
         let mut total_pages = 1_usize;
         let mut service_ids = Vec::new();
         let mut seen = HashSet::new();
-        let mut empty_state = None;
+        let mut authoritative_empty = false;
 
         loop {
             let html = self
@@ -516,7 +516,33 @@ impl LazycatService {
                 .await?;
             let parsed = parse_clientarea_page(&html)?;
             total_pages = total_pages.max(parsed.total_pages.max(page));
-            empty_state = merge_clientarea_empty_state(empty_state, parsed.empty_state);
+            match parsed.empty_state {
+                Some(ClientareaEmptyState::Ambiguous) => {
+                    warn!(
+                        email = %email,
+                        base_url = %self.base_url,
+                        page,
+                        "lazycat ambiguous service discovery page rejected"
+                    );
+                    return Err(anyhow!(
+                        "懒猫云机器发现结果不完整且页面状态异常，已拒绝覆盖现有缓存"
+                    ));
+                }
+                Some(ClientareaEmptyState::Authoritative) => {
+                    if page != 1 || total_pages > 1 || !service_ids.is_empty() {
+                        warn!(
+                            email = %email,
+                            base_url = %self.base_url,
+                            page,
+                            total_pages,
+                            "lazycat partial service discovery rejected"
+                        );
+                        return Err(anyhow!("懒猫云机器发现结果不完整，已拒绝覆盖现有缓存"));
+                    }
+                    authoritative_empty = true;
+                }
+                None => {}
+            }
             for id in parsed.service_ids {
                 if seen.insert(id) {
                     service_ids.push(id);
@@ -529,21 +555,13 @@ impl LazycatService {
         }
 
         if service_ids.is_empty() {
-            if empty_state == Some(ClientareaEmptyState::Ambiguous) {
-                warn!(
+            if authoritative_empty {
+                info!(
                     email = %email,
                     base_url = %self.base_url,
-                    "lazycat ambiguous empty service discovery rejected"
+                    "lazycat authoritative empty service discovery accepted"
                 );
-                return Err(anyhow!(
-                    "懒猫云机器发现结果为空且页面状态异常，已拒绝覆盖现有缓存"
-                ));
             }
-            info!(
-                email = %email,
-                base_url = %self.base_url,
-                "lazycat authoritative empty service discovery accepted"
-            );
         }
 
         Ok(service_ids)
@@ -1756,21 +1774,6 @@ fn parse_clientarea_page(html: &str) -> anyhow::Result<ClientareaPage> {
         total_pages,
         empty_state,
     })
-}
-
-fn merge_clientarea_empty_state(
-    current: Option<ClientareaEmptyState>,
-    next: Option<ClientareaEmptyState>,
-) -> Option<ClientareaEmptyState> {
-    match (current, next) {
-        (Some(ClientareaEmptyState::Ambiguous), _) => Some(ClientareaEmptyState::Ambiguous),
-        (_, Some(ClientareaEmptyState::Ambiguous)) => Some(ClientareaEmptyState::Ambiguous),
-        (Some(ClientareaEmptyState::Authoritative), _)
-        | (_, Some(ClientareaEmptyState::Authoritative)) => {
-            Some(ClientareaEmptyState::Authoritative)
-        }
-        (None, None) => None,
-    }
 }
 
 fn classify_empty_clientarea_page(document: &Html) -> ClientareaEmptyState {
