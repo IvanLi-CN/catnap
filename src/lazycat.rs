@@ -12,7 +12,7 @@ use anyhow::{anyhow, Context};
 use futures_util::stream::{self, StreamExt};
 use reqwest::header::{COOKIE, LOCATION, SET_COOKIE};
 use reqwest::{Method, Url};
-use scraper::{Html, Selector};
+use scraper::{ElementRef, Html, Selector};
 use serde_json::json;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -1733,6 +1733,7 @@ fn parse_clientarea_page(html: &str) -> anyhow::Result<ClientareaPage> {
     let mut total_pages = 1_usize;
 
     for link in document.select(&link_selector) {
+        let link_text = normalized_element_text(link);
         let Some(href) = link.value().attr("href") else {
             continue;
         };
@@ -1761,10 +1762,16 @@ fn parse_clientarea_page(html: &str) -> anyhow::Result<ClientareaPage> {
                     page = value.parse::<usize>().ok();
                 }
             }
-            if action.as_deref() == Some("list") {
-                if let Some(page) = page {
-                    total_pages = total_pages.max(page);
-                }
+            let Some(page) = page else {
+                continue;
+            };
+            let looks_like_pagination = link_text == page.to_string()
+                || matches!(
+                    link_text.as_str(),
+                    "上一页" | "下一页" | "«" | "»" | "‹" | "›"
+                );
+            if action.as_deref() == Some("list") || (action.is_none() && looks_like_pagination) {
+                total_pages = total_pages.max(page);
             }
         }
     }
@@ -1865,12 +1872,7 @@ fn collect_clientarea_empty_signal_regions(document: &Html) -> Vec<String> {
             continue;
         };
         for node in document.select(&selector) {
-            let text = node
-                .text()
-                .collect::<String>()
-                .split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" ");
+            let text = normalized_element_text(node);
             if !text.is_empty() {
                 texts.push(text);
             }
@@ -1887,18 +1889,22 @@ fn collect_clientarea_authoritative_fallback_regions(document: &Html) -> Vec<Str
             continue;
         };
         for node in document.select(&selector) {
-            let text = node
-                .text()
-                .collect::<String>()
-                .split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" ");
+            let text = normalized_element_text(node);
             if !text.is_empty() {
                 texts.push(text);
             }
         }
     }
     texts
+}
+
+fn normalized_element_text(element: ElementRef<'_>) -> String {
+    element
+        .text()
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn parse_host_detail(
