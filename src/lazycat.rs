@@ -1800,7 +1800,7 @@ fn classify_empty_clientarea_page(document: &Html) -> ClientareaEmptyState {
     let mut saw_authoritative = false;
     let mut saw_ambiguous = false;
 
-    for text in signal_regions {
+    for text in &signal_regions {
         let contains_authoritative = authoritative_markers
             .iter()
             .any(|marker| text.contains(marker));
@@ -1822,6 +1822,17 @@ fn classify_empty_clientarea_page(document: &Html) -> ClientareaEmptyState {
         return ClientareaEmptyState::Ambiguous;
     }
 
+    if collect_clientarea_authoritative_fallback_regions(document)
+        .iter()
+        .any(|text| {
+            authoritative_markers
+                .iter()
+                .any(|marker| text.contains(marker))
+        })
+    {
+        return ClientareaEmptyState::Authoritative;
+    }
+
     ClientareaEmptyState::Ambiguous
 }
 
@@ -1833,6 +1844,28 @@ fn collect_clientarea_empty_signal_regions(document: &Html) -> Vec<String> {
         ".notice",
         r#"[role="alert"]"#,
     ];
+    let mut texts = Vec::new();
+    for raw_selector in selectors {
+        let Ok(selector) = Selector::parse(raw_selector) else {
+            continue;
+        };
+        for node in document.select(&selector) {
+            let text = node
+                .text()
+                .collect::<String>()
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
+            if !text.is_empty() {
+                texts.push(text);
+            }
+        }
+    }
+    texts
+}
+
+fn collect_clientarea_authoritative_fallback_regions(document: &Html) -> Vec<String> {
+    let selectors = ["table", "tbody", "tr", "td", "p", "body"];
     let mut texts = Vec::new();
     for raw_selector in selectors {
         let Ok(selector) = Selector::parse(raw_selector) else {
@@ -2380,6 +2413,9 @@ mod tests {
         let authoritative_with_footer = include_str!(
             "../tests/fixtures/lazycat/clientarea-authoritative-empty-with-footer-hint.html"
         );
+        let authoritative_plain_text = include_str!(
+            "../tests/fixtures/lazycat/clientarea-authoritative-empty-plain-text.html"
+        );
         let authoritative_with_support_notice = include_str!(
             "../tests/fixtures/lazycat/clientarea-authoritative-empty-with-support-notice.html"
         );
@@ -2388,6 +2424,8 @@ mod tests {
         let parsed_authoritative = parse_clientarea_page(authoritative).unwrap();
         let parsed_authoritative_with_footer =
             parse_clientarea_page(authoritative_with_footer).unwrap();
+        let parsed_authoritative_plain_text =
+            parse_clientarea_page(authoritative_plain_text).unwrap();
         let parsed_authoritative_with_support_notice =
             parse_clientarea_page(authoritative_with_support_notice).unwrap();
         let parsed_ambiguous = parse_clientarea_page(ambiguous).unwrap();
@@ -2400,6 +2438,11 @@ mod tests {
         assert!(parsed_authoritative_with_footer.service_ids.is_empty());
         assert_eq!(
             parsed_authoritative_with_footer.empty_state,
+            Some(ClientareaEmptyState::Authoritative)
+        );
+        assert!(parsed_authoritative_plain_text.service_ids.is_empty());
+        assert_eq!(
+            parsed_authoritative_plain_text.empty_state,
             Some(ClientareaEmptyState::Authoritative)
         );
         assert!(parsed_authoritative_with_support_notice
@@ -2478,7 +2521,7 @@ mod tests {
             "/clientarea",
             get(|| async {
                 Html(include_str!(
-                    "../tests/fixtures/lazycat/clientarea-authoritative-empty.html"
+                    "../tests/fixtures/lazycat/clientarea-authoritative-empty-plain-text.html"
                 ))
             }),
         );
