@@ -866,7 +866,7 @@ async fn lazycat_sync_requires_connected_account() {
 }
 
 #[tokio::test]
-async fn lazycat_sync_preserves_cached_data_when_service_discovery_is_empty() {
+async fn lazycat_sync_preserves_cached_data_when_service_discovery_page_is_ambiguous() {
     let stub = axum::Router::new().route(
         "/clientarea",
         axum::routing::get(|| async {

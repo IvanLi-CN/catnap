@@ -2251,7 +2251,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sync_site_rejects_empty_service_discovery() {
+    async fn sync_site_rejects_ambiguous_service_discovery_page() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let stub = Router::new().route(
