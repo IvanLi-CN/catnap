@@ -1751,12 +1751,20 @@ fn parse_clientarea_page(html: &str) -> anyhow::Result<ClientareaPage> {
             }
         }
         if url.path() == "/clientarea" {
-            if let Some(page) = url
-                .query_pairs()
-                .find_map(|(key, value)| (key == "page").then(|| value.to_string()))
-                .and_then(|value| value.parse::<usize>().ok())
-            {
-                total_pages = total_pages.max(page);
+            let mut action = None;
+            let mut page = None;
+            for (key, value) in url.query_pairs() {
+                if key == "action" {
+                    action = Some(value.to_string());
+                }
+                if key == "page" {
+                    page = value.parse::<usize>().ok();
+                }
+            }
+            if action.as_deref() == Some("list") {
+                if let Some(page) = page {
+                    total_pages = total_pages.max(page);
+                }
             }
         }
     }
