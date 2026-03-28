@@ -1752,25 +1752,13 @@ fn parse_clientarea_page(html: &str) -> anyhow::Result<ClientareaPage> {
             }
         }
         if url.path() == "/clientarea" {
-            let mut action = None;
-            let mut page = None;
-            for (key, value) in url.query_pairs() {
-                if key == "action" {
-                    action = Some(value.to_string());
-                }
-                if key == "page" {
-                    page = value.parse::<usize>().ok();
-                }
-            }
-            let Some(page) = page else {
+            let Some((action, page)) = parse_clientarea_page_link(&url) else {
                 continue;
             };
-            let looks_like_pagination = link_text == page.to_string()
-                || matches!(
-                    link_text.as_str(),
-                    "上一页" | "下一页" | "«" | "»" | "‹" | "›"
-                );
-            if action.as_deref() == Some("list") || (action.is_none() && looks_like_pagination) {
+            let looks_like_pagination = action.as_deref() == Some("list")
+                || (action.is_none()
+                    && bare_clientarea_page_link_is_pagination(link, &base_url, page, &link_text));
+            if looks_like_pagination {
                 total_pages = total_pages.max(page);
             }
         }
@@ -1787,6 +1775,135 @@ fn parse_clientarea_page(html: &str) -> anyhow::Result<ClientareaPage> {
         total_pages,
         empty_state,
     })
+}
+
+fn parse_clientarea_page_link(url: &Url) -> Option<(Option<String>, usize)> {
+    let mut action = None;
+    let mut page = None;
+    for (key, value) in url.query_pairs() {
+        if key == "action" {
+            action = Some(value.to_string());
+        }
+        if key == "page" {
+            page = value.parse::<usize>().ok();
+        }
+    }
+    page.map(|page| (action, page))
+}
+
+fn bare_clientarea_page_link_is_pagination(
+    link: ElementRef<'_>,
+    base_url: &Url,
+    page: usize,
+    link_text: &str,
+) -> bool {
+    looks_like_pagination_label(link_text, page)
+        || has_pagination_hint_in_ancestors(link)
+        || has_clientarea_page_link_cluster(link, base_url)
+}
+
+fn looks_like_pagination_label(link_text: &str, page: usize) -> bool {
+    let normalized = link_text.trim().to_lowercase();
+    if normalized.is_empty() {
+        return false;
+    }
+    if normalized == page.to_string() {
+        return true;
+    }
+    if matches!(
+        normalized.as_str(),
+        "首页"
+            | "尾页"
+            | "上一页"
+            | "下一页"
+            | "上页"
+            | "下页"
+            | "首頁"
+            | "尾頁"
+            | "上一頁"
+            | "下一頁"
+            | "first"
+            | "last"
+            | "first page"
+            | "last page"
+            | "prev"
+            | "next"
+            | "previous"
+            | "«"
+            | "»"
+            | "‹"
+            | "›"
+            | "<<"
+            | ">>"
+    ) {
+        return true;
+    }
+    let page_text = page.to_string();
+    normalized.contains(&page_text)
+        && (normalized.contains('页')
+            || normalized.contains('頁')
+            || normalized.contains("page")
+            || normalized.contains('/')
+            || normalized.contains('[')
+            || normalized.contains('('))
+}
+
+fn has_pagination_hint_in_ancestors(link: ElementRef<'_>) -> bool {
+    link.ancestors()
+        .filter_map(ElementRef::wrap)
+        .take_while(|element| !matches!(element.value().name(), "html" | "body"))
+        .any(element_has_pagination_hint)
+}
+
+fn element_has_pagination_hint(element: ElementRef<'_>) -> bool {
+    if element.value().name() == "nav" {
+        return true;
+    }
+    for attr in ["class", "id", "role", "aria-label"] {
+        let Some(value) = element.attr(attr) else {
+            continue;
+        };
+        let normalized = value.trim().to_lowercase();
+        if normalized.contains("pagination")
+            || normalized.contains("pager")
+            || normalized.contains("page-nav")
+            || normalized.contains("page_nav")
+            || normalized.contains("pagebar")
+            || normalized.contains("page-bar")
+            || normalized.contains("page_bar")
+            || normalized.contains("page-item")
+            || normalized.contains("page-link")
+            || normalized.contains("page-list")
+            || normalized.contains("分页")
+            || normalized.contains("页码")
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn has_clientarea_page_link_cluster(link: ElementRef<'_>, base_url: &Url) -> bool {
+    link.ancestors()
+        .filter_map(ElementRef::wrap)
+        .skip(1)
+        .take_while(|element| !matches!(element.value().name(), "html" | "body"))
+        .any(|ancestor| {
+            ancestor
+                .descendent_elements()
+                .filter(|element| {
+                    let Some(href) = element.attr("href") else {
+                        return false;
+                    };
+                    let Ok(url) = base_url.join(href) else {
+                        return false;
+                    };
+                    url.path() == "/clientarea" && parse_clientarea_page_link(&url).is_some()
+                })
+                .take(2)
+                .count()
+                >= 2
+        })
 }
 
 fn classify_empty_clientarea_page(document: &Html) -> ClientareaEmptyState {
@@ -2428,6 +2545,45 @@ mod tests {
     }
 
     #[test]
+    fn parses_clientarea_pages_with_bare_paginator_variants() {
+        let labeled = r#"<!DOCTYPE html>
+<html lang="zh-CN">
+  <body>
+    <table>
+      <tbody>
+        <tr><td><a href="/servicedetail?id=2312">港湾 Transit Mini(srvQ8L2M5R1P9K)</a></td></tr>
+      </tbody>
+    </table>
+    <div>
+      <a href="/clientarea?page=1">首页</a>
+      <a href="/clientarea?page=3">尾页</a>
+    </div>
+  </body>
+</html>"#;
+        let clustered = r#"<!DOCTYPE html>
+<html lang="zh-CN">
+  <body>
+    <table>
+      <tbody>
+        <tr><td><a href="/servicedetail?id=5568">Sandbox Free IPv6(srvF2R8E1Y6P4V)</a></td></tr>
+      </tbody>
+    </table>
+    <div>
+      <a href="/clientarea?action=list&page=1">1</a>
+      <span><a href="/clientarea?page=4"><span aria-hidden="true">⇥</span></a></span>
+    </div>
+  </body>
+</html>"#;
+
+        let parsed_labeled = parse_clientarea_page(labeled).unwrap();
+        let parsed_clustered = parse_clientarea_page(clustered).unwrap();
+        assert_eq!(parsed_labeled.total_pages, 3);
+        assert_eq!(parsed_clustered.total_pages, 4);
+        assert!(parsed_labeled.service_ids.contains(&2312));
+        assert!(parsed_clustered.service_ids.contains(&5568));
+    }
+
+    #[test]
     fn parses_clientarea_empty_states() {
         let authoritative =
             include_str!("../tests/fixtures/lazycat/clientarea-authoritative-empty.html");
@@ -2469,6 +2625,7 @@ mod tests {
             parsed_authoritative_plain_text.empty_state,
             Some(ClientareaEmptyState::Authoritative)
         );
+        assert_eq!(parsed_authoritative_plain_text.total_pages, 1);
         assert!(parsed_authoritative_with_support_notice
             .service_ids
             .is_empty());
@@ -2491,6 +2648,7 @@ mod tests {
             parsed_mixed_plain_text.empty_state,
             Some(ClientareaEmptyState::Ambiguous)
         );
+        assert_eq!(parsed_mixed_plain_text.total_pages, 1);
     }
 
     #[tokio::test]
