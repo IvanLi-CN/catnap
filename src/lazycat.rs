@@ -1918,44 +1918,69 @@ fn has_clientarea_page_link_cluster(link: ElementRef<'_>, base_url: &Url) -> boo
 fn classify_empty_clientarea_page(document: &Html) -> ClientareaEmptyState {
     let authoritative_markers = [
         "暂无可用资源",
+        "暫無可用資源",
         "暂无资源",
+        "暫無資源",
         "暂无服务",
+        "暫無服務",
         "没有可用资源",
+        "沒有可用資源",
         "暂未开通任何服务",
+        "暫未開通任何服務",
         "当前没有任何服务",
+        "當前沒有任何服務",
+        "no services available",
+        "no services found",
+        "no active services",
+        "you do not have any active services",
     ];
     let ambiguous_markers = [
         "页面渲染异常",
+        "頁面渲染異常",
         "渲染异常",
+        "渲染異常",
         "页面加载异常",
+        "頁面載入異常",
         "加载异常",
+        "載入異常",
         "加载失败",
+        "載入失敗",
         "获取失败",
+        "取得失敗",
         "服务不可用",
+        "服務不可用",
         "系统异常",
+        "系統異常",
         "系统错误",
+        "系統錯誤",
         "数据异常",
+        "資料異常",
         "访问异常",
+        "存取異常",
+        "page render error",
+        "failed to render page",
+        "page failed to load",
+        "failed to load",
+        "failed to fetch",
+        "service unavailable",
+        "system error",
+        "access error",
     ];
     let signal_regions = collect_clientarea_empty_signal_regions(document);
-    let signal_has_authoritative = signal_regions.iter().any(|text| {
-        authoritative_markers
-            .iter()
-            .any(|marker| text.contains(marker))
-    });
+    let signal_has_authoritative = signal_regions
+        .iter()
+        .any(|text| text_contains_any_marker(text, &authoritative_markers));
     let signal_has_ambiguous = signal_regions
         .iter()
-        .any(|text| ambiguous_markers.iter().any(|marker| text.contains(marker)));
+        .any(|text| text_contains_any_marker(text, &ambiguous_markers));
 
     let fallback_regions = collect_clientarea_authoritative_fallback_regions(document);
-    let fallback_has_authoritative = fallback_regions.iter().any(|text| {
-        authoritative_markers
-            .iter()
-            .any(|marker| text.contains(marker))
-    });
+    let fallback_has_authoritative = fallback_regions
+        .iter()
+        .any(|text| text_contains_any_marker(text, &authoritative_markers));
     let fallback_has_ambiguous = fallback_regions
         .iter()
-        .any(|text| ambiguous_markers.iter().any(|marker| text.contains(marker)));
+        .any(|text| text_contains_any_marker(text, &ambiguous_markers));
 
     if signal_has_ambiguous || fallback_has_ambiguous {
         return ClientareaEmptyState::Ambiguous;
@@ -1966,6 +1991,11 @@ fn classify_empty_clientarea_page(document: &Html) -> ClientareaEmptyState {
     }
 
     ClientareaEmptyState::Ambiguous
+}
+
+fn text_contains_any_marker(text: &str, markers: &[&str]) -> bool {
+    let normalized = text.to_lowercase();
+    markers.iter().any(|marker| normalized.contains(marker))
 }
 
 fn collect_clientarea_empty_signal_regions(document: &Html) -> Vec<String> {
@@ -2616,6 +2646,20 @@ mod tests {
     <a href="/clientarea?action=list&page=1">1</a>
   </body>
 </html>"#;
+        let authoritative_traditional = r#"<!DOCTYPE html>
+<html lang="zh-TW">
+  <body>
+    <div class="alert alert-info">暫無可用資源</div>
+    <a href="/clientarea?action=list&page=1">1</a>
+  </body>
+</html>"#;
+        let authoritative_english = r#"<!DOCTYPE html>
+<html lang="en">
+  <body>
+    <div class="alert alert-info">No services available</div>
+    <a href="/clientarea?action=list&page=1">1</a>
+  </body>
+</html>"#;
         let parsed_authoritative = parse_clientarea_page(authoritative).unwrap();
         let parsed_authoritative_with_footer =
             parse_clientarea_page(authoritative_with_footer).unwrap();
@@ -2628,6 +2672,9 @@ mod tests {
         let parsed_mixed_plain_text = parse_clientarea_page(mixed_plain_text).unwrap();
         let parsed_mixed_signal_and_fallback =
             parse_clientarea_page(mixed_signal_and_fallback).unwrap();
+        let parsed_authoritative_traditional =
+            parse_clientarea_page(authoritative_traditional).unwrap();
+        let parsed_authoritative_english = parse_clientarea_page(authoritative_english).unwrap();
         assert!(parsed_authoritative.service_ids.is_empty());
         assert_eq!(
             parsed_authoritative.empty_state,
@@ -2649,6 +2696,14 @@ mod tests {
             .is_empty());
         assert_eq!(
             parsed_authoritative_with_support_notice.empty_state,
+            Some(ClientareaEmptyState::Authoritative)
+        );
+        assert_eq!(
+            parsed_authoritative_traditional.empty_state,
+            Some(ClientareaEmptyState::Authoritative)
+        );
+        assert_eq!(
+            parsed_authoritative_english.empty_state,
             Some(ClientareaEmptyState::Authoritative)
         );
         assert!(parsed_ambiguous.service_ids.is_empty());
