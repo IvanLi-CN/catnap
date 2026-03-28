@@ -1798,7 +1798,7 @@ fn bare_clientarea_page_link_is_pagination(
     link_text: &str,
 ) -> bool {
     looks_like_pagination_label(link_text, page)
-        || has_pagination_hint_in_ancestors(link)
+        || has_pagination_hint_in_ancestors(link, page)
         || has_clientarea_page_link_cluster(link, base_url)
 }
 
@@ -1848,14 +1848,18 @@ fn looks_like_pagination_label(link_text: &str, page: usize) -> bool {
             || normalized.contains('('))
 }
 
-fn has_pagination_hint_in_ancestors(link: ElementRef<'_>) -> bool {
+fn has_pagination_hint_in_ancestors(link: ElementRef<'_>, page: usize) -> bool {
+    if element_has_pagination_hint(link, page) {
+        return true;
+    }
     link.ancestors()
         .filter_map(ElementRef::wrap)
-        .take_while(|element| !matches!(element.value().name(), "html" | "body"))
-        .any(element_has_pagination_hint)
+        .skip(1)
+        .take_while(|element| !matches!(element.value().name(), "html"))
+        .any(|element| element_has_pagination_hint(element, page))
 }
 
-fn element_has_pagination_hint(element: ElementRef<'_>) -> bool {
+fn element_has_pagination_hint(element: ElementRef<'_>, page: usize) -> bool {
     if element.value().name() == "nav" {
         return true;
     }
@@ -1864,6 +1868,9 @@ fn element_has_pagination_hint(element: ElementRef<'_>) -> bool {
             continue;
         };
         let normalized = value.trim().to_lowercase();
+        if looks_like_pagination_label(&normalized, page) {
+            return true;
+        }
         if normalized.contains("pagination")
             || normalized.contains("pager")
             || normalized.contains("page-nav")
@@ -1876,6 +1883,8 @@ fn element_has_pagination_hint(element: ElementRef<'_>) -> bool {
             || normalized.contains("page-list")
             || normalized.contains("分页")
             || normalized.contains("页码")
+            || normalized.contains("next page")
+            || normalized.contains("previous page")
         {
             return true;
         }
@@ -1929,30 +1938,14 @@ fn classify_empty_clientarea_page(document: &Html) -> ClientareaEmptyState {
         "访问异常",
     ];
     let signal_regions = collect_clientarea_empty_signal_regions(document);
-    let mut saw_authoritative = false;
-    let mut saw_ambiguous = false;
-
-    for text in &signal_regions {
-        let contains_authoritative = authoritative_markers
+    let signal_has_authoritative = signal_regions.iter().any(|text| {
+        authoritative_markers
             .iter()
-            .any(|marker| text.contains(marker));
-        let contains_ambiguous = ambiguous_markers.iter().any(|marker| text.contains(marker));
-
-        saw_authoritative |= contains_authoritative;
-        saw_ambiguous |= contains_ambiguous;
-    }
-
-    if saw_authoritative {
-        return if saw_ambiguous {
-            ClientareaEmptyState::Ambiguous
-        } else {
-            ClientareaEmptyState::Authoritative
-        };
-    }
-
-    if saw_ambiguous {
-        return ClientareaEmptyState::Ambiguous;
-    }
+            .any(|marker| text.contains(marker))
+    });
+    let signal_has_ambiguous = signal_regions
+        .iter()
+        .any(|text| ambiguous_markers.iter().any(|marker| text.contains(marker)));
 
     let fallback_regions = collect_clientarea_authoritative_fallback_regions(document);
     let fallback_has_authoritative = fallback_regions.iter().any(|text| {
@@ -1964,12 +1957,12 @@ fn classify_empty_clientarea_page(document: &Html) -> ClientareaEmptyState {
         .iter()
         .any(|text| ambiguous_markers.iter().any(|marker| text.contains(marker)));
 
-    if fallback_has_authoritative {
-        return if fallback_has_ambiguous {
-            ClientareaEmptyState::Ambiguous
-        } else {
-            ClientareaEmptyState::Authoritative
-        };
+    if signal_has_ambiguous || fallback_has_ambiguous {
+        return ClientareaEmptyState::Ambiguous;
+    }
+
+    if signal_has_authoritative || fallback_has_authoritative {
+        return ClientareaEmptyState::Authoritative;
     }
 
     ClientareaEmptyState::Ambiguous
@@ -2574,13 +2567,28 @@ mod tests {
     </div>
   </body>
 </html>"#;
+        let aria_labeled = r#"<!DOCTYPE html>
+<html lang="zh-CN">
+  <body>
+    <table>
+      <tbody>
+        <tr><td><a href="/servicedetail?id=6123">Tokyo Nano(srvT9K2A3P4L8)</a></td></tr>
+      </tbody>
+    </table>
+    <a href="/clientarea?action=list&page=1">1</a>
+    <a href="/clientarea?page=4" aria-label="next"><span aria-hidden="true">⇥</span></a>
+  </body>
+</html>"#;
 
         let parsed_labeled = parse_clientarea_page(labeled).unwrap();
         let parsed_clustered = parse_clientarea_page(clustered).unwrap();
+        let parsed_aria_labeled = parse_clientarea_page(aria_labeled).unwrap();
         assert_eq!(parsed_labeled.total_pages, 3);
         assert_eq!(parsed_clustered.total_pages, 4);
+        assert_eq!(parsed_aria_labeled.total_pages, 4);
         assert!(parsed_labeled.service_ids.contains(&2312));
         assert!(parsed_clustered.service_ids.contains(&5568));
+        assert!(parsed_aria_labeled.service_ids.contains(&6123));
     }
 
     #[test]
@@ -2600,6 +2608,14 @@ mod tests {
         let mixed = include_str!("../tests/fixtures/lazycat/clientarea-mixed-empty.html");
         let mixed_plain_text =
             include_str!("../tests/fixtures/lazycat/clientarea-mixed-plain-text.html");
+        let mixed_signal_and_fallback = r#"<!DOCTYPE html>
+<html lang="zh-CN">
+  <body>
+    <div class="alert alert-info">暂无可用资源</div>
+    <p>页面加载异常，请稍后重试。</p>
+    <a href="/clientarea?action=list&page=1">1</a>
+  </body>
+</html>"#;
         let parsed_authoritative = parse_clientarea_page(authoritative).unwrap();
         let parsed_authoritative_with_footer =
             parse_clientarea_page(authoritative_with_footer).unwrap();
@@ -2610,6 +2626,8 @@ mod tests {
         let parsed_ambiguous = parse_clientarea_page(ambiguous).unwrap();
         let parsed_mixed = parse_clientarea_page(mixed).unwrap();
         let parsed_mixed_plain_text = parse_clientarea_page(mixed_plain_text).unwrap();
+        let parsed_mixed_signal_and_fallback =
+            parse_clientarea_page(mixed_signal_and_fallback).unwrap();
         assert!(parsed_authoritative.service_ids.is_empty());
         assert_eq!(
             parsed_authoritative.empty_state,
@@ -2649,6 +2667,10 @@ mod tests {
             Some(ClientareaEmptyState::Ambiguous)
         );
         assert_eq!(parsed_mixed_plain_text.total_pages, 1);
+        assert_eq!(
+            parsed_mixed_signal_and_fallback.empty_state,
+            Some(ClientareaEmptyState::Ambiguous)
+        );
     }
 
     #[tokio::test]
