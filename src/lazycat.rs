@@ -1783,21 +1783,43 @@ fn classify_empty_clientarea_page(document: &Html) -> ClientareaEmptyState {
         "暂未开通任何服务",
         "当前没有任何服务",
     ];
-    let ambiguous_markers = ["异常", "失败", "稍后重试", "不可用", "维护", "错误", "重试"];
+    let ambiguous_markers = [
+        "页面渲染异常",
+        "渲染异常",
+        "页面加载异常",
+        "加载异常",
+        "加载失败",
+        "获取失败",
+        "服务不可用",
+        "系统异常",
+        "系统错误",
+        "数据异常",
+        "访问异常",
+    ];
     let signal_regions = collect_clientarea_empty_signal_regions(document);
-    if signal_regions
-        .iter()
-        .any(|text| ambiguous_markers.iter().any(|marker| text.contains(marker)))
-    {
-        return ClientareaEmptyState::Ambiguous;
+    let mut saw_authoritative = false;
+    let mut saw_ambiguous = false;
+
+    for text in signal_regions {
+        let contains_authoritative = authoritative_markers
+            .iter()
+            .any(|marker| text.contains(marker));
+        let contains_ambiguous = ambiguous_markers.iter().any(|marker| text.contains(marker));
+
+        saw_authoritative |= contains_authoritative;
+        saw_ambiguous |= contains_ambiguous;
     }
 
-    if signal_regions.iter().any(|text| {
-        authoritative_markers
-            .iter()
-            .any(|marker| text.contains(marker))
-    }) {
-        return ClientareaEmptyState::Authoritative;
+    if saw_authoritative {
+        return if saw_ambiguous {
+            ClientareaEmptyState::Ambiguous
+        } else {
+            ClientareaEmptyState::Authoritative
+        };
+    }
+
+    if saw_ambiguous {
+        return ClientareaEmptyState::Ambiguous;
     }
 
     ClientareaEmptyState::Ambiguous
@@ -2358,11 +2380,16 @@ mod tests {
         let authoritative_with_footer = include_str!(
             "../tests/fixtures/lazycat/clientarea-authoritative-empty-with-footer-hint.html"
         );
+        let authoritative_with_support_notice = include_str!(
+            "../tests/fixtures/lazycat/clientarea-authoritative-empty-with-support-notice.html"
+        );
         let ambiguous = include_str!("../tests/fixtures/lazycat/clientarea-empty.html");
         let mixed = include_str!("../tests/fixtures/lazycat/clientarea-mixed-empty.html");
         let parsed_authoritative = parse_clientarea_page(authoritative).unwrap();
         let parsed_authoritative_with_footer =
             parse_clientarea_page(authoritative_with_footer).unwrap();
+        let parsed_authoritative_with_support_notice =
+            parse_clientarea_page(authoritative_with_support_notice).unwrap();
         let parsed_ambiguous = parse_clientarea_page(ambiguous).unwrap();
         let parsed_mixed = parse_clientarea_page(mixed).unwrap();
         assert!(parsed_authoritative.service_ids.is_empty());
@@ -2373,6 +2400,13 @@ mod tests {
         assert!(parsed_authoritative_with_footer.service_ids.is_empty());
         assert_eq!(
             parsed_authoritative_with_footer.empty_state,
+            Some(ClientareaEmptyState::Authoritative)
+        );
+        assert!(parsed_authoritative_with_support_notice
+            .service_ids
+            .is_empty());
+        assert_eq!(
+            parsed_authoritative_with_support_notice.empty_state,
             Some(ClientareaEmptyState::Authoritative)
         );
         assert!(parsed_ambiguous.service_ids.is_empty());

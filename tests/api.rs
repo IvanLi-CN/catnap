@@ -972,7 +972,7 @@ async fn lazycat_sync_clears_cached_data_when_service_discovery_is_authoritative
         "/clientarea",
         axum::routing::get(|| async {
             axum::response::Html(include_str!(
-                "fixtures/lazycat/clientarea-authoritative-empty.html"
+                "fixtures/lazycat/clientarea-authoritative-empty-with-support-notice.html"
             ))
         }),
     );
