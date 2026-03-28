@@ -1799,7 +1799,8 @@ fn bare_clientarea_page_link_is_pagination(
 ) -> bool {
     looks_like_pagination_label(link_text, page)
         || has_pagination_hint_in_ancestors(link, page)
-        || has_clientarea_page_link_cluster(link, base_url)
+        || (link_text_allows_pagination_peer_inference(link_text)
+            && has_explicit_clientarea_pagination_peer(link, base_url))
 }
 
 fn looks_like_pagination_label(link_text: &str, page: usize) -> bool {
@@ -1892,26 +1893,26 @@ fn element_has_pagination_hint(element: ElementRef<'_>, page: usize) -> bool {
     false
 }
 
-fn has_clientarea_page_link_cluster(link: ElementRef<'_>, base_url: &Url) -> bool {
+fn link_text_allows_pagination_peer_inference(link_text: &str) -> bool {
+    let normalized = link_text.trim();
+    !normalized.is_empty()
+        && normalized.chars().all(|ch| {
+            !ch.is_ascii_alphanumeric()
+                && !('\u{4E00}'..='\u{9FFF}').contains(&ch)
+                && !('\u{3400}'..='\u{4DBF}').contains(&ch)
+                && !('\u{F900}'..='\u{FAFF}').contains(&ch)
+        })
+}
+
+fn has_explicit_clientarea_pagination_peer(link: ElementRef<'_>, base_url: &Url) -> bool {
     link.ancestors()
         .filter_map(ElementRef::wrap)
         .skip(1)
         .take_while(|element| !matches!(element.value().name(), "html" | "body"))
         .any(|ancestor| {
-            ancestor
-                .descendent_elements()
-                .filter(|element| {
-                    let Some(href) = element.attr("href") else {
-                        return false;
-                    };
-                    let Ok(url) = base_url.join(href) else {
-                        return false;
-                    };
-                    url.path() == "/clientarea" && parse_clientarea_page_link(&url).is_some()
-                })
-                .take(2)
-                .count()
-                >= 2
+            ancestor.descendent_elements().any(|element| {
+                clientarea_page_link_has_explicit_pagination_signal(element, base_url)
+            })
         })
 }
 
@@ -1934,19 +1935,11 @@ fn classify_empty_clientarea_page(document: &Html) -> ClientareaEmptyState {
         "no active services",
         "you do not have any active services",
     ];
-    let ambiguous_markers = [
+    let hard_ambiguous_markers = [
         "页面渲染异常",
         "頁面渲染異常",
         "渲染异常",
         "渲染異常",
-        "页面加载异常",
-        "頁面載入異常",
-        "加载异常",
-        "載入異常",
-        "加载失败",
-        "載入失敗",
-        "获取失败",
-        "取得失敗",
         "服务不可用",
         "服務不可用",
         "系统异常",
@@ -1955,34 +1948,50 @@ fn classify_empty_clientarea_page(document: &Html) -> ClientareaEmptyState {
         "系統錯誤",
         "数据异常",
         "資料異常",
-        "访问异常",
-        "存取異常",
         "page render error",
         "failed to render page",
+        "service unavailable",
+        "system error",
+    ];
+    let soft_ambiguous_markers = [
+        "页面加载异常",
+        "頁面載入異常",
+        "加载异常",
+        "載入異常",
+        "加载失败",
+        "載入失敗",
+        "获取失败",
+        "取得失敗",
+        "访问异常",
+        "存取異常",
         "page failed to load",
         "failed to load",
         "failed to fetch",
-        "service unavailable",
-        "system error",
         "access error",
     ];
     let signal_regions = collect_clientarea_empty_signal_regions(document);
     let signal_has_authoritative = signal_regions
         .iter()
         .any(|text| text_contains_any_marker(text, &authoritative_markers));
-    let signal_has_ambiguous = signal_regions
+    let signal_has_hard_ambiguous = signal_regions
         .iter()
-        .any(|text| text_contains_any_marker(text, &ambiguous_markers));
+        .any(|text| text_contains_any_marker(text, &hard_ambiguous_markers));
+    let signal_has_soft_ambiguous = signal_regions
+        .iter()
+        .any(|text| text_contains_any_marker(text, &soft_ambiguous_markers));
 
     let fallback_regions = collect_clientarea_authoritative_fallback_regions(document);
     let fallback_has_authoritative = fallback_regions
         .iter()
         .any(|text| text_contains_any_marker(text, &authoritative_markers));
-    let fallback_has_ambiguous = fallback_regions
+    let fallback_has_hard_ambiguous = fallback_regions
         .iter()
-        .any(|text| text_contains_any_marker(text, &ambiguous_markers));
+        .any(|text| text_contains_any_marker(text, &hard_ambiguous_markers));
+    let fallback_has_soft_ambiguous = fallback_regions
+        .iter()
+        .any(|text| text_contains_any_marker(text, &soft_ambiguous_markers));
 
-    if signal_has_ambiguous || fallback_has_ambiguous {
+    if signal_has_hard_ambiguous || signal_has_soft_ambiguous || fallback_has_hard_ambiguous {
         return ClientareaEmptyState::Ambiguous;
     }
 
@@ -1990,7 +1999,31 @@ fn classify_empty_clientarea_page(document: &Html) -> ClientareaEmptyState {
         return ClientareaEmptyState::Authoritative;
     }
 
+    if fallback_has_soft_ambiguous {
+        return ClientareaEmptyState::Ambiguous;
+    }
+
     ClientareaEmptyState::Ambiguous
+}
+
+fn clientarea_page_link_has_explicit_pagination_signal(
+    element: ElementRef<'_>,
+    base_url: &Url,
+) -> bool {
+    let Some(href) = element.attr("href") else {
+        return false;
+    };
+    let Ok(url) = base_url.join(href) else {
+        return false;
+    };
+    let Some((action, page)) = parse_clientarea_page_link(&url) else {
+        return false;
+    };
+    if action.as_deref() == Some("list") {
+        return true;
+    }
+    let link_text = normalized_element_text(element);
+    looks_like_pagination_label(&link_text, page) || has_pagination_hint_in_ancestors(element, page)
 }
 
 fn text_contains_any_marker(text: &str, markers: &[&str]) -> bool {
@@ -2609,16 +2642,33 @@ mod tests {
     <a href="/clientarea?page=4" aria-label="next"><span aria-hidden="true">⇥</span></a>
   </body>
 </html>"#;
+        let non_pagination_sidebar = r#"<!DOCTYPE html>
+<html lang="zh-CN">
+  <body>
+    <table>
+      <tbody>
+        <tr><td><a href="/servicedetail?id=7001">HK One(srvH7K1P2R3)</a></td></tr>
+      </tbody>
+    </table>
+    <aside>
+      <a href="/clientarea?page=2">帮助中心</a>
+      <a href="/clientarea?action=list&page=1">1</a>
+    </aside>
+  </body>
+</html>"#;
 
         let parsed_labeled = parse_clientarea_page(labeled).unwrap();
         let parsed_clustered = parse_clientarea_page(clustered).unwrap();
         let parsed_aria_labeled = parse_clientarea_page(aria_labeled).unwrap();
+        let parsed_non_pagination_sidebar = parse_clientarea_page(non_pagination_sidebar).unwrap();
         assert_eq!(parsed_labeled.total_pages, 3);
         assert_eq!(parsed_clustered.total_pages, 4);
         assert_eq!(parsed_aria_labeled.total_pages, 4);
+        assert_eq!(parsed_non_pagination_sidebar.total_pages, 1);
         assert!(parsed_labeled.service_ids.contains(&2312));
         assert!(parsed_clustered.service_ids.contains(&5568));
         assert!(parsed_aria_labeled.service_ids.contains(&6123));
+        assert!(parsed_non_pagination_sidebar.service_ids.contains(&7001));
     }
 
     #[test]
@@ -2724,7 +2774,7 @@ mod tests {
         assert_eq!(parsed_mixed_plain_text.total_pages, 1);
         assert_eq!(
             parsed_mixed_signal_and_fallback.empty_state,
-            Some(ClientareaEmptyState::Ambiguous)
+            Some(ClientareaEmptyState::Authoritative)
         );
     }
 
