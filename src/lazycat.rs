@@ -1774,13 +1774,6 @@ fn merge_clientarea_empty_state(
 }
 
 fn classify_empty_clientarea_page(document: &Html) -> ClientareaEmptyState {
-    let text = document
-        .root_element()
-        .text()
-        .collect::<String>()
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
     let authoritative_markers = [
         "暂无可用资源",
         "暂无资源",
@@ -1790,18 +1783,51 @@ fn classify_empty_clientarea_page(document: &Html) -> ClientareaEmptyState {
         "当前没有任何服务",
     ];
     let ambiguous_markers = ["异常", "失败", "稍后重试", "不可用", "维护", "错误", "重试"];
-    if ambiguous_markers.iter().any(|marker| text.contains(marker)) {
+    let signal_regions = collect_clientarea_empty_signal_regions(document);
+    if signal_regions
+        .iter()
+        .any(|text| ambiguous_markers.iter().any(|marker| text.contains(marker)))
+    {
         return ClientareaEmptyState::Ambiguous;
     }
 
-    if authoritative_markers
-        .iter()
-        .any(|marker| text.contains(marker))
-    {
+    if signal_regions.iter().any(|text| {
+        authoritative_markers
+            .iter()
+            .any(|marker| text.contains(marker))
+    }) {
         return ClientareaEmptyState::Authoritative;
     }
 
     ClientareaEmptyState::Ambiguous
+}
+
+fn collect_clientarea_empty_signal_regions(document: &Html) -> Vec<String> {
+    let selectors = [
+        ".alert",
+        ".empty-state",
+        ".empty",
+        ".notice",
+        r#"[role="alert"]"#,
+    ];
+    let mut texts = Vec::new();
+    for raw_selector in selectors {
+        let Ok(selector) = Selector::parse(raw_selector) else {
+            continue;
+        };
+        for node in document.select(&selector) {
+            let text = node
+                .text()
+                .collect::<String>()
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
+            if !text.is_empty() {
+                texts.push(text);
+            }
+        }
+    }
+    texts
 }
 
 fn parse_host_detail(
@@ -2328,14 +2354,24 @@ mod tests {
     fn parses_clientarea_empty_states() {
         let authoritative =
             include_str!("../tests/fixtures/lazycat/clientarea-authoritative-empty.html");
+        let authoritative_with_footer = include_str!(
+            "../tests/fixtures/lazycat/clientarea-authoritative-empty-with-footer-hint.html"
+        );
         let ambiguous = include_str!("../tests/fixtures/lazycat/clientarea-empty.html");
         let mixed = include_str!("../tests/fixtures/lazycat/clientarea-mixed-empty.html");
         let parsed_authoritative = parse_clientarea_page(authoritative).unwrap();
+        let parsed_authoritative_with_footer =
+            parse_clientarea_page(authoritative_with_footer).unwrap();
         let parsed_ambiguous = parse_clientarea_page(ambiguous).unwrap();
         let parsed_mixed = parse_clientarea_page(mixed).unwrap();
         assert!(parsed_authoritative.service_ids.is_empty());
         assert_eq!(
             parsed_authoritative.empty_state,
+            Some(ClientareaEmptyState::Authoritative)
+        );
+        assert!(parsed_authoritative_with_footer.service_ids.is_empty());
+        assert_eq!(
+            parsed_authoritative_with_footer.empty_state,
             Some(ClientareaEmptyState::Authoritative)
         );
         assert!(parsed_ambiguous.service_ids.is_empty());
