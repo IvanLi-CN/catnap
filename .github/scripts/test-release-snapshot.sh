@@ -204,6 +204,8 @@ with tempfile.TemporaryDirectory(prefix="release-snapshot-") as tmp:
                 argparse.Namespace(
                     target_sha=sha1,
                     notes_ref=module.DEFAULT_NOTES_REF,
+                    release_tag_sha="",
+                    published_mode="",
                 )
             )
             assert exit_code == 0
@@ -213,6 +215,8 @@ with tempfile.TemporaryDirectory(prefix="release-snapshot-") as tmp:
         stored_snapshot1 = module.read_snapshot(module.DEFAULT_NOTES_REF, sha1)
         assert stored_snapshot1 is not None
         assert stored_snapshot1["published_at"] != ""
+        assert stored_snapshot1["published_release_tag_sha"] == sha1
+        assert stored_snapshot1["published_release_mode"] == "direct"
         assert module.snapshot_is_published(stored_snapshot1) is True
         pending = module.pending_release_targets(module.DEFAULT_NOTES_REF, sha3)
         assert pending == [sha2, sha3], (pending, sha2, sha3)
@@ -433,6 +437,80 @@ with tempfile.TemporaryDirectory(prefix="release-snapshot-blocked-") as tmp:
         module.load_pr_for_commit = original_loader
         module.fetch_notes_ref = original_fetch_notes_ref
         module.fetch_tags = original_fetch_tags
+        os.chdir(original_cwd)
+
+with tempfile.TemporaryDirectory(prefix="release-snapshot-reissued-") as tmp:
+    repo = Path(tmp)
+    run("init", cwd=repo)
+    run("config", "user.name", "Test User", cwd=repo)
+    run("config", "user.email", "test@example.com", cwd=repo)
+    run("checkout", "-b", "main", cwd=repo)
+    (repo / "Cargo.toml").write_text('[package]\nname = "demo"\nversion = "0.1.0"\n')
+    (repo / "README.md").write_text("base\n")
+    run("add", "Cargo.toml", "README.md", cwd=repo)
+    run("commit", "-m", "base", cwd=repo)
+    run("tag", "v0.1.0", cwd=repo)
+
+    (repo / "README.md").write_text("target\n")
+    run("add", "README.md", cwd=repo)
+    run("commit", "-m", "target", cwd=repo)
+    target_sha = run("rev-parse", "HEAD", cwd=repo)
+
+    (repo / "README.md").write_text("carrier\n")
+    run("add", "README.md", cwd=repo)
+    run("commit", "-m", "carrier", cwd=repo)
+    carrier_sha = run("rev-parse", "HEAD", cwd=repo)
+
+    prs = {
+        target_sha: make_pr(401, "Target release", target_sha, ["type:patch", "channel:stable"]),
+        carrier_sha: make_pr(402, "Carrier release", carrier_sha, ["type:docs", "channel:stable"]),
+    }
+
+    original_cwd = Path.cwd()
+    original_loader = module.load_pr_for_commit
+    original_git = module.git
+    try:
+        os.chdir(repo)
+        module.load_pr_for_commit = lambda api_root, repository, token, target_sha, **kwargs: prs[target_sha]
+
+        snapshot = module.build_snapshot(
+            target_sha=target_sha,
+            repository="IvanLi-CN/catnap",
+            token="token",
+            notes_ref=module.DEFAULT_NOTES_REF,
+            registry="ghcr.io",
+            api_root="https://api.github.com",
+            snapshot_source="manual-backfill",
+        )
+        run("notes", f"--ref={module.DEFAULT_NOTES_REF}", "add", "-f", "-m", json.dumps(snapshot), target_sha, cwd=repo)
+        run("tag", snapshot["release_tag"], carrier_sha, cwd=repo)
+
+        def fake_git(*args: str, **kwargs: object):
+            if args == ("push", "origin", module.DEFAULT_NOTES_REF):
+                return subprocess.CompletedProcess(["git", *args], 0, "", "")
+            return original_git(*args, **kwargs)
+
+        module.git = fake_git
+        exit_code = module.mark_snapshot_published(
+            argparse.Namespace(
+                target_sha=target_sha,
+                notes_ref=module.DEFAULT_NOTES_REF,
+                release_tag_sha=carrier_sha,
+                published_mode="reissued",
+            )
+        )
+        assert exit_code == 0
+
+        stored = module.read_snapshot(module.DEFAULT_NOTES_REF, target_sha)
+        assert stored is not None
+        assert stored["published_release_tag_sha"] == carrier_sha
+        assert stored["published_release_mode"] == "reissued"
+        assert module.release_tag_points_to_target(stored) is False
+        assert module.release_tag_points_to_snapshot(stored) is True
+        assert module.snapshot_is_published(stored) is True
+    finally:
+        module.load_pr_for_commit = original_loader
+        module.git = original_git
         os.chdir(original_cwd)
 
 with tempfile.TemporaryDirectory(prefix="release-snapshot-target-only-") as tmp:
