@@ -164,6 +164,7 @@ struct ClientareaPage {
     service_ids: Vec<i64>,
     total_pages: usize,
     empty_state: Option<ClientareaEmptyState>,
+    has_unresolved_page_links: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -515,6 +516,15 @@ impl LazycatService {
                 )
                 .await?;
             let parsed = parse_clientarea_page(&html)?;
+            if parsed.has_unresolved_page_links {
+                warn!(
+                    email = %email,
+                    base_url = %self.base_url,
+                    page,
+                    "lazycat unresolved service discovery pagination rejected"
+                );
+                return Err(anyhow!("懒猫云机器发现结果不完整，已拒绝覆盖现有缓存"));
+            }
             total_pages = total_pages.max(parsed.total_pages.max(page));
             match parsed.empty_state {
                 Some(ClientareaEmptyState::Ambiguous) => {
@@ -1731,6 +1741,7 @@ fn parse_clientarea_page(html: &str) -> anyhow::Result<ClientareaPage> {
     let mut service_ids = Vec::new();
     let mut seen = HashSet::new();
     let mut total_pages = 1_usize;
+    let mut has_unresolved_page_links = false;
 
     for link in document.select(&link_selector) {
         let link_text = normalized_element_text(link);
@@ -1760,6 +1771,11 @@ fn parse_clientarea_page(html: &str) -> anyhow::Result<ClientareaPage> {
                     && bare_clientarea_page_link_is_pagination(link, &base_url, page, &link_text));
             if looks_like_pagination {
                 total_pages = total_pages.max(page);
+            } else if action.is_none()
+                && page > 1
+                && !bare_clientarea_page_link_is_non_pagination_content(&link_text, page)
+            {
+                has_unresolved_page_links = true;
             }
         }
     }
@@ -1774,6 +1790,7 @@ fn parse_clientarea_page(html: &str) -> anyhow::Result<ClientareaPage> {
         service_ids,
         total_pages,
         empty_state,
+        has_unresolved_page_links,
     })
 }
 
@@ -1801,6 +1818,18 @@ fn bare_clientarea_page_link_is_pagination(
         || has_pagination_hint_in_ancestors(link, page)
         || (link_allows_pagination_peer_inference(link, link_text)
             && has_explicit_clientarea_pagination_peer(link, base_url))
+}
+
+fn bare_clientarea_page_link_is_non_pagination_content(link_text: &str, page: usize) -> bool {
+    let normalized = link_text.trim();
+    !normalized.is_empty()
+        && !looks_like_pagination_label(normalized, page)
+        && normalized.chars().any(|ch| {
+            ch.is_ascii_alphanumeric()
+                || ('\u{4E00}'..='\u{9FFF}').contains(&ch)
+                || ('\u{3400}'..='\u{4DBF}').contains(&ch)
+                || ('\u{F900}'..='\u{FAFF}').contains(&ch)
+        })
 }
 
 fn looks_like_pagination_label(link_text: &str, page: usize) -> bool {
@@ -2049,21 +2078,70 @@ fn text_contains_any_marker(text: &str, markers: &[&str]) -> bool {
 
 fn text_contains_unconditional_soft_error(text: &str, markers: &[&str]) -> bool {
     let normalized = text.to_lowercase();
-    let conditional_phrases = [
-        "如页面加载失败",
-        "如果页面加载失败",
-        "若页面加载失败",
-        "如頁面載入失敗",
-        "如果頁面載入失敗",
-        "若頁面載入失敗",
-        "if page failed to load",
-        "if the page failed to load",
-        "if failed to load",
-    ];
-    markers.iter().any(|marker| normalized.contains(marker))
-        && !conditional_phrases
-            .iter()
-            .any(|phrase| normalized.contains(phrase))
+    markers.iter().any(|marker| {
+        normalized
+            .match_indices(marker)
+            .any(|(index, _)| !marker_is_in_conditional_clause(&normalized, index))
+    })
+}
+
+fn marker_is_in_conditional_clause(text: &str, marker_index: usize) -> bool {
+    let prefix = &text[..marker_index];
+    let clause = prefix
+        .rsplit([
+            '。', '！', '？', '.', '!', '?', '，', ',', '；', ';', '：', ':', '\n',
+        ])
+        .next()
+        .unwrap_or(prefix)
+        .trim();
+    let clause = clause.trim_start_matches(|ch: char| {
+        matches!(
+            ch,
+            ' ' | '\t' | '(' | ')' | '（' | '）' | '[' | ']' | '【' | '】' | '-' | '—'
+        )
+    });
+    clause.starts_with("如果")
+        || clause.starts_with("若")
+        || clause.starts_with("如")
+        || clause.starts_with("if ")
+        || clause.starts_with("if the ")
+        || clause == "if"
+        || recent_conditional_intro(clause)
+}
+
+fn recent_conditional_intro(clause: &str) -> bool {
+    let recent = last_n_chars(clause, 12);
+    [
+        ("如果", true),
+        ("若", true),
+        ("如", true),
+        ("if the ", false),
+        ("if ", false),
+    ]
+    .iter()
+    .any(|(intro, chinese)| {
+        recent.rfind(intro).is_some_and(|idx| {
+            let after = recent[idx + intro.len()..].trim();
+            if after.chars().count() > 4 {
+                return false;
+            }
+            if !chinese || idx == 0 {
+                return true;
+            }
+            recent[..idx]
+                .chars()
+                .last()
+                .is_some_and(|ch| ch.is_whitespace() || matches!(ch, '（' | '(' | '[' | '【'))
+        })
+    })
+}
+
+fn last_n_chars(text: &str, limit: usize) -> String {
+    let chars = text.chars().count();
+    if chars <= limit {
+        return text.to_string();
+    }
+    text.chars().skip(chars - limit).collect()
 }
 
 fn collect_clientarea_empty_signal_regions(document: &Html) -> Vec<String> {
@@ -2714,11 +2792,32 @@ mod tests {
         assert_eq!(parsed_aria_labeled.total_pages, 4);
         assert_eq!(parsed_body_siblings.total_pages, 4);
         assert_eq!(parsed_non_pagination_sidebar.total_pages, 1);
+        assert!(!parsed_labeled.has_unresolved_page_links);
+        assert!(!parsed_clustered.has_unresolved_page_links);
+        assert!(!parsed_aria_labeled.has_unresolved_page_links);
+        assert!(!parsed_body_siblings.has_unresolved_page_links);
+        assert!(!parsed_non_pagination_sidebar.has_unresolved_page_links);
         assert!(parsed_labeled.service_ids.contains(&2312));
         assert!(parsed_clustered.service_ids.contains(&5568));
         assert!(parsed_aria_labeled.service_ids.contains(&6123));
         assert!(parsed_body_siblings.service_ids.contains(&6455));
         assert!(parsed_non_pagination_sidebar.service_ids.contains(&7001));
+
+        let unresolved = r#"<!DOCTYPE html>
+<html lang="zh-CN">
+  <body>
+    <table>
+      <tbody>
+        <tr><td><a href="/servicedetail?id=8008">Sydney Edge(srvS8D7Y6N5)</a></td></tr>
+      </tbody>
+    </table>
+    <a href="/clientarea?action=list&page=1">1</a>
+    <a href="/clientarea?page=2" data-page="2"></a>
+  </body>
+</html>"#;
+        let parsed_unresolved = parse_clientarea_page(unresolved).unwrap();
+        assert_eq!(parsed_unresolved.total_pages, 1);
+        assert!(parsed_unresolved.has_unresolved_page_links);
     }
 
     #[test]
@@ -2772,9 +2871,20 @@ mod tests {
         let parsed_mixed_plain_text = parse_clientarea_page(mixed_plain_text).unwrap();
         let parsed_mixed_signal_and_fallback =
             parse_clientarea_page(mixed_signal_and_fallback).unwrap();
+        let authoritative_conditional_support = r#"<!DOCTYPE html>
+<html lang="zh-CN">
+  <body>
+    <div class="alert alert-info">暂无可用资源</div>
+    <p>如果访问异常请联系客服。</p>
+    <p>如果加载异常请稍后重试。</p>
+    <a href="/clientarea?action=list&page=1">1</a>
+  </body>
+</html>"#;
         let parsed_authoritative_traditional =
             parse_clientarea_page(authoritative_traditional).unwrap();
         let parsed_authoritative_english = parse_clientarea_page(authoritative_english).unwrap();
+        let parsed_authoritative_conditional_support =
+            parse_clientarea_page(authoritative_conditional_support).unwrap();
         assert!(parsed_authoritative.service_ids.is_empty());
         assert_eq!(
             parsed_authoritative.empty_state,
@@ -2825,6 +2935,10 @@ mod tests {
         assert_eq!(
             parsed_mixed_signal_and_fallback.empty_state,
             Some(ClientareaEmptyState::Ambiguous)
+        );
+        assert_eq!(
+            parsed_authoritative_conditional_support.empty_state,
+            Some(ClientareaEmptyState::Authoritative)
         );
     }
 
