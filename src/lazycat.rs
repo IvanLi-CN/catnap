@@ -1952,13 +1952,25 @@ fn has_explicit_clientarea_pagination_peer(link: ElementRef<'_>, base_url: &Url)
     if non_body_peer {
         return true;
     }
-    let Some(parent) = link.parent().and_then(ElementRef::wrap) else {
+    let Some(body) = link
+        .ancestors()
+        .filter_map(ElementRef::wrap)
+        .find(|element| element.value().name() == "body")
+    else {
         return false;
     };
-    parent.value().name() == "body"
-        && parent
-            .child_elements()
-            .any(|element| clientarea_page_link_has_explicit_pagination_signal(element, base_url))
+    body.child_elements()
+        .any(|element| element_or_descendants_have_explicit_pagination_signal(element, base_url))
+}
+
+fn element_or_descendants_have_explicit_pagination_signal(
+    element: ElementRef<'_>,
+    base_url: &Url,
+) -> bool {
+    clientarea_page_link_has_explicit_pagination_signal(element, base_url)
+        || element.descendent_elements().any(|descendant| {
+            clientarea_page_link_has_explicit_pagination_signal(descendant, base_url)
+        })
 }
 
 fn classify_empty_clientarea_page(document: &Html) -> ClientareaEmptyState {
@@ -2020,10 +2032,10 @@ fn classify_empty_clientarea_page(document: &Html) -> ClientareaEmptyState {
         .any(|text| text_contains_any_marker(text, &authoritative_markers));
     let signal_has_hard_ambiguous = signal_regions
         .iter()
-        .any(|text| text_contains_any_marker(text, &hard_ambiguous_markers));
+        .any(|text| text_contains_unconditional_error_marker(text, &hard_ambiguous_markers));
     let signal_has_soft_ambiguous = signal_regions
         .iter()
-        .any(|text| text_contains_unconditional_soft_error(text, &soft_ambiguous_markers));
+        .any(|text| text_contains_unconditional_error_marker(text, &soft_ambiguous_markers));
 
     let fallback_regions = collect_clientarea_authoritative_fallback_regions(document);
     let fallback_has_authoritative = fallback_regions
@@ -2031,10 +2043,10 @@ fn classify_empty_clientarea_page(document: &Html) -> ClientareaEmptyState {
         .any(|text| text_contains_any_marker(text, &authoritative_markers));
     let fallback_has_hard_ambiguous = fallback_regions
         .iter()
-        .any(|text| text_contains_any_marker(text, &hard_ambiguous_markers));
+        .any(|text| text_contains_unconditional_error_marker(text, &hard_ambiguous_markers));
     let fallback_has_soft_ambiguous = fallback_regions
         .iter()
-        .any(|text| text_contains_unconditional_soft_error(text, &soft_ambiguous_markers));
+        .any(|text| text_contains_unconditional_error_marker(text, &soft_ambiguous_markers));
 
     if signal_has_hard_ambiguous || signal_has_soft_ambiguous || fallback_has_hard_ambiguous {
         return ClientareaEmptyState::Ambiguous;
@@ -2076,7 +2088,7 @@ fn text_contains_any_marker(text: &str, markers: &[&str]) -> bool {
     markers.iter().any(|marker| normalized.contains(marker))
 }
 
-fn text_contains_unconditional_soft_error(text: &str, markers: &[&str]) -> bool {
+fn text_contains_unconditional_error_marker(text: &str, markers: &[&str]) -> bool {
     let normalized = text.to_lowercase();
     markers.iter().any(|marker| {
         normalized
@@ -2767,6 +2779,22 @@ mod tests {
     <a href="/clientarea?page=4"><span aria-hidden="true">⇥</span></a>
   </body>
 </html>"#;
+        let wrapped_body_siblings = r#"<!DOCTYPE html>
+<html lang="zh-CN">
+  <body>
+    <table>
+      <tbody>
+        <tr><td><a href="/servicedetail?id=6888">Osaka Micro(srvO6S8A3K4)</a></td></tr>
+      </tbody>
+    </table>
+    <div class="pager-primary">
+      <a href="/clientarea?action=list&page=1">1</a>
+    </div>
+    <div class="pager-secondary">
+      <span><a href="/clientarea?page=4"><span aria-hidden="true">⇥</span></a></span>
+    </div>
+  </body>
+</html>"#;
         let non_pagination_sidebar = r#"<!DOCTYPE html>
 <html lang="zh-CN">
   <body>
@@ -2786,21 +2814,25 @@ mod tests {
         let parsed_clustered = parse_clientarea_page(clustered).unwrap();
         let parsed_aria_labeled = parse_clientarea_page(aria_labeled).unwrap();
         let parsed_body_siblings = parse_clientarea_page(body_siblings).unwrap();
+        let parsed_wrapped_body_siblings = parse_clientarea_page(wrapped_body_siblings).unwrap();
         let parsed_non_pagination_sidebar = parse_clientarea_page(non_pagination_sidebar).unwrap();
         assert_eq!(parsed_labeled.total_pages, 3);
         assert_eq!(parsed_clustered.total_pages, 4);
         assert_eq!(parsed_aria_labeled.total_pages, 4);
         assert_eq!(parsed_body_siblings.total_pages, 4);
+        assert_eq!(parsed_wrapped_body_siblings.total_pages, 4);
         assert_eq!(parsed_non_pagination_sidebar.total_pages, 1);
         assert!(!parsed_labeled.has_unresolved_page_links);
         assert!(!parsed_clustered.has_unresolved_page_links);
         assert!(!parsed_aria_labeled.has_unresolved_page_links);
         assert!(!parsed_body_siblings.has_unresolved_page_links);
+        assert!(!parsed_wrapped_body_siblings.has_unresolved_page_links);
         assert!(!parsed_non_pagination_sidebar.has_unresolved_page_links);
         assert!(parsed_labeled.service_ids.contains(&2312));
         assert!(parsed_clustered.service_ids.contains(&5568));
         assert!(parsed_aria_labeled.service_ids.contains(&6123));
         assert!(parsed_body_siblings.service_ids.contains(&6455));
+        assert!(parsed_wrapped_body_siblings.service_ids.contains(&6888));
         assert!(parsed_non_pagination_sidebar.service_ids.contains(&7001));
 
         let unresolved = r#"<!DOCTYPE html>
@@ -2880,11 +2912,22 @@ mod tests {
     <a href="/clientarea?action=list&page=1">1</a>
   </body>
 </html>"#;
+        let authoritative_conditional_hard_support = r#"<!DOCTYPE html>
+<html lang="zh-CN">
+  <body>
+    <div class="alert alert-info">暂无可用资源</div>
+    <p>如果系统错误请稍后重试。</p>
+    <p>如果页面渲染异常请联系客服。</p>
+    <a href="/clientarea?action=list&page=1">1</a>
+  </body>
+</html>"#;
         let parsed_authoritative_traditional =
             parse_clientarea_page(authoritative_traditional).unwrap();
         let parsed_authoritative_english = parse_clientarea_page(authoritative_english).unwrap();
         let parsed_authoritative_conditional_support =
             parse_clientarea_page(authoritative_conditional_support).unwrap();
+        let parsed_authoritative_conditional_hard_support =
+            parse_clientarea_page(authoritative_conditional_hard_support).unwrap();
         assert!(parsed_authoritative.service_ids.is_empty());
         assert_eq!(
             parsed_authoritative.empty_state,
@@ -2938,6 +2981,10 @@ mod tests {
         );
         assert_eq!(
             parsed_authoritative_conditional_support.empty_state,
+            Some(ClientareaEmptyState::Authoritative)
+        );
+        assert_eq!(
+            parsed_authoritative_conditional_hard_support.empty_state,
             Some(ClientareaEmptyState::Authoritative)
         );
     }
@@ -3087,6 +3134,107 @@ mod tests {
         let machines = service.sync_site(&mut account).await.unwrap();
 
         assert!(machines.is_empty());
+        assert!(account.last_site_sync_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn sync_site_accepts_wrapped_body_sibling_bare_pagination() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let page1 = r#"<!DOCTYPE html>
+<html lang="zh-CN">
+  <body>
+    <table>
+      <tbody>
+        <tr><td><a href="/servicedetail?id=2312">港湾 Transit Mini(srvQ8L2M5R1P9K)</a></td></tr>
+      </tbody>
+    </table>
+    <div class="pager-primary">
+      <a href="/clientarea?action=list&page=1">1</a>
+    </div>
+    <div class="pager-secondary">
+      <span><a href="/clientarea?page=2"><span aria-hidden="true">⇥</span></a></span>
+    </div>
+  </body>
+</html>"#;
+        let page2 = r#"<!DOCTYPE html>
+<html lang="zh-CN">
+  <body>
+    <table>
+      <tbody>
+        <tr><td><a href="/servicedetail?id=5845">Westline Mini(srvW7H3L9C2M5Q)</a></td></tr>
+      </tbody>
+    </table>
+    <a href="/clientarea?action=list&page=1">1</a>
+    <a href="/clientarea?page=2">2</a>
+  </body>
+</html>"#;
+        let host_detail = include_str!("../tests/fixtures/lazycat/host-detail-2312.json");
+        let renew_html = include_str!("../tests/fixtures/lazycat/renew-2312.html");
+        let stub = Router::new()
+            .route(
+                "/clientarea",
+                get(
+                    move |axum::extract::Query(params): axum::extract::Query<
+                        std::collections::HashMap<String, String>,
+                    >| async move {
+                        let html = match params.get("page").map(String::as_str) {
+                            Some("2") => page2,
+                            _ => page1,
+                        };
+                        Html(html)
+                    },
+                ),
+            )
+            .route(
+                "/host/dedicatedserver",
+                get(move || async move { host_detail }),
+            )
+            .route(
+                "/servicedetail",
+                get(move || async move { Html(renew_html) }),
+            );
+        tokio::spawn(async move {
+            axum::serve(listener, stub).await.unwrap();
+        });
+
+        let service = LazycatService {
+            base_url: Url::parse(&format!("http://{addr}")).unwrap(),
+            site_client: reqwest::Client::builder()
+                .user_agent("catnap-test/0.1")
+                .redirect(reqwest::redirect::Policy::none())
+                .timeout(std::time::Duration::from_millis(SITE_REQUEST_TIMEOUT_MS))
+                .build()
+                .unwrap(),
+            panel_timeout_ms: 5_000,
+            allow_invalid_tls: true,
+        };
+        let mut account = LazycatAccountRow {
+            user_id: "u_1".to_string(),
+            email: "owner@example.com".to_string(),
+            password: "secret".to_string(),
+            cookies_json: Some(
+                serde_json::to_string(&vec![("PHPSESSID".to_string(), "sess-1".to_string())])
+                    .unwrap(),
+            ),
+            state: "ready".to_string(),
+            last_error: None,
+            last_authenticated_at: Some("2026-03-28T00:00:00Z".to_string()),
+            last_site_sync_at: Some("2026-03-28T00:10:00Z".to_string()),
+            last_panel_sync_at: Some("2026-03-28T00:20:00Z".to_string()),
+            created_at: "2026-03-28T00:00:00Z".to_string(),
+            updated_at: "2026-03-28T00:20:00Z".to_string(),
+        };
+
+        let machines = service.sync_site(&mut account).await.unwrap();
+        let service_ids = machines
+            .iter()
+            .map(|machine| machine.service_id)
+            .collect::<HashSet<_>>();
+
+        assert_eq!(machines.len(), 2);
+        assert!(service_ids.contains(&2312));
+        assert!(service_ids.contains(&5845));
         assert!(account.last_site_sync_at.is_some());
     }
 
