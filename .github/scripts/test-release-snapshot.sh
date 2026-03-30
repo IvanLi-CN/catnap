@@ -337,6 +337,104 @@ with tempfile.TemporaryDirectory(prefix="release-snapshot-fallback-") as tmp:
         module.github_request_json = original_request
         os.chdir(original_cwd)
 
+with tempfile.TemporaryDirectory(prefix="release-snapshot-blocked-") as tmp:
+    repo = Path(tmp)
+    run("init", cwd=repo)
+    run("config", "user.name", "Test User", cwd=repo)
+    run("config", "user.email", "test@example.com", cwd=repo)
+    run("checkout", "-b", "main", cwd=repo)
+    (repo / ".github" / "workflows").mkdir(parents=True)
+    (repo / "Cargo.toml").write_text('[package]\nname = "demo"\nversion = "0.1.0"\n')
+    (repo / "README.md").write_text("base\n")
+    run("add", "Cargo.toml", "README.md", ".github", cwd=repo)
+    run("commit", "-m", "base", cwd=repo)
+    run("tag", "v0.1.0", cwd=repo)
+
+    (repo / ".github" / "workflows" / "release.yml").write_text("name: release-one\n")
+    run("add", ".github/workflows/release.yml", cwd=repo)
+    run("commit", "-m", "workflow one", cwd=repo)
+    blocked_sha1 = run("rev-parse", "HEAD", cwd=repo)
+
+    (repo / ".github" / "workflows" / "review.yml").write_text("name: release-two\n")
+    run("add", ".github/workflows/review.yml", cwd=repo)
+    run("commit", "-m", "workflow two", cwd=repo)
+    blocked_sha2 = run("rev-parse", "HEAD", cwd=repo)
+
+    (repo / "README.md").write_text("publishable\n")
+    run("add", "README.md", cwd=repo)
+    run("commit", "-m", "publishable", cwd=repo)
+    allowed_sha = run("rev-parse", "HEAD", cwd=repo)
+
+    prs = {
+        blocked_sha1: make_pr(301, "Workflow one", blocked_sha1, ["type:patch", "channel:stable"]),
+        blocked_sha2: make_pr(302, "Workflow two", blocked_sha2, ["type:patch", "channel:stable"]),
+        allowed_sha: make_pr(303, "Publishable", allowed_sha, ["type:patch", "channel:stable"]),
+    }
+
+    original_cwd = Path.cwd()
+    original_loader = module.load_pr_for_commit
+    original_fetch_notes_ref = module.fetch_notes_ref
+    original_fetch_tags = module.fetch_tags
+    try:
+        os.chdir(repo)
+        module.load_pr_for_commit = lambda api_root, repository, token, target_sha, **kwargs: prs[target_sha]
+        module.fetch_notes_ref = lambda notes_ref: None
+        module.fetch_tags = lambda: None
+
+        for sha in (blocked_sha1, blocked_sha2, allowed_sha):
+            snapshot = module.build_snapshot(
+                target_sha=sha,
+                repository="IvanLi-CN/catnap",
+                token="token",
+                notes_ref=module.DEFAULT_NOTES_REF,
+                registry="ghcr.io",
+                api_root="https://api.github.com",
+                snapshot_source="ci-main",
+            )
+            run("notes", f"--ref={module.DEFAULT_NOTES_REF}", "add", "-f", "-m", json.dumps(snapshot), sha, cwd=repo)
+
+        selection = module.select_pending_release_target(
+            module.DEFAULT_NOTES_REF,
+            allowed_sha,
+            allow_workflow_changing_targets=False,
+        )
+        assert selection.target_sha == allowed_sha
+        assert selection.blocked_targets == [blocked_sha1, blocked_sha2]
+
+        credentialed_selection = module.select_pending_release_target(
+            module.DEFAULT_NOTES_REF,
+            allowed_sha,
+            allow_workflow_changing_targets=True,
+        )
+        assert credentialed_selection.target_sha == blocked_sha1
+        assert credentialed_selection.blocked_targets == []
+
+        output_path = repo / "next-pending.out"
+        exit_code = module.export_next_pending(
+            argparse.Namespace(
+                notes_ref=module.DEFAULT_NOTES_REF,
+                main_ref="HEAD",
+                upper_bound=allowed_sha,
+                allow_workflow_changing_targets=False,
+                github_output=str(output_path),
+            )
+        )
+        assert exit_code == 0
+        outputs = {}
+        for line in output_path.read_text().splitlines():
+            if not line:
+                continue
+            key, value = line.split("=", 1)
+            outputs[key] = value
+        assert outputs["target_sha"] == allowed_sha
+        assert outputs["blocked_count"] == "2"
+        assert outputs["blocked_targets_csv"] == f"{blocked_sha1},{blocked_sha2}"
+    finally:
+        module.load_pr_for_commit = original_loader
+        module.fetch_notes_ref = original_fetch_notes_ref
+        module.fetch_tags = original_fetch_tags
+        os.chdir(original_cwd)
+
 with tempfile.TemporaryDirectory(prefix="release-snapshot-target-only-") as tmp:
     repo = Path(tmp)
     run("init", cwd=repo)

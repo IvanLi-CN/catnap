@@ -37,6 +37,8 @@ jobs:
       contents: read
     outputs:
       target_sha: ${{ steps.pending-target.outputs.target_sha }}
+      blocked_count: ${{ steps.pending-target.outputs.blocked_count }}
+      blocked_targets_csv: ${{ steps.pending-target.outputs.blocked_targets_csv }}
       release_enabled: ${{ steps.snapshot.outputs.release_enabled }}
       release_bump: ${{ steps.snapshot.outputs.release_bump }}
       release_channel: ${{ steps.snapshot.outputs.release_channel }}
@@ -148,26 +150,83 @@ jobs:
             --target-only \
             --output "$RUNNER_TEMP/release-snapshot.json"
 
+      - name: Resolve queue release auth mode
+        id: queue-release-auth
+        shell: bash
+        env:
+          RELEASE_WORKFLOW_TOKEN: ${{ secrets.RELEASE_WORKFLOW_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${RELEASE_WORKFLOW_TOKEN}" ]]; then
+            echo "auth_mode=release_workflow_token" >> "${GITHUB_OUTPUT}"
+            echo "Workflow-capable release token is available for queue selection."
+            exit 0
+          fi
+
+          echo "auth_mode=github_token" >> "${GITHUB_OUTPUT}"
+          echo "Queue selection will skip workflow-changing pending snapshots."
+
       - name: Select pending release target
         id: pending-target
         shell: bash
         env:
           REQUESTED_SHA: ${{ steps.requested-target.outputs.target_sha }}
+          RELEASE_AUTH_MODE: ${{ steps.queue-release-auth.outputs.auth_mode }}
         run: |
           set -euo pipefail
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "target_sha=${REQUESTED_SHA}" >> "${GITHUB_OUTPUT}"
+            echo "blocked_count=0" >> "${GITHUB_OUTPUT}"
+            echo "blocked_targets_csv=" >> "${GITHUB_OUTPUT}"
             exit 0
           fi
 
           git fetch --no-tags origin main
           git fetch --tags origin
           git fetch --no-tags origin "+${RELEASE_SNAPSHOT_NOTES_REF}:${RELEASE_SNAPSHOT_NOTES_REF}" || true
-          python3 .github/scripts/release_snapshot.py next-pending \
-            --notes-ref "${RELEASE_SNAPSHOT_NOTES_REF}" \
-            --main-ref "origin/main" \
-            --upper-bound "${REQUESTED_SHA}" \
+          next_pending_args=(
+            --notes-ref "${RELEASE_SNAPSHOT_NOTES_REF}"
+            --main-ref "origin/main"
+            --upper-bound "${REQUESTED_SHA}"
             --github-output "$GITHUB_OUTPUT"
+          )
+          if [[ "${RELEASE_AUTH_MODE}" == "release_workflow_token" ]]; then
+            next_pending_args+=(--allow-workflow-changing-targets)
+          fi
+          python3 .github/scripts/release_snapshot.py next-pending \
+            "${next_pending_args[@]}"
+
+      - name: Summarize pending release selection
+        if: github.event_name != 'workflow_dispatch'
+        shell: bash
+        env:
+          REQUESTED_SHA: ${{ steps.requested-target.outputs.target_sha }}
+          TARGET_SHA: ${{ steps.pending-target.outputs.target_sha }}
+          BLOCKED_COUNT: ${{ steps.pending-target.outputs.blocked_count }}
+          BLOCKED_TARGETS_CSV: ${{ steps.pending-target.outputs.blocked_targets_csv }}
+        run: |
+          set -euo pipefail
+          if [[ "${BLOCKED_COUNT}" != "0" ]]; then
+            echo "Skipped blocked pending snapshots without RELEASE_WORKFLOW_TOKEN: ${BLOCKED_TARGETS_CSV}"
+          fi
+
+          if [[ -n "${TARGET_SHA}" ]]; then
+            echo "Selected pending release target ${TARGET_SHA}"
+          elif [[ "${BLOCKED_COUNT}" != "0" ]]; then
+            echo "No auto-publishable pending snapshot remains; blocked backlog requires RELEASE_WORKFLOW_TOKEN."
+          else
+            echo "Release queue is empty up to ${REQUESTED_SHA}"
+          fi
+
+          {
+            echo "### Release queue selection"
+            echo "- requested upper bound: ${REQUESTED_SHA}"
+            echo "- selected target: ${TARGET_SHA:-"(none)"}"
+            echo "- blocked pending snapshots: ${BLOCKED_COUNT}"
+            if [[ "${BLOCKED_COUNT}" != "0" ]]; then
+              echo "- blocked targets: ${BLOCKED_TARGETS_CSV}"
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Load immutable release snapshot
         if: steps.pending-target.outputs.target_sha != ''
@@ -630,27 +689,43 @@ jobs:
         if: github.event_name != 'workflow_dispatch'
         id: next-pending
         shell: bash
+        env:
+          RELEASE_AUTH_MODE: ${{ steps.release-auth.outputs.auth_mode }}
         run: |
           set -euo pipefail
           git fetch --no-tags origin main
           git fetch --tags origin
           git fetch --no-tags origin "+${RELEASE_SNAPSHOT_NOTES_REF}:${RELEASE_SNAPSHOT_NOTES_REF}" || true
-          python3 "${RELEASE_TOOLING_ROOT}/.github/scripts/release_snapshot.py" next-pending \
-            --notes-ref "${RELEASE_SNAPSHOT_NOTES_REF}" \
-            --main-ref "origin/main" \
-            --upper-bound "$(git rev-parse origin/main)" \
+          next_pending_args=(
+            --notes-ref "${RELEASE_SNAPSHOT_NOTES_REF}"
+            --main-ref "origin/main"
+            --upper-bound "$(git rev-parse origin/main)"
             --github-output "$GITHUB_OUTPUT"
+          )
+          if [[ "${RELEASE_AUTH_MODE}" == "release_workflow_token" ]]; then
+            next_pending_args+=(--allow-workflow-changing-targets)
+          fi
+          python3 "${RELEASE_TOOLING_ROOT}/.github/scripts/release_snapshot.py" next-pending \
+            "${next_pending_args[@]}"
 
       - name: Continue release queue
-        if: github.event_name != 'workflow_dispatch' && steps.next-pending.outputs.target_sha != ''
+        if: github.event_name != 'workflow_dispatch'
         uses: actions/github-script@v7
         env:
           NEXT_TARGET_SHA: ${{ steps.next-pending.outputs.target_sha }}
+          BLOCKED_COUNT: ${{ steps.next-pending.outputs.blocked_count }}
+          BLOCKED_TARGETS_CSV: ${{ steps.next-pending.outputs.blocked_targets_csv }}
         with:
           script: |
             const { owner, repo } = context.repo
             const nextSha = process.env.NEXT_TARGET_SHA
+            const blockedCount = Number(process.env.BLOCKED_COUNT || '0')
+            const blockedTargets = process.env.BLOCKED_TARGETS_CSV || ''
             if (!nextSha) {
+              if (blockedCount > 0) {
+                core.notice(`Release queue is blocked by workflow-changing snapshots that need RELEASE_WORKFLOW_TOKEN: ${blockedTargets}`)
+                return
+              }
               core.notice('Release queue is empty.')
               return
             }
