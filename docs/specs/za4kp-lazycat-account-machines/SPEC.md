@@ -4,7 +4,7 @@
 
 - Status: 已完成
 - Created: 2026-03-19
-- Last: 2026-03-21
+- Last: 2026-03-28
 
 ## 背景 / 问题陈述
 
@@ -60,6 +60,7 @@
 - 账号与机器缓存必须按 `X-User-Id` 隔离；断开账号时只清除当前用户的懒猫云账号、机器与端口映射数据。
 - 普通容器机面板同步成功后，必须把流量快照按“每小时最多 1 条”的粒度写入历史表；同一小时只保留最新样本。
 - `GET /api/lazycat/machines` 返回的图表数据必须来自数据库中的真实小时样本，不得由前端基于单次快照推导伪趋势。
+- 若主站 `clientarea` 可访问但本轮未解析出任何机器，只有在页面明确表达“当前没有任何资源/服务”时才允许视为权威空态并清除缓存；其余歧义空页必须终止同步，不得据此清除 last-good 机器缓存、端口映射或流量历史。
 
 ### SHOULD
 
@@ -94,6 +95,7 @@
 - 主站 session 失效时，服务端必须用已保存邮箱/密码自动重登并重试一次当前请求。
 - 若自动重登仍失败，账号 `state=error`，但 last-good 机器缓存必须保留。
 - 若主站页只返回登录页 HTML，必须视为未登录，而不是把登录页误解析为机器列表。
+- 若主站 `clientarea` 返回可访问 HTML 但未包含任何 `servicedetail?id=<id>` 链接，必须视为 discovery 异常并拒绝覆盖现有缓存。
 - 若 NAT 代理返回 `{"code":500,"msg":"连接服务器失败"}`，不得清空现有 NAT 端口映射缓存。
 - 若容器面板 `GET /api/container/info` 或 `port-mapping` 失败，机器仍展示核心字段，面板区标记 `detailState=error|stale`。
 
@@ -136,6 +138,10 @@
 - Given 主站 session 失效
   When 后台同步或手动同步触发
   Then 服务端自动重登并重试一次；若仍失败，保留 last-good 缓存并把账号或机器标记为 `error/stale`。
+
+- Given `clientarea?action=list` 返回可访问 HTML 但未解析出任何机器链接
+  When 手动同步或后台同步触发
+  Then 服务端必须拒绝本轮空 discovery，保留当前用户已有的机器缓存、端口映射与流量小时样本，并把账号状态收敛为 `error` 说明 discovery 被拒绝。
 
 - Given 某台机器面板证书无效或 NAT 代理不可达
   When 补全面板/NAT 详情
@@ -222,9 +228,21 @@
   image:
   ![MachinesView partial failure canvas](./assets/machines-partial-failure-canvas.png)
 
+- source_type: local_preview
+  target_program: mock-only
+  capture_scope: browser-viewport
+  sensitive_exclusion: seeded local account only
+  submission_gate: pending-owner-approval
+  story_id_or_title: `/#machines` seeded failure-preserves-history preview
+  state: ambiguous empty discovery rejected while last-good traffic history remains visible
+  evidence_note: 验证本次回归修复，证明一次被拒绝的歧义空机器发现不会抹掉既有机器卡片、流量历史图表与错误提示。
+  image:
+  ![Local preview keeps history after empty discovery rejection](./assets/lazycat-empty-discovery-preserves-history.png)
+
 ## 变更记录（Change log）
 
 - 2026-03-19: 创建规格，冻结懒猫云账号接入、机器缓存、面板补全与前端页面口径。
 - 2026-03-19: 完成懒猫云后端同步模块、`/api/lazycat/*`、设置页账号卡片、`#machines` 页面，以及解析/隔离/断开相关测试与质量门。
 - 2026-03-21: 刷新 Storybook 视觉证据，补充当前默认态与部分失败态截图。
 - 2026-03-21: 补充流量小时样本历史要求，明确图表只能消费数据库中的真实账期样本。
+- 2026-03-28: 收紧主站 zero-discovery 语义；歧义空页必须 fail closed 并保留 last-good 机器缓存、端口映射与流量小时历史，只有权威空态才允许清空缓存。

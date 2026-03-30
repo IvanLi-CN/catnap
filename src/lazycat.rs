@@ -12,7 +12,7 @@ use anyhow::{anyhow, Context};
 use futures_util::stream::{self, StreamExt};
 use reqwest::header::{COOKIE, LOCATION, SET_COOKIE};
 use reqwest::{Method, Url};
-use scraper::{Html, Selector};
+use scraper::{ElementRef, Html, Selector};
 use serde_json::json;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -21,7 +21,7 @@ use time::{
     format_description::well_known::Rfc3339, Date, Month, OffsetDateTime, PrimitiveDateTime, Time,
     UtcOffset,
 };
-use tracing::warn;
+use tracing::{info, warn};
 
 const SITE_REQUEST_TIMEOUT_MS: u64 = 10_000;
 
@@ -163,6 +163,14 @@ struct SiteResponse {
 struct ClientareaPage {
     service_ids: Vec<i64>,
     total_pages: usize,
+    empty_state: Option<ClientareaEmptyState>,
+    has_unresolved_page_links: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClientareaEmptyState {
+    Authoritative,
+    Ambiguous,
 }
 
 #[derive(Debug, Clone)]
@@ -495,6 +503,7 @@ impl LazycatService {
         let mut total_pages = 1_usize;
         let mut service_ids = Vec::new();
         let mut seen = HashSet::new();
+        let mut authoritative_empty = false;
 
         loop {
             let html = self
@@ -507,7 +516,43 @@ impl LazycatService {
                 )
                 .await?;
             let parsed = parse_clientarea_page(&html)?;
+            if parsed.has_unresolved_page_links {
+                warn!(
+                    email = %email,
+                    base_url = %self.base_url,
+                    page,
+                    "lazycat unresolved service discovery pagination rejected"
+                );
+                return Err(anyhow!("懒猫云机器发现结果不完整，已拒绝覆盖现有缓存"));
+            }
             total_pages = total_pages.max(parsed.total_pages.max(page));
+            match parsed.empty_state {
+                Some(ClientareaEmptyState::Ambiguous) => {
+                    warn!(
+                        email = %email,
+                        base_url = %self.base_url,
+                        page,
+                        "lazycat ambiguous service discovery page rejected"
+                    );
+                    return Err(anyhow!(
+                        "懒猫云机器发现结果不完整且页面状态异常，已拒绝覆盖现有缓存"
+                    ));
+                }
+                Some(ClientareaEmptyState::Authoritative) => {
+                    if page != 1 || total_pages > 1 || !service_ids.is_empty() {
+                        warn!(
+                            email = %email,
+                            base_url = %self.base_url,
+                            page,
+                            total_pages,
+                            "lazycat partial service discovery rejected"
+                        );
+                        return Err(anyhow!("懒猫云机器发现结果不完整，已拒绝覆盖现有缓存"));
+                    }
+                    authoritative_empty = true;
+                }
+                None => {}
+            }
             for id in parsed.service_ids {
                 if seen.insert(id) {
                     service_ids.push(id);
@@ -517,6 +562,14 @@ impl LazycatService {
                 break;
             }
             page += 1;
+        }
+
+        if service_ids.is_empty() && authoritative_empty {
+            info!(
+                email = %email,
+                base_url = %self.base_url,
+                "lazycat authoritative empty service discovery accepted"
+            );
         }
 
         Ok(service_ids)
@@ -1688,8 +1741,10 @@ fn parse_clientarea_page(html: &str) -> anyhow::Result<ClientareaPage> {
     let mut service_ids = Vec::new();
     let mut seen = HashSet::new();
     let mut total_pages = 1_usize;
+    let mut has_unresolved_page_links = false;
 
     for link in document.select(&link_selector) {
+        let link_text = normalized_element_text(link);
         let Some(href) = link.value().attr("href") else {
             continue;
         };
@@ -1708,20 +1763,508 @@ fn parse_clientarea_page(html: &str) -> anyhow::Result<ClientareaPage> {
             }
         }
         if url.path() == "/clientarea" {
-            if let Some(page) = url
-                .query_pairs()
-                .find_map(|(key, value)| (key == "page").then(|| value.to_string()))
-                .and_then(|value| value.parse::<usize>().ok())
-            {
+            let Some((action, page)) = parse_clientarea_page_link(&url) else {
+                continue;
+            };
+            let looks_like_pagination = action.as_deref() == Some("list")
+                || (action.is_none()
+                    && bare_clientarea_page_link_is_pagination(link, &base_url, page, &link_text));
+            if looks_like_pagination {
                 total_pages = total_pages.max(page);
+            } else if action.is_none()
+                && page > 1
+                && !bare_clientarea_page_link_is_non_pagination_content(&link_text, page)
+            {
+                has_unresolved_page_links = true;
             }
         }
     }
 
+    let empty_state = if service_ids.is_empty() {
+        Some(classify_empty_clientarea_page(&document))
+    } else {
+        None
+    };
+
     Ok(ClientareaPage {
         service_ids,
         total_pages,
+        empty_state,
+        has_unresolved_page_links,
     })
+}
+
+fn parse_clientarea_page_link(url: &Url) -> Option<(Option<String>, usize)> {
+    let mut action = None;
+    let mut page = None;
+    for (key, value) in url.query_pairs() {
+        if key == "action" {
+            action = Some(value.to_string());
+        }
+        if key == "page" {
+            page = value.parse::<usize>().ok();
+        }
+    }
+    page.map(|page| (action, page))
+}
+
+fn bare_clientarea_page_link_is_pagination(
+    link: ElementRef<'_>,
+    base_url: &Url,
+    page: usize,
+    link_text: &str,
+) -> bool {
+    looks_like_pagination_label(link_text, page)
+        || has_pagination_hint_in_ancestors(link, page)
+        || (!bare_clientarea_page_link_is_non_pagination_content(link_text, page)
+            && has_adjacent_pagination_context(link, base_url))
+        || (link_allows_pagination_peer_inference(link, link_text)
+            && has_local_pagination_context(link, base_url))
+}
+
+fn bare_clientarea_page_link_is_non_pagination_content(link_text: &str, page: usize) -> bool {
+    let normalized = link_text.trim();
+    !normalized.is_empty()
+        && !looks_like_pagination_label(normalized, page)
+        && normalized.chars().any(|ch| {
+            ch.is_ascii_alphanumeric()
+                || ('\u{4E00}'..='\u{9FFF}').contains(&ch)
+                || ('\u{3400}'..='\u{4DBF}').contains(&ch)
+                || ('\u{F900}'..='\u{FAFF}').contains(&ch)
+        })
+}
+
+fn looks_like_pagination_label(link_text: &str, page: usize) -> bool {
+    let normalized = link_text.trim().to_lowercase();
+    if normalized.is_empty() {
+        return false;
+    }
+    if normalized == page.to_string() {
+        return true;
+    }
+    if matches!(
+        normalized.as_str(),
+        "首页"
+            | "尾页"
+            | "上一页"
+            | "下一页"
+            | "上页"
+            | "下页"
+            | "首頁"
+            | "尾頁"
+            | "上一頁"
+            | "下一頁"
+            | "first"
+            | "last"
+            | "first page"
+            | "last page"
+            | "prev"
+            | "next"
+            | "previous"
+            | "«"
+            | "»"
+            | "‹"
+            | "›"
+            | "<<"
+            | ">>"
+    ) {
+        return true;
+    }
+    let page_text = page.to_string();
+    normalized.contains(&page_text)
+        && (normalized.contains('页')
+            || normalized.contains('頁')
+            || normalized.contains("page")
+            || normalized.contains('/')
+            || normalized.contains('[')
+            || normalized.contains('('))
+}
+
+fn has_pagination_hint_in_ancestors(link: ElementRef<'_>, page: usize) -> bool {
+    if element_has_pagination_hint(link, page) {
+        return true;
+    }
+    link.ancestors()
+        .filter_map(ElementRef::wrap)
+        .skip(1)
+        .take_while(|element| !matches!(element.value().name(), "html"))
+        .any(|element| element_has_pagination_hint(element, page))
+}
+
+fn element_has_pagination_hint(element: ElementRef<'_>, page: usize) -> bool {
+    if element.value().name() == "nav" {
+        return true;
+    }
+    for attr in ["class", "id", "role", "aria-label"] {
+        let Some(value) = element.attr(attr) else {
+            continue;
+        };
+        let normalized = value.trim().to_lowercase();
+        if looks_like_pagination_label(&normalized, page) {
+            return true;
+        }
+        if normalized.contains("pagination")
+            || normalized.contains("pager")
+            || normalized.contains("page-nav")
+            || normalized.contains("page_nav")
+            || normalized.contains("pagebar")
+            || normalized.contains("page-bar")
+            || normalized.contains("page_bar")
+            || normalized.contains("page-item")
+            || normalized.contains("page-link")
+            || normalized.contains("page-list")
+            || normalized.contains("分页")
+            || normalized.contains("页码")
+            || normalized.contains("next page")
+            || normalized.contains("previous page")
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn link_allows_pagination_peer_inference(_link: ElementRef<'_>, link_text: &str) -> bool {
+    let normalized = link_text.trim();
+    if normalized.is_empty() {
+        return true;
+    }
+    !normalized.is_empty()
+        && normalized.chars().all(|ch| {
+            !ch.is_ascii_alphanumeric()
+                && !('\u{4E00}'..='\u{9FFF}').contains(&ch)
+                && !('\u{3400}'..='\u{4DBF}').contains(&ch)
+                && !('\u{F900}'..='\u{FAFF}').contains(&ch)
+        })
+}
+
+fn has_local_pagination_context(link: ElementRef<'_>, base_url: &Url) -> bool {
+    let non_body_context = link
+        .ancestors()
+        .filter_map(ElementRef::wrap)
+        .skip(1)
+        .take_while(|element| !matches!(element.value().name(), "html" | "body"))
+        .any(|ancestor| {
+            elements_support_pagination_inference(ancestor.descendent_elements(), base_url)
+        });
+    if non_body_context {
+        return true;
+    }
+
+    let Some(body_child) = top_level_body_child(link) else {
+        return false;
+    };
+    body_neighborhood_supports_pagination_inference(body_child, base_url)
+}
+
+fn has_adjacent_pagination_context(link: ElementRef<'_>, base_url: &Url) -> bool {
+    elements_support_pagination_inference(
+        link.prev_siblings()
+            .filter_map(ElementRef::wrap)
+            .take(1)
+            .chain(std::iter::once(link))
+            .chain(link.next_siblings().filter_map(ElementRef::wrap).take(1))
+            .flat_map(|element| element.descendent_elements()),
+        base_url,
+    )
+}
+
+fn top_level_body_child(link: ElementRef<'_>) -> Option<ElementRef<'_>> {
+    link.ancestors()
+        .filter_map(ElementRef::wrap)
+        .take_while(|element| !matches!(element.value().name(), "html"))
+        .find(|element| {
+            element
+                .parent()
+                .and_then(ElementRef::wrap)
+                .is_some_and(|parent| parent.value().name() == "body")
+        })
+}
+
+fn body_neighborhood_supports_pagination_inference(
+    body_child: ElementRef<'_>,
+    base_url: &Url,
+) -> bool {
+    elements_support_pagination_inference(
+        body_child
+            .prev_siblings()
+            .filter_map(ElementRef::wrap)
+            .take(1)
+            .chain(std::iter::once(body_child))
+            .chain(
+                body_child
+                    .next_siblings()
+                    .filter_map(ElementRef::wrap)
+                    .take(1),
+            )
+            .flat_map(|element| element.descendent_elements()),
+        base_url,
+    )
+}
+
+fn elements_support_pagination_inference<'a, I>(elements: I, base_url: &Url) -> bool
+where
+    I: IntoIterator<Item = ElementRef<'a>>,
+{
+    let mut distinct_pages = HashSet::new();
+    for element in elements {
+        if clientarea_page_link_has_explicit_pagination_signal(element, base_url) {
+            return true;
+        }
+        if let Some(page) = pagination_candidate_page(element, base_url) {
+            distinct_pages.insert(page);
+        }
+    }
+    distinct_pages.len() >= 2
+}
+
+fn pagination_candidate_page(element: ElementRef<'_>, base_url: &Url) -> Option<usize> {
+    let href = element.attr("href")?;
+    let url = base_url.join(href).ok()?;
+    if url.path() != "/clientarea" {
+        return None;
+    }
+    let (action, page) = parse_clientarea_page_link(&url)?;
+    if action.as_deref() == Some("list") {
+        return Some(page);
+    }
+    if action.is_some() {
+        return None;
+    }
+    let link_text = normalized_element_text(element);
+    (!bare_clientarea_page_link_is_non_pagination_content(&link_text, page)).then_some(page)
+}
+
+fn classify_empty_clientarea_page(document: &Html) -> ClientareaEmptyState {
+    let authoritative_markers = [
+        "暂无可用资源",
+        "暫無可用資源",
+        "暂无资源",
+        "暫無資源",
+        "暂无服务",
+        "暫無服務",
+        "没有可用资源",
+        "沒有可用資源",
+        "暂未开通任何服务",
+        "暫未開通任何服務",
+        "当前没有任何服务",
+        "當前沒有任何服務",
+        "no services available",
+        "no services found",
+        "no active services",
+        "you do not have any active services",
+    ];
+    let hard_ambiguous_markers = [
+        "页面渲染异常",
+        "頁面渲染異常",
+        "渲染异常",
+        "渲染異常",
+        "服务不可用",
+        "服務不可用",
+        "系统异常",
+        "系統異常",
+        "系统错误",
+        "系統錯誤",
+        "数据异常",
+        "資料異常",
+        "page render error",
+        "failed to render page",
+        "service unavailable",
+        "system error",
+    ];
+    let soft_ambiguous_markers = [
+        "页面加载异常",
+        "頁面載入異常",
+        "加载异常",
+        "載入異常",
+        "加载失败",
+        "載入失敗",
+        "获取失败",
+        "取得失敗",
+        "访问异常",
+        "存取異常",
+        "page failed to load",
+        "failed to load",
+        "failed to fetch",
+        "access error",
+    ];
+    let signal_regions = collect_clientarea_empty_signal_regions(document);
+    let signal_has_authoritative = signal_regions
+        .iter()
+        .any(|text| text_contains_any_marker(text, &authoritative_markers));
+    let signal_has_hard_ambiguous = signal_regions
+        .iter()
+        .any(|text| text_contains_unconditional_error_marker(text, &hard_ambiguous_markers));
+    let signal_has_soft_ambiguous = signal_regions
+        .iter()
+        .any(|text| text_contains_unconditional_error_marker(text, &soft_ambiguous_markers));
+
+    let fallback_regions = collect_clientarea_authoritative_fallback_regions(document);
+    let fallback_has_authoritative = fallback_regions
+        .iter()
+        .any(|text| text_contains_any_marker(text, &authoritative_markers));
+    let fallback_has_hard_ambiguous = fallback_regions
+        .iter()
+        .any(|text| text_contains_unconditional_error_marker(text, &hard_ambiguous_markers));
+    let fallback_has_soft_ambiguous = fallback_regions
+        .iter()
+        .any(|text| text_contains_unconditional_error_marker(text, &soft_ambiguous_markers));
+
+    if signal_has_hard_ambiguous || signal_has_soft_ambiguous || fallback_has_hard_ambiguous {
+        return ClientareaEmptyState::Ambiguous;
+    }
+
+    if fallback_has_soft_ambiguous {
+        return ClientareaEmptyState::Ambiguous;
+    }
+
+    if signal_has_authoritative || fallback_has_authoritative {
+        return ClientareaEmptyState::Authoritative;
+    }
+
+    ClientareaEmptyState::Ambiguous
+}
+
+fn clientarea_page_link_has_explicit_pagination_signal(
+    element: ElementRef<'_>,
+    base_url: &Url,
+) -> bool {
+    let Some(href) = element.attr("href") else {
+        return false;
+    };
+    let Ok(url) = base_url.join(href) else {
+        return false;
+    };
+    let Some((action, page)) = parse_clientarea_page_link(&url) else {
+        return false;
+    };
+    if action.as_deref() == Some("list") {
+        return true;
+    }
+    let link_text = normalized_element_text(element);
+    looks_like_pagination_label(&link_text, page) || has_pagination_hint_in_ancestors(element, page)
+}
+
+fn text_contains_any_marker(text: &str, markers: &[&str]) -> bool {
+    let normalized = text.to_lowercase();
+    markers.iter().any(|marker| normalized.contains(marker))
+}
+
+fn text_contains_unconditional_error_marker(text: &str, markers: &[&str]) -> bool {
+    let normalized = text.to_lowercase();
+    markers.iter().any(|marker| {
+        normalized
+            .match_indices(marker)
+            .any(|(index, _)| !marker_is_in_conditional_clause(&normalized, index))
+    })
+}
+
+fn marker_is_in_conditional_clause(text: &str, marker_index: usize) -> bool {
+    let prefix = &text[..marker_index];
+    let clause = prefix
+        .rsplit([
+            '。', '！', '？', '.', '!', '?', '，', ',', '；', ';', '：', ':', '\n',
+        ])
+        .next()
+        .unwrap_or(prefix)
+        .trim();
+    let clause = clause.trim_start_matches(|ch: char| {
+        matches!(
+            ch,
+            ' ' | '\t' | '(' | ')' | '（' | '）' | '[' | ']' | '【' | '】' | '-' | '—'
+        )
+    });
+    clause.starts_with("如果")
+        || clause.starts_with("若")
+        || clause.starts_with("如")
+        || clause.starts_with("if ")
+        || clause.starts_with("if the ")
+        || clause == "if"
+        || recent_conditional_intro(clause)
+}
+
+fn recent_conditional_intro(clause: &str) -> bool {
+    let recent = last_n_chars(clause, 12);
+    [
+        ("如果", true),
+        ("若", true),
+        ("如", true),
+        ("if the ", false),
+        ("if ", false),
+    ]
+    .iter()
+    .any(|(intro, chinese)| {
+        recent.rfind(intro).is_some_and(|idx| {
+            let after = recent[idx + intro.len()..].trim();
+            if after.chars().count() > 4 {
+                return false;
+            }
+            if !chinese || idx == 0 {
+                return true;
+            }
+            recent[..idx]
+                .chars()
+                .last()
+                .is_some_and(|ch| ch.is_whitespace() || matches!(ch, '（' | '(' | '[' | '【'))
+        })
+    })
+}
+
+fn last_n_chars(text: &str, limit: usize) -> String {
+    let chars = text.chars().count();
+    if chars <= limit {
+        return text.to_string();
+    }
+    text.chars().skip(chars - limit).collect()
+}
+
+fn collect_clientarea_empty_signal_regions(document: &Html) -> Vec<String> {
+    let selectors = [
+        ".alert",
+        ".empty-state",
+        ".empty",
+        ".notice",
+        r#"[role="alert"]"#,
+    ];
+    let mut texts = Vec::new();
+    for raw_selector in selectors {
+        let Ok(selector) = Selector::parse(raw_selector) else {
+            continue;
+        };
+        for node in document.select(&selector) {
+            let text = normalized_element_text(node);
+            if !text.is_empty() {
+                texts.push(text);
+            }
+        }
+    }
+    texts
+}
+
+fn collect_clientarea_authoritative_fallback_regions(document: &Html) -> Vec<String> {
+    let selectors = ["table", "tbody", "tr", "td", "p", "body"];
+    let mut texts = Vec::new();
+    for raw_selector in selectors {
+        let Ok(selector) = Selector::parse(raw_selector) else {
+            continue;
+        };
+        for node in document.select(&selector) {
+            let text = normalized_element_text(node);
+            if !text.is_empty() {
+                texts.push(text);
+            }
+        }
+    }
+    texts
+}
+
+fn normalized_element_text(element: ElementRef<'_>) -> String {
+    element
+        .text()
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn parse_host_detail(
@@ -2217,6 +2760,7 @@ fn error_chain_text(err: &anyhow::Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::{response::Html, routing::get, Router};
 
     #[test]
     fn parses_login_token() {
@@ -2239,6 +2783,526 @@ mod tests {
         assert!(parsed_first.service_ids.contains(&3875));
         assert!(parsed_second.service_ids.contains(&5568));
         assert!(parsed_second.service_ids.contains(&5845));
+        assert_eq!(parsed_first.empty_state, None);
+        assert_eq!(parsed_second.empty_state, None);
+    }
+
+    #[test]
+    fn parses_clientarea_pages_with_bare_paginator_variants() {
+        let labeled = r#"<!DOCTYPE html>
+<html lang="zh-CN">
+  <body>
+    <table>
+      <tbody>
+        <tr><td><a href="/servicedetail?id=2312">港湾 Transit Mini(srvQ8L2M5R1P9K)</a></td></tr>
+      </tbody>
+    </table>
+    <div>
+      <a href="/clientarea?page=1">首页</a>
+      <a href="/clientarea?page=3">尾页</a>
+    </div>
+  </body>
+</html>"#;
+        let clustered = r#"<!DOCTYPE html>
+<html lang="zh-CN">
+  <body>
+    <table>
+      <tbody>
+        <tr><td><a href="/servicedetail?id=5568">Sandbox Free IPv6(srvF2R8E1Y6P4V)</a></td></tr>
+      </tbody>
+    </table>
+    <div>
+      <a href="/clientarea?action=list&page=1">1</a>
+      <span><a href="/clientarea?page=4"><span aria-hidden="true">⇥</span></a></span>
+    </div>
+  </body>
+</html>"#;
+        let aria_labeled = r#"<!DOCTYPE html>
+<html lang="zh-CN">
+  <body>
+    <table>
+      <tbody>
+        <tr><td><a href="/servicedetail?id=6123">Tokyo Nano(srvT9K2A3P4L8)</a></td></tr>
+      </tbody>
+    </table>
+    <a href="/clientarea?action=list&page=1">1</a>
+    <a href="/clientarea?page=4" aria-label="next"><span aria-hidden="true">⇥</span></a>
+  </body>
+</html>"#;
+        let body_siblings = r#"<!DOCTYPE html>
+<html lang="zh-CN">
+  <body>
+    <table>
+      <tbody>
+        <tr><td><a href="/servicedetail?id=6455">Seoul Mini(srvS6E4O2U1)</a></td></tr>
+      </tbody>
+    </table>
+    <a href="/clientarea?action=list&page=1">1</a>
+    <a href="/clientarea?page=4"><span aria-hidden="true">⇥</span></a>
+  </body>
+</html>"#;
+        let wrapped_body_siblings = r#"<!DOCTYPE html>
+<html lang="zh-CN">
+  <body>
+    <table>
+      <tbody>
+        <tr><td><a href="/servicedetail?id=6888">Osaka Micro(srvO6S8A3K4)</a></td></tr>
+      </tbody>
+    </table>
+    <div class="pager-primary">
+      <a href="/clientarea?page=1">1</a>
+    </div>
+    <div class="pager-secondary">
+      <span><a href="/clientarea?page=4"></a></span>
+    </div>
+  </body>
+</html>"#;
+        let non_pagination_sidebar = r#"<!DOCTYPE html>
+<html lang="zh-CN">
+  <body>
+    <table>
+      <tbody>
+        <tr><td><a href="/servicedetail?id=7001">HK One(srvH7K1P2R3)</a></td></tr>
+      </tbody>
+    </table>
+    <aside>
+      <a href="/clientarea?page=2">帮助中心</a>
+      <a href="/clientarea?action=list&page=1">1</a>
+    </aside>
+  </body>
+</html>"#;
+
+        let parsed_labeled = parse_clientarea_page(labeled).unwrap();
+        let parsed_clustered = parse_clientarea_page(clustered).unwrap();
+        let parsed_aria_labeled = parse_clientarea_page(aria_labeled).unwrap();
+        let parsed_body_siblings = parse_clientarea_page(body_siblings).unwrap();
+        let parsed_wrapped_body_siblings = parse_clientarea_page(wrapped_body_siblings).unwrap();
+        let parsed_non_pagination_sidebar = parse_clientarea_page(non_pagination_sidebar).unwrap();
+        assert_eq!(parsed_labeled.total_pages, 3);
+        assert_eq!(parsed_clustered.total_pages, 4);
+        assert_eq!(parsed_aria_labeled.total_pages, 4);
+        assert_eq!(parsed_body_siblings.total_pages, 4);
+        assert_eq!(parsed_wrapped_body_siblings.total_pages, 4);
+        assert_eq!(parsed_non_pagination_sidebar.total_pages, 1);
+        assert!(!parsed_labeled.has_unresolved_page_links);
+        assert!(!parsed_clustered.has_unresolved_page_links);
+        assert!(!parsed_aria_labeled.has_unresolved_page_links);
+        assert!(!parsed_body_siblings.has_unresolved_page_links);
+        assert!(!parsed_wrapped_body_siblings.has_unresolved_page_links);
+        assert!(!parsed_non_pagination_sidebar.has_unresolved_page_links);
+        assert!(parsed_labeled.service_ids.contains(&2312));
+        assert!(parsed_clustered.service_ids.contains(&5568));
+        assert!(parsed_aria_labeled.service_ids.contains(&6123));
+        assert!(parsed_body_siblings.service_ids.contains(&6455));
+        assert!(parsed_wrapped_body_siblings.service_ids.contains(&6888));
+        assert!(parsed_non_pagination_sidebar.service_ids.contains(&7001));
+
+        let unresolved = r#"<!DOCTYPE html>
+<html lang="zh-CN">
+  <body>
+    <table>
+      <tbody>
+        <tr><td><a href="/servicedetail?id=8008">Sydney Edge(srvS8D7Y6N5)</a></td></tr>
+      </tbody>
+    </table>
+    <section class="page-links">
+      <a href="/clientarea?action=list&page=1">1</a>
+    </section>
+    <div class="spacer">帮助文档</div>
+    <aside>
+      <a href="/clientarea?page=2"></a>
+    </aside>
+  </body>
+</html>"#;
+        let parsed_unresolved = parse_clientarea_page(unresolved).unwrap();
+        assert_eq!(parsed_unresolved.total_pages, 1);
+        assert!(parsed_unresolved.has_unresolved_page_links);
+    }
+
+    #[test]
+    fn parses_clientarea_empty_states() {
+        let authoritative =
+            include_str!("../tests/fixtures/lazycat/clientarea-authoritative-empty.html");
+        let authoritative_with_footer = include_str!(
+            "../tests/fixtures/lazycat/clientarea-authoritative-empty-with-footer-hint.html"
+        );
+        let authoritative_plain_text = include_str!(
+            "../tests/fixtures/lazycat/clientarea-authoritative-empty-plain-text.html"
+        );
+        let authoritative_with_support_notice = include_str!(
+            "../tests/fixtures/lazycat/clientarea-authoritative-empty-with-support-notice.html"
+        );
+        let ambiguous = include_str!("../tests/fixtures/lazycat/clientarea-empty.html");
+        let mixed = include_str!("../tests/fixtures/lazycat/clientarea-mixed-empty.html");
+        let mixed_plain_text =
+            include_str!("../tests/fixtures/lazycat/clientarea-mixed-plain-text.html");
+        let mixed_signal_and_fallback = r#"<!DOCTYPE html>
+<html lang="zh-CN">
+  <body>
+    <div class="alert alert-info">暂无可用资源</div>
+    <p>页面加载异常，请稍后重试。</p>
+    <a href="/clientarea?action=list&page=1">1</a>
+  </body>
+</html>"#;
+        let authoritative_traditional = r#"<!DOCTYPE html>
+<html lang="zh-TW">
+  <body>
+    <div class="alert alert-info">暫無可用資源</div>
+    <a href="/clientarea?action=list&page=1">1</a>
+  </body>
+</html>"#;
+        let authoritative_english = r#"<!DOCTYPE html>
+<html lang="en">
+  <body>
+    <div class="alert alert-info">No services available</div>
+    <a href="/clientarea?action=list&page=1">1</a>
+  </body>
+</html>"#;
+        let parsed_authoritative = parse_clientarea_page(authoritative).unwrap();
+        let parsed_authoritative_with_footer =
+            parse_clientarea_page(authoritative_with_footer).unwrap();
+        let parsed_authoritative_plain_text =
+            parse_clientarea_page(authoritative_plain_text).unwrap();
+        let parsed_authoritative_with_support_notice =
+            parse_clientarea_page(authoritative_with_support_notice).unwrap();
+        let parsed_ambiguous = parse_clientarea_page(ambiguous).unwrap();
+        let parsed_mixed = parse_clientarea_page(mixed).unwrap();
+        let parsed_mixed_plain_text = parse_clientarea_page(mixed_plain_text).unwrap();
+        let parsed_mixed_signal_and_fallback =
+            parse_clientarea_page(mixed_signal_and_fallback).unwrap();
+        let authoritative_conditional_support = r#"<!DOCTYPE html>
+<html lang="zh-CN">
+  <body>
+    <div class="alert alert-info">暂无可用资源</div>
+    <p>如果访问异常请联系客服。</p>
+    <p>如果加载异常请稍后重试。</p>
+    <a href="/clientarea?action=list&page=1">1</a>
+  </body>
+</html>"#;
+        let authoritative_conditional_hard_support = r#"<!DOCTYPE html>
+<html lang="zh-CN">
+  <body>
+    <div class="alert alert-info">暂无可用资源</div>
+    <p>如果系统错误请稍后重试。</p>
+    <p>如果页面渲染异常请联系客服。</p>
+    <a href="/clientarea?action=list&page=1">1</a>
+  </body>
+</html>"#;
+        let parsed_authoritative_traditional =
+            parse_clientarea_page(authoritative_traditional).unwrap();
+        let parsed_authoritative_english = parse_clientarea_page(authoritative_english).unwrap();
+        let parsed_authoritative_conditional_support =
+            parse_clientarea_page(authoritative_conditional_support).unwrap();
+        let parsed_authoritative_conditional_hard_support =
+            parse_clientarea_page(authoritative_conditional_hard_support).unwrap();
+        assert!(parsed_authoritative.service_ids.is_empty());
+        assert_eq!(
+            parsed_authoritative.empty_state,
+            Some(ClientareaEmptyState::Authoritative)
+        );
+        assert!(parsed_authoritative_with_footer.service_ids.is_empty());
+        assert_eq!(
+            parsed_authoritative_with_footer.empty_state,
+            Some(ClientareaEmptyState::Authoritative)
+        );
+        assert!(parsed_authoritative_plain_text.service_ids.is_empty());
+        assert_eq!(
+            parsed_authoritative_plain_text.empty_state,
+            Some(ClientareaEmptyState::Authoritative)
+        );
+        assert_eq!(parsed_authoritative_plain_text.total_pages, 1);
+        assert!(parsed_authoritative_with_support_notice
+            .service_ids
+            .is_empty());
+        assert_eq!(
+            parsed_authoritative_with_support_notice.empty_state,
+            Some(ClientareaEmptyState::Authoritative)
+        );
+        assert_eq!(
+            parsed_authoritative_traditional.empty_state,
+            Some(ClientareaEmptyState::Authoritative)
+        );
+        assert_eq!(
+            parsed_authoritative_english.empty_state,
+            Some(ClientareaEmptyState::Authoritative)
+        );
+        assert!(parsed_ambiguous.service_ids.is_empty());
+        assert_eq!(
+            parsed_ambiguous.empty_state,
+            Some(ClientareaEmptyState::Ambiguous)
+        );
+        assert!(parsed_mixed.service_ids.is_empty());
+        assert_eq!(
+            parsed_mixed.empty_state,
+            Some(ClientareaEmptyState::Ambiguous)
+        );
+        assert!(parsed_mixed_plain_text.service_ids.is_empty());
+        assert_eq!(
+            parsed_mixed_plain_text.empty_state,
+            Some(ClientareaEmptyState::Ambiguous)
+        );
+        assert_eq!(parsed_mixed_plain_text.total_pages, 1);
+        assert_eq!(
+            parsed_mixed_signal_and_fallback.empty_state,
+            Some(ClientareaEmptyState::Ambiguous)
+        );
+        assert_eq!(
+            parsed_authoritative_conditional_support.empty_state,
+            Some(ClientareaEmptyState::Authoritative)
+        );
+        assert_eq!(
+            parsed_authoritative_conditional_hard_support.empty_state,
+            Some(ClientareaEmptyState::Authoritative)
+        );
+    }
+
+    #[tokio::test]
+    async fn sync_site_rejects_ambiguous_service_discovery_page() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let stub = Router::new().route(
+            "/clientarea",
+            get(|| async {
+                Html(include_str!(
+                    "../tests/fixtures/lazycat/clientarea-empty.html"
+                ))
+            }),
+        );
+        tokio::spawn(async move {
+            axum::serve(listener, stub).await.unwrap();
+        });
+
+        let service = LazycatService {
+            base_url: Url::parse(&format!("http://{addr}")).unwrap(),
+            site_client: reqwest::Client::builder()
+                .user_agent("catnap-test/0.1")
+                .redirect(reqwest::redirect::Policy::none())
+                .timeout(std::time::Duration::from_millis(SITE_REQUEST_TIMEOUT_MS))
+                .build()
+                .unwrap(),
+            panel_timeout_ms: 5_000,
+            allow_invalid_tls: true,
+        };
+        let mut account = LazycatAccountRow {
+            user_id: "u_1".to_string(),
+            email: "owner@example.com".to_string(),
+            password: "secret".to_string(),
+            cookies_json: Some(
+                serde_json::to_string(&vec![("PHPSESSID".to_string(), "sess-1".to_string())])
+                    .unwrap(),
+            ),
+            state: "ready".to_string(),
+            last_error: None,
+            last_authenticated_at: Some("2026-03-28T00:00:00Z".to_string()),
+            last_site_sync_at: Some("2026-03-28T00:10:00Z".to_string()),
+            last_panel_sync_at: Some("2026-03-28T00:20:00Z".to_string()),
+            created_at: "2026-03-28T00:00:00Z".to_string(),
+            updated_at: "2026-03-28T00:20:00Z".to_string(),
+        };
+
+        let err = service.sync_site(&mut account).await.unwrap_err();
+
+        assert!(err.to_string().contains("页面状态异常"));
+    }
+
+    #[tokio::test]
+    async fn sync_site_rejects_plain_text_ambiguous_service_discovery_page() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let stub = Router::new().route(
+            "/clientarea",
+            get(|| async {
+                Html(include_str!(
+                    "../tests/fixtures/lazycat/clientarea-mixed-plain-text.html"
+                ))
+            }),
+        );
+        tokio::spawn(async move {
+            axum::serve(listener, stub).await.unwrap();
+        });
+
+        let service = LazycatService {
+            base_url: Url::parse(&format!("http://{addr}")).unwrap(),
+            site_client: reqwest::Client::builder()
+                .user_agent("catnap-test/0.1")
+                .redirect(reqwest::redirect::Policy::none())
+                .timeout(std::time::Duration::from_millis(SITE_REQUEST_TIMEOUT_MS))
+                .build()
+                .unwrap(),
+            panel_timeout_ms: 5_000,
+            allow_invalid_tls: true,
+        };
+        let mut account = LazycatAccountRow {
+            user_id: "u_1".to_string(),
+            email: "owner@example.com".to_string(),
+            password: "secret".to_string(),
+            cookies_json: Some(
+                serde_json::to_string(&vec![("PHPSESSID".to_string(), "sess-1".to_string())])
+                    .unwrap(),
+            ),
+            state: "ready".to_string(),
+            last_error: None,
+            last_authenticated_at: Some("2026-03-28T00:00:00Z".to_string()),
+            last_site_sync_at: Some("2026-03-28T00:10:00Z".to_string()),
+            last_panel_sync_at: Some("2026-03-28T00:20:00Z".to_string()),
+            created_at: "2026-03-28T00:00:00Z".to_string(),
+            updated_at: "2026-03-28T00:20:00Z".to_string(),
+        };
+
+        let err = service.sync_site(&mut account).await.unwrap_err();
+
+        assert!(err.to_string().contains("页面状态异常"));
+    }
+
+    #[tokio::test]
+    async fn sync_site_accepts_authoritative_empty_service_discovery_page() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let stub = Router::new().route(
+            "/clientarea",
+            get(|| async {
+                Html(include_str!(
+                    "../tests/fixtures/lazycat/clientarea-authoritative-empty-plain-text.html"
+                ))
+            }),
+        );
+        tokio::spawn(async move {
+            axum::serve(listener, stub).await.unwrap();
+        });
+
+        let service = LazycatService {
+            base_url: Url::parse(&format!("http://{addr}")).unwrap(),
+            site_client: reqwest::Client::builder()
+                .user_agent("catnap-test/0.1")
+                .redirect(reqwest::redirect::Policy::none())
+                .timeout(std::time::Duration::from_millis(SITE_REQUEST_TIMEOUT_MS))
+                .build()
+                .unwrap(),
+            panel_timeout_ms: 5_000,
+            allow_invalid_tls: true,
+        };
+        let mut account = LazycatAccountRow {
+            user_id: "u_1".to_string(),
+            email: "owner@example.com".to_string(),
+            password: "secret".to_string(),
+            cookies_json: Some(
+                serde_json::to_string(&vec![("PHPSESSID".to_string(), "sess-1".to_string())])
+                    .unwrap(),
+            ),
+            state: "ready".to_string(),
+            last_error: None,
+            last_authenticated_at: Some("2026-03-28T00:00:00Z".to_string()),
+            last_site_sync_at: Some("2026-03-28T00:10:00Z".to_string()),
+            last_panel_sync_at: Some("2026-03-28T00:20:00Z".to_string()),
+            created_at: "2026-03-28T00:00:00Z".to_string(),
+            updated_at: "2026-03-28T00:20:00Z".to_string(),
+        };
+
+        let machines = service.sync_site(&mut account).await.unwrap();
+
+        assert!(machines.is_empty());
+        assert!(account.last_site_sync_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn sync_site_accepts_wrapped_body_sibling_bare_pagination() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let page1 = r#"<!DOCTYPE html>
+<html lang="zh-CN">
+  <body>
+    <table>
+      <tbody>
+        <tr><td><a href="/servicedetail?id=2312">港湾 Transit Mini(srvQ8L2M5R1P9K)</a></td></tr>
+      </tbody>
+    </table>
+    <div class="pager-primary">
+      <a href="/clientarea?page=1">1</a>
+    </div>
+    <div class="pager-secondary">
+      <span><a href="/clientarea?page=2"></a></span>
+    </div>
+  </body>
+</html>"#;
+        let page2 = r#"<!DOCTYPE html>
+<html lang="zh-CN">
+  <body>
+    <table>
+      <tbody>
+        <tr><td><a href="/servicedetail?id=5845">Westline Mini(srvW7H3L9C2M5Q)</a></td></tr>
+      </tbody>
+    </table>
+    <a href="/clientarea?action=list&page=1">1</a>
+    <a href="/clientarea?page=2">2</a>
+  </body>
+</html>"#;
+        let host_detail = include_str!("../tests/fixtures/lazycat/host-detail-2312.json");
+        let renew_html = include_str!("../tests/fixtures/lazycat/renew-2312.html");
+        let stub = Router::new()
+            .route(
+                "/clientarea",
+                get(
+                    move |axum::extract::Query(params): axum::extract::Query<
+                        std::collections::HashMap<String, String>,
+                    >| async move {
+                        let html = match params.get("page").map(String::as_str) {
+                            Some("2") => page2,
+                            _ => page1,
+                        };
+                        Html(html)
+                    },
+                ),
+            )
+            .route(
+                "/host/dedicatedserver",
+                get(move || async move { host_detail }),
+            )
+            .route(
+                "/servicedetail",
+                get(move || async move { Html(renew_html) }),
+            );
+        tokio::spawn(async move {
+            axum::serve(listener, stub).await.unwrap();
+        });
+
+        let service = LazycatService {
+            base_url: Url::parse(&format!("http://{addr}")).unwrap(),
+            site_client: reqwest::Client::builder()
+                .user_agent("catnap-test/0.1")
+                .redirect(reqwest::redirect::Policy::none())
+                .timeout(std::time::Duration::from_millis(SITE_REQUEST_TIMEOUT_MS))
+                .build()
+                .unwrap(),
+            panel_timeout_ms: 5_000,
+            allow_invalid_tls: true,
+        };
+        let mut account = LazycatAccountRow {
+            user_id: "u_1".to_string(),
+            email: "owner@example.com".to_string(),
+            password: "secret".to_string(),
+            cookies_json: Some(
+                serde_json::to_string(&vec![("PHPSESSID".to_string(), "sess-1".to_string())])
+                    .unwrap(),
+            ),
+            state: "ready".to_string(),
+            last_error: None,
+            last_authenticated_at: Some("2026-03-28T00:00:00Z".to_string()),
+            last_site_sync_at: Some("2026-03-28T00:10:00Z".to_string()),
+            last_panel_sync_at: Some("2026-03-28T00:20:00Z".to_string()),
+            created_at: "2026-03-28T00:00:00Z".to_string(),
+            updated_at: "2026-03-28T00:20:00Z".to_string(),
+        };
+
+        let machines = service.sync_site(&mut account).await.unwrap();
+        let service_ids = machines
+            .iter()
+            .map(|machine| machine.service_id)
+            .collect::<HashSet<_>>();
+
+        assert_eq!(machines.len(), 2);
+        assert!(service_ids.contains(&2312));
+        assert!(service_ids.contains(&5845));
+        assert!(account.last_site_sync_at.is_some());
     }
 
     #[test]

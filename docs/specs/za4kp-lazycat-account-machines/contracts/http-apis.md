@@ -87,7 +87,7 @@ Response body:
 
 Rules:
 
-- server deletes the current user’s lazycat account row, cached machines, and cached port mappings;
+- server deletes the current user’s lazycat account row, cached machines, cached port mappings, and cached traffic samples;
 - endpoint is idempotent.
 
 ## POST /api/lazycat/sync
@@ -111,6 +111,7 @@ Rules:
 - endpoint does not change credentials;
 - if no account is bound, return `400 INVALID_ARGUMENT`;
 - manual sync schedules or executes a full site + panel refresh for the current user.
+- if main-site discovery returns zero parsed machines, the sync must fail closed and preserve the user’s existing machines, port mappings, and traffic history instead of clearing them.
 
 ## GET /api/lazycat/machines
 
@@ -189,4 +190,6 @@ Rules:
 - `items` are filtered by current `X-User-Id`;
 - `detailState` is implementation-defined but must distinguish at least `ready`, `error`, and stale-cache scenarios;
 - panel/NAT failures must not remove core machine fields returned from main-site sync.
+- ambiguous empty main-site discovery must not wipe cached `items`; `lastError` should describe the rejected discovery while last-good machine data remains readable.
+- authoritative empty main-site discovery may return `items=[]` and clear cached machine/port/traffic rows for that user.
 - `traffic.history` only contains persisted hourly samples for the current billing cycle; it must not be synthesized from a single latest snapshot.
