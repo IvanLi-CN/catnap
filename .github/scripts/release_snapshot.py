@@ -28,6 +28,7 @@ ALLOWED_CHANNEL_LABELS = {"channel:stable", "channel:rc"}
 STABLE_TAG_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
 SQUASH_PR_SUFFIX_RE = re.compile(r" \(#(\d+)\)$")
 SHA_RE = re.compile(r"[0-9a-f]{40}")
+WORKFLOW_DIR_PREFIX = ".github/workflows/"
 
 
 class SnapshotError(RuntimeError):
@@ -111,6 +112,11 @@ def parse_args() -> argparse.Namespace:
     next_pending.add_argument("--notes-ref", default=DEFAULT_NOTES_REF)
     next_pending.add_argument("--main-ref", required=True)
     next_pending.add_argument("--upper-bound", default="")
+    next_pending.add_argument(
+        "--allow-workflow-changing-targets",
+        action="store_true",
+        help="Allow automatic queue selection to return pending targets whose commit diff touches .github/workflows/**.",
+    )
     next_pending.add_argument("--github-output", default=os.environ.get("GITHUB_OUTPUT", ""))
 
     mark_published = subparsers.add_parser(
@@ -527,6 +533,12 @@ def snapshot_is_published(snapshot: dict[str, Any]) -> bool:
     return isinstance(published_at, str) and bool(published_at) and release_tag_points_to_target(snapshot)
 
 
+@dataclass(frozen=True)
+class PendingTargetSelection:
+    target_sha: str
+    blocked_targets: list[str]
+
+
 def pending_release_targets(notes_ref: str, upper_bound_sha: str) -> list[str]:
     pending: list[str] = []
     for commit in first_parent_commits(upper_bound_sha):
@@ -537,6 +549,26 @@ def pending_release_targets(notes_ref: str, upper_bound_sha: str) -> list[str]:
             continue
         pending.append(commit)
     return pending
+
+
+def commit_changes_workflows(target_sha: str) -> bool:
+    changed_paths = git_output("diff-tree", "--no-commit-id", "--name-only", "-r", target_sha).splitlines()
+    return any(path.startswith(WORKFLOW_DIR_PREFIX) for path in changed_paths)
+
+
+def select_pending_release_target(
+    notes_ref: str,
+    upper_bound_sha: str,
+    *,
+    allow_workflow_changing_targets: bool,
+) -> PendingTargetSelection:
+    blocked_targets: list[str] = []
+    for commit in pending_release_targets(notes_ref, upper_bound_sha):
+        if not allow_workflow_changing_targets and commit_changes_workflows(commit):
+            blocked_targets.append(commit)
+            continue
+        return PendingTargetSelection(target_sha=commit, blocked_targets=blocked_targets)
+    return PendingTargetSelection(target_sha="", blocked_targets=blocked_targets)
 
 
 def build_snapshot(
@@ -757,8 +789,19 @@ def export_next_pending(args: argparse.Namespace) -> int:
     git("merge-base", "--is-ancestor", upper_bound, args.main_ref)
     fetch_notes_ref(args.notes_ref)
     fetch_tags()
-    pending = pending_release_targets(args.notes_ref, upper_bound)
-    export_key_values({"target_sha": pending[0] if pending else ""}, args.github_output)
+    selection = select_pending_release_target(
+        args.notes_ref,
+        upper_bound,
+        allow_workflow_changing_targets=args.allow_workflow_changing_targets,
+    )
+    export_key_values(
+        {
+            "target_sha": selection.target_sha,
+            "blocked_count": len(selection.blocked_targets),
+            "blocked_targets_csv": ",".join(selection.blocked_targets),
+        },
+        args.github_output,
+    )
     return 0
 
 

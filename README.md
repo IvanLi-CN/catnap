@@ -253,6 +253,8 @@ snapshot 使用 git notes `refs/notes/release-snapshots` 保存 `target_sha`、P
 
 如果需要对“曾修改 `.github/workflows/**` 的历史 commit”做补发，仓库还需要配置 `RELEASE_WORKFLOW_TOKEN` secret。原因是默认 `GITHUB_TOKEN` 无法为这类 commit 创建 tag / GitHub Release；该 override token 必须具备创建 release、写 PR 评论，以及处理 workflow commit 所需的权限。
 
+如果仓库没有配置 `RELEASE_WORKFLOW_TOKEN`，自动 release 队列会跳过这类 workflow-changing pending snapshots，继续发布后面仍可自动发布的 snapshot。这样可以避免整条队列卡死，但会留下版本空档；被跳过的 snapshots 仍保留在 backlog 中，未来补齐 token 后仍可手动 backfill。
+
 ### GHCR images（镜像）
 
 - 镜像：`ghcr.io/<owner>/catnap`

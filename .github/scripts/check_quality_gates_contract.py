@@ -108,6 +108,12 @@ def validate_release(path: Path) -> None:
     require_text(text, "RELEASE_TOOLING_ROOT: ${{ github.workspace }}/.release-tooling", "release.yml")
     require_text(text, "CATNAP_DOCKER_BINARY_SOURCE_ROOT: ${{ github.workspace }}/target", "release.yml")
     require_text(text, "CATNAP_DOCKER_BINARY_OUTPUT_ROOT: ${{ github.workspace }}/dist/docker", "release.yml")
+    require_text(text, "blocked_count: ${{ steps.pending-target.outputs.blocked_count }}", "release.yml")
+    require_text(text, "blocked_targets_csv: ${{ steps.pending-target.outputs.blocked_targets_csv }}", "release.yml")
+    require_text(text, "Resolve queue release auth mode", "release.yml")
+    require_text(text, "Queue selection will skip workflow-changing pending snapshots.", "release.yml")
+    require_text(text, "--allow-workflow-changing-targets", "release.yml")
+    require_text(text, "Skipped blocked pending snapshots without RELEASE_WORKFLOW_TOKEN", "release.yml")
     require_text(text, "Resolve GitHub release auth token", "release.yml")
     require_text(text, "RELEASE_WORKFLOW_TOKEN", "release.yml")
     require_text(text, "Require workflow-capable token for workflow commits", "release.yml")
@@ -160,6 +166,11 @@ def validate_release(path: Path) -> None:
     require_text(
         text,
         'python3 "${RELEASE_TOOLING_ROOT}/.github/scripts/release_snapshot.py" next-pending',
+        "release.yml",
+    )
+    require_text(
+        text,
+        "Release queue is blocked by workflow-changing snapshots that need RELEASE_WORKFLOW_TOKEN",
         "release.yml",
     )
     forbid_text(text, "bump_level", "release.yml")
