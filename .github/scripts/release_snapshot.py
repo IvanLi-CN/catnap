@@ -25,6 +25,7 @@ ALLOWED_TYPE_LABELS = {
     "type:skip",
 }
 ALLOWED_CHANNEL_LABELS = {"channel:stable", "channel:rc"}
+ALLOWED_PUBLISHED_RELEASE_MODES = {"", "direct", "reissued"}
 STABLE_TAG_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
 SQUASH_PR_SUFFIX_RE = re.compile(r" \(#(\d+)\)$")
 SHA_RE = re.compile(r"[0-9a-f]{40}")
@@ -125,6 +126,8 @@ def parse_args() -> argparse.Namespace:
     )
     mark_published.add_argument("--target-sha", required=True)
     mark_published.add_argument("--notes-ref", default=DEFAULT_NOTES_REF)
+    mark_published.add_argument("--release-tag-sha", default="")
+    mark_published.add_argument("--published-mode", choices=sorted(ALLOWED_PUBLISHED_RELEASE_MODES - {""}), default="")
 
     return parser.parse_args()
 
@@ -391,6 +394,25 @@ def validate_snapshot(payload: Any, *, expected_sha: str | None = None) -> dict[
         raise SnapshotError("Release snapshot published_at must be a string")
     payload["published_at"] = published_at
 
+    published_release_tag_sha = payload.get("published_release_tag_sha", "")
+    if published_release_tag_sha is None:
+        published_release_tag_sha = ""
+    if published_release_tag_sha != "" and (
+        not isinstance(published_release_tag_sha, str) or not SHA_RE.fullmatch(published_release_tag_sha)
+    ):
+        raise SnapshotError("Release snapshot published_release_tag_sha must be a 40-char commit SHA when present")
+    payload["published_release_tag_sha"] = published_release_tag_sha
+
+    published_release_mode = payload.get("published_release_mode", "")
+    if published_release_mode is None:
+        published_release_mode = ""
+    if not isinstance(published_release_mode, str) or published_release_mode not in ALLOWED_PUBLISHED_RELEASE_MODES:
+        raise SnapshotError(
+            "Release snapshot published_release_mode must be one of "
+            + ", ".join(sorted(ALLOWED_PUBLISHED_RELEASE_MODES))
+        )
+    payload["published_release_mode"] = published_release_mode
+
     if payload["type_label"] not in ALLOWED_TYPE_LABELS:
         raise SnapshotError(f"Unknown type label in snapshot: {payload['type_label']}")
     if payload["channel_label"] not in ALLOWED_CHANNEL_LABELS:
@@ -528,9 +550,25 @@ def release_tag_points_to_target(snapshot: dict[str, Any]) -> bool:
     return tagged_sha == target_sha
 
 
+def release_tag_points_to_snapshot(snapshot: dict[str, Any]) -> bool:
+    if not snapshot.get("release_enabled"):
+        return False
+    release_tag = snapshot.get("release_tag")
+    expected_sha = snapshot.get("published_release_tag_sha") or snapshot.get("target_sha")
+    if not isinstance(release_tag, str) or not release_tag:
+        return False
+    if not isinstance(expected_sha, str) or not SHA_RE.fullmatch(expected_sha):
+        return False
+    result = git("rev-parse", "-q", "--verify", f"refs/tags/{release_tag}", check=False)
+    if result.returncode != 0:
+        return False
+    tagged_sha = git_output("rev-list", "-n", "1", release_tag)
+    return tagged_sha == expected_sha
+
+
 def snapshot_is_published(snapshot: dict[str, Any]) -> bool:
     published_at = snapshot.get("published_at")
-    return isinstance(published_at, str) and bool(published_at) and release_tag_points_to_target(snapshot)
+    return isinstance(published_at, str) and bool(published_at) and release_tag_points_to_snapshot(snapshot)
 
 
 @dataclass(frozen=True)
@@ -617,6 +655,8 @@ def build_snapshot(
         "snapshot_source": snapshot_source,
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "published_at": "",
+        "published_release_tag_sha": "",
+        "published_release_mode": "",
     }
 
     if snapshot["release_enabled"]:
@@ -842,14 +882,21 @@ def mark_snapshot_published(args: argparse.Namespace) -> int:
     release_tag = str(snapshot.get("release_tag") or "")
     if not release_tag:
         raise SnapshotError(f"Release snapshot for {target_sha} is missing release_tag")
-    if not release_tag_points_to_target(snapshot):
-        raise SnapshotError(f"Release tag {release_tag} does not point to {target_sha}")
+    release_tag_sha = normalize_sha(args.release_tag_sha) if args.release_tag_sha else target_sha
+    result = git("rev-parse", "-q", "--verify", f"refs/tags/{release_tag}", check=False)
+    if result.returncode != 0:
+        raise SnapshotError(f"Release tag {release_tag} does not exist")
+    actual_sha = git_output("rev-list", "-n", "1", release_tag)
+    if actual_sha != release_tag_sha:
+        raise SnapshotError(f"Release tag {release_tag} points to {actual_sha} (expected {release_tag_sha})")
 
     push_snapshot_update(
         args.notes_ref,
         target_sha,
         {
             "published_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "published_release_tag_sha": release_tag_sha,
+            "published_release_mode": args.published_mode or ("direct" if release_tag_sha == target_sha else "reissued"),
         },
     )
     return 0

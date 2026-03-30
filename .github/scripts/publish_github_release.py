@@ -21,6 +21,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--target-sha", default="")
     parser.add_argument("--name", required=True)
     parser.add_argument("--prerelease", choices=("true", "false"), required=True)
+    parser.add_argument("--generate-release-notes", choices=("true", "false"), default="true")
+    parser.add_argument("--body-file", default="")
     parser.add_argument("--artifacts-dir", required=True)
     parser.add_argument("--api-root", default="https://api.github.com")
     parser.add_argument("--upload-root", default="https://uploads.github.com")
@@ -99,13 +101,17 @@ def create_or_update_release(args: argparse.Namespace) -> dict[str, object]:
     base_url = f"{args.api_root.rstrip('/')}/repos/{owner}/{repo}/releases"
     existing = release_by_tag(args.api_root, args.repository, args.token, args.tag)
     prerelease = args.prerelease == "true"
+    generate_release_notes = args.generate_release_notes == "true"
+    body = Path(args.body_file).read_text(encoding="utf-8") if args.body_file else ""
     create_payload: dict[str, object] = {
         "tag_name": args.tag,
         "name": args.name,
         "prerelease": prerelease,
-        "generate_release_notes": True,
+        "generate_release_notes": generate_release_notes,
         "make_latest": "legacy",
     }
+    if body:
+        create_payload["body"] = body
     if args.target_sha:
         create_payload["target_commitish"] = args.target_sha
 
@@ -127,6 +133,8 @@ def create_or_update_release(args: argparse.Namespace) -> dict[str, object]:
         "prerelease": prerelease,
         "make_latest": "legacy",
     }
+    if body:
+        update_payload["body"] = body
     if args.target_sha:
         update_payload["target_commitish"] = args.target_sha
     payload, _ = request_json(

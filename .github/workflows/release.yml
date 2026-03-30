@@ -150,28 +150,11 @@ jobs:
             --target-only \
             --output "$RUNNER_TEMP/release-snapshot.json"
 
-      - name: Resolve queue release auth mode
-        id: queue-release-auth
-        shell: bash
-        env:
-          RELEASE_WORKFLOW_TOKEN: ${{ secrets.RELEASE_WORKFLOW_TOKEN }}
-        run: |
-          set -euo pipefail
-          if [[ -n "${RELEASE_WORKFLOW_TOKEN}" ]]; then
-            echo "auth_mode=release_workflow_token" >> "${GITHUB_OUTPUT}"
-            echo "Workflow-capable release token is available for queue selection."
-            exit 0
-          fi
-
-          echo "auth_mode=github_token" >> "${GITHUB_OUTPUT}"
-          echo "Queue selection will skip workflow-changing pending snapshots."
-
       - name: Select pending release target
         id: pending-target
         shell: bash
         env:
           REQUESTED_SHA: ${{ steps.requested-target.outputs.target_sha }}
-          RELEASE_AUTH_MODE: ${{ steps.queue-release-auth.outputs.auth_mode }}
         run: |
           set -euo pipefail
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
@@ -189,10 +172,8 @@ jobs:
             --main-ref "origin/main"
             --upper-bound "${REQUESTED_SHA}"
             --github-output "$GITHUB_OUTPUT"
+            --allow-workflow-changing-targets
           )
-          if [[ "${RELEASE_AUTH_MODE}" == "release_workflow_token" ]]; then
-            next_pending_args+=(--allow-workflow-changing-targets)
-          fi
           python3 .github/scripts/release_snapshot.py next-pending \
             "${next_pending_args[@]}"
 
@@ -206,14 +187,8 @@ jobs:
           BLOCKED_TARGETS_CSV: ${{ steps.pending-target.outputs.blocked_targets_csv }}
         run: |
           set -euo pipefail
-          if [[ "${BLOCKED_COUNT}" != "0" ]]; then
-            echo "Skipped blocked pending snapshots without RELEASE_WORKFLOW_TOKEN: ${BLOCKED_TARGETS_CSV}"
-          fi
-
           if [[ -n "${TARGET_SHA}" ]]; then
-            echo "Selected pending release target ${TARGET_SHA}"
-          elif [[ "${BLOCKED_COUNT}" != "0" ]]; then
-            echo "No auto-publishable pending snapshot remains; blocked backlog requires RELEASE_WORKFLOW_TOKEN."
+            echo "Selected oldest pending release target ${TARGET_SHA}"
           else
             echo "Release queue is empty up to ${REQUESTED_SHA}"
           fi
@@ -222,10 +197,6 @@ jobs:
             echo "### Release queue selection"
             echo "- requested upper bound: ${REQUESTED_SHA}"
             echo "- selected target: ${TARGET_SHA:-"(none)"}"
-            echo "- blocked pending snapshots: ${BLOCKED_COUNT}"
-            if [[ "${BLOCKED_COUNT}" != "0" ]]; then
-              echo "- blocked targets: ${BLOCKED_TARGETS_CSV}"
-            fi
           } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Load immutable release snapshot
@@ -311,42 +282,49 @@ jobs:
           } >> "${GITHUB_OUTPUT}"
           echo "Using default GITHUB_TOKEN for release API calls."
 
-      - name: Require workflow-capable token for workflow commits
+      - name: Resolve release carrier strategy
+        id: release-plan
         shell: bash
         env:
           TARGET_SHA: ${{ needs.release-meta.outputs.target_sha }}
           RELEASE_AUTH_MODE: ${{ steps.release-auth.outputs.auth_mode }}
         run: |
           set -euo pipefail
-          if ! git diff-tree --no-commit-id --name-only -r "${TARGET_SHA}" | grep -Eq '^\.github/workflows/'; then
-            exit 0
-          fi
+          git fetch --no-tags origin main
+          main_head_sha="$(git rev-parse origin/main)"
 
           if [[ "${RELEASE_AUTH_MODE}" == "release_workflow_token" ]]; then
-            echo "Workflow-changing target detected; release auth override is present."
+            echo "candidate_release_target_sha=${TARGET_SHA}" >> "${GITHUB_OUTPUT}"
+            echo "candidate_release_carrier_sha=${TARGET_SHA}" >> "${GITHUB_OUTPUT}"
+            echo "Using workflow-capable release token override; release tag can target the snapshot commit directly."
             exit 0
           fi
 
-          echo "Target commit ${TARGET_SHA} changes .github/workflows/**." >&2
-          echo "Configure secret RELEASE_WORKFLOW_TOKEN with workflow-capable GitHub credentials before backfilling this release." >&2
-          exit 1
+          if git diff-tree --no-commit-id --name-only -r "${main_head_sha}" | grep -Eq '^\.github/workflows/'; then
+            echo "Current default branch head ${main_head_sha} changes .github/workflows/**." >&2
+            echo "Default GITHUB_TOKEN cannot create release tags from this head." >&2
+            echo "Merge a later non-workflow commit on main, or configure RELEASE_WORKFLOW_TOKEN, before backfilling." >&2
+            exit 1
+          fi
+
+          echo "candidate_release_target_sha=" >> "${GITHUB_OUTPUT}"
+          echo "candidate_release_carrier_sha=${main_head_sha}" >> "${GITHUB_OUTPUT}"
+          if [[ "${main_head_sha}" == "${TARGET_SHA}" ]]; then
+            echo "Using default-branch release creation; current main head already matches the snapshot commit."
+          else
+            echo "Historical snapshot ${TARGET_SHA} will be reissued via current main head ${main_head_sha}."
+          fi
 
       - name: Probe workflow-commit tag permission
+        if: steps.release-plan.outputs.candidate_release_target_sha != ''
         shell: bash
         env:
           TARGET_SHA: ${{ needs.release-meta.outputs.target_sha }}
-          RELEASE_AUTH_MODE: ${{ steps.release-auth.outputs.auth_mode }}
           RELEASE_PUBLISH_TOKEN: ${{ steps.release-auth.outputs.token }}
         run: |
           set -euo pipefail
           if ! git diff-tree --no-commit-id --name-only -r "${TARGET_SHA}" | grep -Eq '^\.github/workflows/'; then
             exit 0
-          fi
-
-          if [[ "${RELEASE_AUTH_MODE}" != "release_workflow_token" ]]; then
-            echo "Workflow-changing target detected but RELEASE_WORKFLOW_TOKEN is unavailable." >&2
-            echo "The fail-fast gate should stop this run before probe; check the guard if this path executes." >&2
-            exit 1
           fi
 
           probe_tag="__release_probe_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
@@ -509,30 +487,46 @@ jobs:
             RAW_JSON="${raw_json}" python3 "${RELEASE_TOOLING_ROOT}/.github/scripts/verify_manifest_platforms.py" "${tag}"
           done
 
-      - name: Ensure release tag exists on target commit
+      - name: Ensure release tag exists on release carrier
         id: ensure_release_tag
         shell: bash
         env:
           RELEASE_PUBLISH_TOKEN: ${{ steps.release-auth.outputs.token }}
           RELEASE_TAG: ${{ needs.release-meta.outputs.release_tag }}
           TARGET_SHA: ${{ needs.release-meta.outputs.target_sha }}
+          CANDIDATE_RELEASE_TARGET_SHA: ${{ steps.release-plan.outputs.candidate_release_target_sha }}
+          CANDIDATE_RELEASE_CARRIER_SHA: ${{ steps.release-plan.outputs.candidate_release_carrier_sha }}
         run: |
           set -euo pipefail
+          expected_sha="${CANDIDATE_RELEASE_TARGET_SHA:-${CANDIDATE_RELEASE_CARRIER_SHA}}"
+          if [[ -z "${expected_sha}" ]]; then
+            echo "Missing release carrier SHA for ${RELEASE_TAG}" >&2
+            exit 1
+          fi
           git fetch --tags origin
 
           if git rev-parse -q --verify "refs/tags/${RELEASE_TAG}" >/dev/null; then
             actual="$(git rev-list -n 1 "${RELEASE_TAG}")"
-            if [[ "${actual}" != "${TARGET_SHA}" ]]; then
-              echo "Release tag ${RELEASE_TAG} already points to ${actual} (expected ${TARGET_SHA})" >&2
+            if [[ "${actual}" != "${expected_sha}" ]]; then
+              echo "Release tag ${RELEASE_TAG} already points to ${actual} (expected ${expected_sha})" >&2
               exit 1
             fi
-            echo "release_tag_needs_api_create=false" >> "${GITHUB_OUTPUT}"
-            echo "Release tag ${RELEASE_TAG} already exists on ${TARGET_SHA}."
+            echo "release_create_mode=existing_tag" >> "${GITHUB_OUTPUT}"
+            echo "resolved_release_tag_sha=${actual}" >> "${GITHUB_OUTPUT}"
+            echo "Release tag ${RELEASE_TAG} already exists on ${actual}."
+            exit 0
+          fi
+
+          if [[ -z "${CANDIDATE_RELEASE_TARGET_SHA}" ]]; then
+            echo "release_create_mode=api_default_branch" >> "${GITHUB_OUTPUT}"
+            echo "resolved_release_tag_sha=${CANDIDATE_RELEASE_CARRIER_SHA}" >> "${GITHUB_OUTPUT}"
+            echo "GitHub Release API will create ${RELEASE_TAG} from default branch head ${CANDIDATE_RELEASE_CARRIER_SHA}."
             exit 0
           fi
 
           if ! git diff-tree --no-commit-id --name-only -r "${TARGET_SHA}" | grep -Eq '^\.github/workflows/'; then
-            echo "release_tag_needs_api_create=true" >> "${GITHUB_OUTPUT}"
+            echo "release_create_mode=api_target_sha" >> "${GITHUB_OUTPUT}"
+            echo "resolved_release_tag_sha=${CANDIDATE_RELEASE_TARGET_SHA}" >> "${GITHUB_OUTPUT}"
             echo "Release target does not change workflows; GitHub Release API will create tag ${RELEASE_TAG}."
             exit 0
           fi
@@ -545,16 +539,53 @@ jobs:
           git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${auth_header}" \
             push origin "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
           git fetch --tags origin
-          echo "release_tag_needs_api_create=false" >> "${GITHUB_OUTPUT}"
+          echo "release_create_mode=precreated_tag" >> "${GITHUB_OUTPUT}"
+          echo "resolved_release_tag_sha=${CANDIDATE_RELEASE_TARGET_SHA}" >> "${GITHUB_OUTPUT}"
+
+      - name: Prepare GitHub Release body
+        id: release-body
+        shell: bash
+        env:
+          TARGET_SHA: ${{ needs.release-meta.outputs.target_sha }}
+          RELEASE_TAG_SHA: ${{ steps.ensure_release_tag.outputs.resolved_release_tag_sha }}
+          RELEASE_CHANNEL: ${{ needs.release-meta.outputs.release_channel }}
+          RELEASE_PR_NUMBER: ${{ needs.release-meta.outputs.pr_number }}
+        run: |
+          set -euo pipefail
+          if [[ "${RELEASE_TAG_SHA}" == "${TARGET_SHA}" ]]; then
+            echo "body_file=" >> "${GITHUB_OUTPUT}"
+            echo "generate_release_notes=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          body_file="${RUNNER_TEMP}/github-release-body.md"
+          {
+            echo "Backfilled from immutable snapshot [\`${TARGET_SHA}\`](https://github.com/${GITHUB_REPOSITORY}/commit/${TARGET_SHA})."
+            echo
+            echo "Source snapshot commit: [\`${TARGET_SHA}\`](https://github.com/${GITHUB_REPOSITORY}/commit/${TARGET_SHA})"
+            echo "Release tag carrier commit: [\`${RELEASE_TAG_SHA}\`](https://github.com/${GITHUB_REPOSITORY}/commit/${RELEASE_TAG_SHA})"
+            echo "Channel: \`${RELEASE_CHANNEL}\`"
+            if [[ -n "${RELEASE_PR_NUMBER}" ]]; then
+              echo "Original PR: #${RELEASE_PR_NUMBER}"
+            fi
+            echo
+            echo "This GitHub Release was reissued without \`RELEASE_WORKFLOW_TOKEN\`."
+            echo "The release tag points to the non-workflow carrier commit above, while the attached binaries and published container image were built from the source snapshot commit."
+          } > "${body_file}"
+
+          echo "body_file=${body_file}" >> "${GITHUB_OUTPUT}"
+          echo "generate_release_notes=false" >> "${GITHUB_OUTPUT}"
 
       - name: Create or update GitHub Release and upload assets
         shell: bash
         env:
           RELEASE_PUBLISH_TOKEN: ${{ steps.release-auth.outputs.token }}
-          RELEASE_TAG_NEEDS_API_CREATE: ${{ steps.ensure_release_tag.outputs.release_tag_needs_api_create }}
+          RELEASE_CREATE_MODE: ${{ steps.ensure_release_tag.outputs.release_create_mode }}
           RELEASE_TAG: ${{ needs.release-meta.outputs.release_tag }}
           RELEASE_PRERELEASE: ${{ needs.release-meta.outputs.release_prerelease }}
           TARGET_SHA: ${{ needs.release-meta.outputs.target_sha }}
+          RELEASE_BODY_FILE: ${{ steps.release-body.outputs.body_file }}
+          GENERATE_RELEASE_NOTES: ${{ steps.release-body.outputs.generate_release_notes }}
         run: |
           set -euo pipefail
           release_args=(
@@ -563,24 +594,28 @@ jobs:
             --tag "${RELEASE_TAG}"
             --name "${RELEASE_TAG}"
             --prerelease "${RELEASE_PRERELEASE}"
+            --generate-release-notes "${GENERATE_RELEASE_NOTES}"
             --artifacts-dir dist/release-assets
           )
-          if [[ "${RELEASE_TAG_NEEDS_API_CREATE}" == "true" ]]; then
+          if [[ -n "${RELEASE_BODY_FILE}" ]]; then
+            release_args+=(--body-file "${RELEASE_BODY_FILE}")
+          fi
+          if [[ "${RELEASE_CREATE_MODE}" == "api_target_sha" ]]; then
             release_args+=(--target-sha "${TARGET_SHA}")
           fi
           python3 "${RELEASE_TOOLING_ROOT}/.github/scripts/publish_github_release.py" "${release_args[@]}"
 
-      - name: Verify release tag points to target commit
+      - name: Verify release tag points to resolved carrier commit
         shell: bash
         env:
           RELEASE_TAG: ${{ needs.release-meta.outputs.release_tag }}
-          TARGET_SHA: ${{ needs.release-meta.outputs.target_sha }}
+          RELEASE_TAG_SHA: ${{ steps.ensure_release_tag.outputs.resolved_release_tag_sha }}
         run: |
           set -euo pipefail
           git fetch --tags origin
           actual="$(git rev-list -n 1 "${RELEASE_TAG}")"
-          if [[ "${actual}" != "${TARGET_SHA}" ]]; then
-            echo "Release tag ${RELEASE_TAG} points to ${actual} (expected ${TARGET_SHA})" >&2
+          if [[ "${actual}" != "${RELEASE_TAG_SHA}" ]]; then
+            echo "Release tag ${RELEASE_TAG} points to ${actual} (expected ${RELEASE_TAG_SHA})" >&2
             exit 1
           fi
 
@@ -588,6 +623,7 @@ jobs:
         uses: actions/github-script@v7
         env:
           TARGET_SHA: ${{ needs.release-meta.outputs.target_sha }}
+          RELEASE_TAG_SHA: ${{ steps.ensure_release_tag.outputs.resolved_release_tag_sha }}
           RELEASE_TAG: ${{ needs.release-meta.outputs.release_tag }}
           APP_EFFECTIVE_VERSION: ${{ needs.release-meta.outputs.app_effective_version }}
           RELEASE_PR_NUMBER: ${{ needs.release-meta.outputs.pr_number }}
@@ -602,6 +638,7 @@ jobs:
             const appVersion = process.env.APP_EFFECTIVE_VERSION
             const releaseChannel = process.env.RELEASE_CHANNEL || '(unknown)'
             const targetSha = process.env.TARGET_SHA || '(unknown)'
+            const releaseTagSha = process.env.RELEASE_TAG_SHA || targetSha
             const issueNumber = Number(rawPrNumber)
 
             if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
@@ -619,8 +656,16 @@ jobs:
               `Released in [\`${releaseTag}\`](${releaseUrl})`,
               `Version: \`${appVersion}\``,
               `Channel: \`${releaseChannel}\``,
-              `Commit: \`${targetSha}\``,
             ].join('\n')
+            const lines = body.split('\n')
+            lines.push(`Snapshot commit: \`${targetSha}\``)
+            if (releaseTagSha !== targetSha) {
+              lines.push(`Release tag carrier: \`${releaseTagSha}\``)
+              lines.push('Publish mode: `reissued`')
+            } else {
+              lines.push(`Commit: \`${targetSha}\``)
+            }
+            const renderedBody = lines.join('\n')
 
             try {
               const comments = await github.paginate(github.rest.issues.listComments, {
@@ -650,7 +695,7 @@ jobs:
                   owner,
                   repo,
                   comment_id: existing.id,
-                  body,
+                  body: renderedBody,
                 })
                 core.notice(`Updated PR #${issueNumber} release version comment for ${releaseTag}`)
                 return
@@ -660,7 +705,7 @@ jobs:
                 owner,
                 repo,
                 issue_number: issueNumber,
-                body,
+                body: renderedBody,
               })
               core.notice(`Created PR #${issueNumber} release version comment for ${releaseTag}`)
             } catch (error) {
@@ -675,22 +720,27 @@ jobs:
         env:
           RELEASE_PUBLISH_TOKEN: ${{ steps.release-auth.outputs.token }}
           TARGET_SHA: ${{ needs.release-meta.outputs.target_sha }}
+          RELEASE_TAG_SHA: ${{ steps.ensure_release_tag.outputs.resolved_release_tag_sha }}
         run: |
           set -euo pipefail
           auth_header="$(printf 'x-access-token:%s' "${RELEASE_PUBLISH_TOKEN}" | base64 | tr -d '\n')"
           git config --local http.https://github.com/.extraheader "AUTHORIZATION: basic ${auth_header}"
           trap 'git config --local --unset-all http.https://github.com/.extraheader || true' EXIT
           git fetch --no-tags origin "+${RELEASE_SNAPSHOT_NOTES_REF}:${RELEASE_SNAPSHOT_NOTES_REF}" || true
+          published_mode="direct"
+          if [[ "${RELEASE_TAG_SHA}" != "${TARGET_SHA}" ]]; then
+            published_mode="reissued"
+          fi
           python3 "${RELEASE_TOOLING_ROOT}/.github/scripts/release_snapshot.py" mark-published \
             --target-sha "${TARGET_SHA}" \
-            --notes-ref "${RELEASE_SNAPSHOT_NOTES_REF}"
+            --notes-ref "${RELEASE_SNAPSHOT_NOTES_REF}" \
+            --release-tag-sha "${RELEASE_TAG_SHA}" \
+            --published-mode "${published_mode}"
 
       - name: Resolve next pending release target
         if: github.event_name != 'workflow_dispatch'
         id: next-pending
         shell: bash
-        env:
-          RELEASE_AUTH_MODE: ${{ steps.release-auth.outputs.auth_mode }}
         run: |
           set -euo pipefail
           git fetch --no-tags origin main
@@ -701,10 +751,8 @@ jobs:
             --main-ref "origin/main"
             --upper-bound "$(git rev-parse origin/main)"
             --github-output "$GITHUB_OUTPUT"
+            --allow-workflow-changing-targets
           )
-          if [[ "${RELEASE_AUTH_MODE}" == "release_workflow_token" ]]; then
-            next_pending_args+=(--allow-workflow-changing-targets)
-          fi
           python3 "${RELEASE_TOOLING_ROOT}/.github/scripts/release_snapshot.py" next-pending \
             "${next_pending_args[@]}"
 
@@ -713,19 +761,11 @@ jobs:
         uses: actions/github-script@v7
         env:
           NEXT_TARGET_SHA: ${{ steps.next-pending.outputs.target_sha }}
-          BLOCKED_COUNT: ${{ steps.next-pending.outputs.blocked_count }}
-          BLOCKED_TARGETS_CSV: ${{ steps.next-pending.outputs.blocked_targets_csv }}
         with:
           script: |
             const { owner, repo } = context.repo
             const nextSha = process.env.NEXT_TARGET_SHA
-            const blockedCount = Number(process.env.BLOCKED_COUNT || '0')
-            const blockedTargets = process.env.BLOCKED_TARGETS_CSV || ''
             if (!nextSha) {
-              if (blockedCount > 0) {
-                core.notice(`Release queue is blocked by workflow-changing snapshots that need RELEASE_WORKFLOW_TOKEN: ${blockedTargets}`)
-                return
-              }
               core.notice('Release queue is empty.')
               return
             }

@@ -110,21 +110,16 @@ def validate_release(path: Path) -> None:
     require_text(text, "CATNAP_DOCKER_BINARY_OUTPUT_ROOT: ${{ github.workspace }}/dist/docker", "release.yml")
     require_text(text, "blocked_count: ${{ steps.pending-target.outputs.blocked_count }}", "release.yml")
     require_text(text, "blocked_targets_csv: ${{ steps.pending-target.outputs.blocked_targets_csv }}", "release.yml")
-    require_text(text, "Resolve queue release auth mode", "release.yml")
-    require_text(text, "Queue selection will skip workflow-changing pending snapshots.", "release.yml")
     require_text(text, "--allow-workflow-changing-targets", "release.yml")
-    require_text(text, "Skipped blocked pending snapshots without RELEASE_WORKFLOW_TOKEN", "release.yml")
     require_text(text, "Resolve GitHub release auth token", "release.yml")
     require_text(text, "RELEASE_WORKFLOW_TOKEN", "release.yml")
-    require_text(text, "Require workflow-capable token for workflow commits", "release.yml")
+    require_text(text, "Resolve release carrier strategy", "release.yml")
+    require_text(text, "candidate_release_target_sha", "release.yml")
+    require_text(text, "candidate_release_carrier_sha", "release.yml")
+    require_text(text, "Current default branch head ${main_head_sha} changes .github/workflows/**.", "release.yml")
+    require_text(text, "Historical snapshot ${TARGET_SHA} will be reissued via current main head", "release.yml")
     require_text(text, "Probe workflow-commit tag permission", "release.yml")
     require_text(text, 'git diff-tree --no-commit-id --name-only -r "${TARGET_SHA}"', "release.yml")
-    require_text(text, "Workflow-changing target detected but RELEASE_WORKFLOW_TOKEN is unavailable.", "release.yml")
-    require_text(
-        text,
-        'if [[ "${RELEASE_AUTH_MODE}" != "release_workflow_token" ]]; then',
-        "release.yml",
-    )
     require_text(text, "Configured RELEASE_WORKFLOW_TOKEN still cannot tag workflow-changing commit", "release.yml")
     require_text(text, "persist-credentials: false", "release.yml")
     require_text(text, "Configure git identity for release notes", "release.yml")
@@ -135,28 +130,34 @@ def validate_release(path: Path) -> None:
         "release.yml",
     )
     require_text(text, "publish_github_release.py", "release.yml")
-    require_text(text, "Ensure release tag exists on target commit", "release.yml")
+    require_text(text, "Ensure release tag exists on release carrier", "release.yml")
     require_text(text, "Release target does not change workflows; GitHub Release API will create tag", "release.yml")
+    require_text(text, "GitHub Release API will create ${RELEASE_TAG} from default branch head", "release.yml")
     require_text(text, "git config --local --unset-all http.https://github.com/.extraheader || true", "release.yml")
     require_text(text, "git tag \"${RELEASE_TAG}\" \"${TARGET_SHA}\"", "release.yml")
     require_text(text, "--artifacts-dir dist/release-assets", "release.yml")
-    require_text(
-        text,
-        "RELEASE_TAG_NEEDS_API_CREATE: ${{ steps.ensure_release_tag.outputs.release_tag_needs_api_create }}",
-        "release.yml",
-    )
-    require_text(text, 'if [[ "${RELEASE_TAG_NEEDS_API_CREATE}" == "true" ]]; then', "release.yml")
+    require_text(text, "RELEASE_CREATE_MODE: ${{ steps.ensure_release_tag.outputs.release_create_mode }}", "release.yml")
+    require_text(text, 'if [[ "${RELEASE_CREATE_MODE}" == "api_target_sha" ]]; then', "release.yml")
     require_text(text, 'release_args+=(--target-sha "${TARGET_SHA}")', "release.yml")
-    require_text(text, "Verify release tag points to target commit", "release.yml")
+    require_text(text, "Prepare GitHub Release body", "release.yml")
+    require_text(text, "Backfilled from immutable snapshot", "release.yml")
+    require_text(text, "--generate-release-notes", "release.yml")
+    require_text(text, "--body-file", "release.yml")
+    require_text(text, "Verify release tag points to resolved carrier commit", "release.yml")
     require_text(text, "issues: write", "release.yml")
     require_text(text, "pull-requests: write", "release.yml")
     require_text(text, "github-token: ${{ steps.release-auth.outputs.token }}", "release.yml")
     require_text(text, "codex-release-version-comment", "release.yml")
+    require_text(text, "Snapshot commit:", "release.yml")
+    require_text(text, "Release tag carrier:", "release.yml")
+    require_text(text, "Publish mode: `reissued`", "release.yml")
     require_text(
         text,
         'python3 "${RELEASE_TOOLING_ROOT}/.github/scripts/release_snapshot.py" mark-published',
         "release.yml",
     )
+    require_text(text, "--release-tag-sha", "release.yml")
+    require_text(text, "--published-mode", "release.yml")
     require_text(text, "RELEASE_PUBLISH_TOKEN: ${{ steps.release-auth.outputs.token }}", "release.yml")
     require_text(
         text,
@@ -168,15 +169,14 @@ def validate_release(path: Path) -> None:
         'python3 "${RELEASE_TOOLING_ROOT}/.github/scripts/release_snapshot.py" next-pending',
         "release.yml",
     )
-    require_text(
-        text,
-        "Release queue is blocked by workflow-changing snapshots that need RELEASE_WORKFLOW_TOKEN",
-        "release.yml",
-    )
     forbid_text(text, "bump_level", "release.yml")
     forbid_text(text, "release-intent.sh", "release.yml")
     forbid_text(text, "git push origin \"${tag}\"", "release.yml")
     forbid_text(text, "ncipollo/release-action@v1", "release.yml")
+    forbid_text(text, "Queue selection will skip workflow-changing pending snapshots.", "release.yml")
+    forbid_text(text, "Skipped blocked pending snapshots without RELEASE_WORKFLOW_TOKEN", "release.yml")
+    forbid_text(text, "Require workflow-capable token for workflow commits", "release.yml")
+    forbid_text(text, "Release queue is blocked by workflow-changing snapshots that need RELEASE_WORKFLOW_TOKEN", "release.yml")
 
 
 def validate_label_gate(path: Path) -> None:
