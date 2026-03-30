@@ -257,6 +257,8 @@ snapshot 使用 git notes `refs/notes/release-snapshots` 保存 `target_sha`、P
 
 如果当前 `main` 的最新 commit 本身修改了 `.github/workflows/**`，默认 `GITHUB_TOKEN` 仍然无法从这个 head 创建 release/tag。此时需要先让 `main` 再前进到一个**不修改 workflow** 的 commit，队列就会自动继续 drain backlog；只有确实要把 tag 直接落在 workflow-changing target 上时，才需要 `RELEASE_WORKFLOW_TOKEN`。
 
+这个“安全 carrier commit”本身可以只是 `type:docs` 或 `type:skip` 的非-workflow 变更；它的作用只是给 backlog 补发提供一个可用的默认 branch head，不会额外消耗新的发布版本号。
+
 ### GHCR images（镜像）
 
 - 镜像：`ghcr.io/<owner>/catnap`
