@@ -1155,8 +1155,13 @@ async fn lazycat_sync_preserves_cached_data_when_bare_pagination_is_unresolved()
         <tr><td><a href="/servicedetail?id=2312">港湾 Transit Mini(srvQ8L2M5R1P9K)</a></td></tr>
       </tbody>
     </table>
-    <a href="/clientarea?action=list&page=1">1</a>
-    <a href="/clientarea?page=2" data-page="2"></a>
+    <section class="page-links">
+      <a href="/clientarea?action=list&page=1">1</a>
+    </section>
+    <div class="spacer">帮助文档</div>
+    <aside>
+      <a href="/clientarea?page=2"></a>
+    </aside>
   </body>
 </html>"#;
     let page2 = r#"<!DOCTYPE html>

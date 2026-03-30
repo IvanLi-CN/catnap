@@ -1816,8 +1816,10 @@ fn bare_clientarea_page_link_is_pagination(
 ) -> bool {
     looks_like_pagination_label(link_text, page)
         || has_pagination_hint_in_ancestors(link, page)
+        || (!bare_clientarea_page_link_is_non_pagination_content(link_text, page)
+            && has_adjacent_pagination_context(link, base_url))
         || (link_allows_pagination_peer_inference(link, link_text)
-            && has_explicit_clientarea_pagination_peer(link, base_url))
+            && has_local_pagination_context(link, base_url))
 }
 
 fn bare_clientarea_page_link_is_non_pagination_content(link_text: &str, page: usize) -> bool {
@@ -1922,12 +1924,10 @@ fn element_has_pagination_hint(element: ElementRef<'_>, page: usize) -> bool {
     false
 }
 
-fn link_allows_pagination_peer_inference(link: ElementRef<'_>, link_text: &str) -> bool {
+fn link_allows_pagination_peer_inference(_link: ElementRef<'_>, link_text: &str) -> bool {
     let normalized = link_text.trim();
     if normalized.is_empty() {
-        return link
-            .descendent_elements()
-            .any(|element| matches!(element.value().name(), "img" | "svg" | "span" | "i"));
+        return true;
     }
     !normalized.is_empty()
         && normalized.chars().all(|ch| {
@@ -1938,39 +1938,101 @@ fn link_allows_pagination_peer_inference(link: ElementRef<'_>, link_text: &str) 
         })
 }
 
-fn has_explicit_clientarea_pagination_peer(link: ElementRef<'_>, base_url: &Url) -> bool {
-    let non_body_peer = link
+fn has_local_pagination_context(link: ElementRef<'_>, base_url: &Url) -> bool {
+    let non_body_context = link
         .ancestors()
         .filter_map(ElementRef::wrap)
         .skip(1)
         .take_while(|element| !matches!(element.value().name(), "html" | "body"))
         .any(|ancestor| {
-            ancestor.descendent_elements().any(|element| {
-                clientarea_page_link_has_explicit_pagination_signal(element, base_url)
-            })
+            elements_support_pagination_inference(ancestor.descendent_elements(), base_url)
         });
-    if non_body_peer {
+    if non_body_context {
         return true;
     }
-    let Some(body) = link
-        .ancestors()
-        .filter_map(ElementRef::wrap)
-        .find(|element| element.value().name() == "body")
-    else {
+
+    let Some(body_child) = top_level_body_child(link) else {
         return false;
     };
-    body.child_elements()
-        .any(|element| element_or_descendants_have_explicit_pagination_signal(element, base_url))
+    body_neighborhood_supports_pagination_inference(body_child, base_url)
 }
 
-fn element_or_descendants_have_explicit_pagination_signal(
-    element: ElementRef<'_>,
+fn has_adjacent_pagination_context(link: ElementRef<'_>, base_url: &Url) -> bool {
+    elements_support_pagination_inference(
+        link.prev_siblings()
+            .filter_map(ElementRef::wrap)
+            .take(1)
+            .chain(std::iter::once(link))
+            .chain(link.next_siblings().filter_map(ElementRef::wrap).take(1))
+            .flat_map(|element| element.descendent_elements()),
+        base_url,
+    )
+}
+
+fn top_level_body_child(link: ElementRef<'_>) -> Option<ElementRef<'_>> {
+    link.ancestors()
+        .filter_map(ElementRef::wrap)
+        .take_while(|element| !matches!(element.value().name(), "html"))
+        .find(|element| {
+            element
+                .parent()
+                .and_then(ElementRef::wrap)
+                .is_some_and(|parent| parent.value().name() == "body")
+        })
+}
+
+fn body_neighborhood_supports_pagination_inference(
+    body_child: ElementRef<'_>,
     base_url: &Url,
 ) -> bool {
-    clientarea_page_link_has_explicit_pagination_signal(element, base_url)
-        || element.descendent_elements().any(|descendant| {
-            clientarea_page_link_has_explicit_pagination_signal(descendant, base_url)
-        })
+    elements_support_pagination_inference(
+        body_child
+            .prev_siblings()
+            .filter_map(ElementRef::wrap)
+            .take(1)
+            .chain(std::iter::once(body_child))
+            .chain(
+                body_child
+                    .next_siblings()
+                    .filter_map(ElementRef::wrap)
+                    .take(1),
+            )
+            .flat_map(|element| element.descendent_elements()),
+        base_url,
+    )
+}
+
+fn elements_support_pagination_inference<'a, I>(elements: I, base_url: &Url) -> bool
+where
+    I: IntoIterator<Item = ElementRef<'a>>,
+{
+    let mut distinct_pages = HashSet::new();
+    for element in elements {
+        if clientarea_page_link_has_explicit_pagination_signal(element, base_url) {
+            return true;
+        }
+        if let Some(page) = pagination_candidate_page(element, base_url) {
+            distinct_pages.insert(page);
+        }
+    }
+    distinct_pages.len() >= 2
+}
+
+fn pagination_candidate_page(element: ElementRef<'_>, base_url: &Url) -> Option<usize> {
+    let href = element.attr("href")?;
+    let url = base_url.join(href).ok()?;
+    if url.path() != "/clientarea" {
+        return None;
+    }
+    let (action, page) = parse_clientarea_page_link(&url)?;
+    if action.as_deref() == Some("list") {
+        return Some(page);
+    }
+    if action.is_some() {
+        return None;
+    }
+    let link_text = normalized_element_text(element);
+    (!bare_clientarea_page_link_is_non_pagination_content(&link_text, page)).then_some(page)
 }
 
 fn classify_empty_clientarea_page(document: &Html) -> ClientareaEmptyState {
@@ -2788,10 +2850,10 @@ mod tests {
       </tbody>
     </table>
     <div class="pager-primary">
-      <a href="/clientarea?action=list&page=1">1</a>
+      <a href="/clientarea?page=1">1</a>
     </div>
     <div class="pager-secondary">
-      <span><a href="/clientarea?page=4"><span aria-hidden="true">⇥</span></a></span>
+      <span><a href="/clientarea?page=4"></a></span>
     </div>
   </body>
 </html>"#;
@@ -2843,8 +2905,13 @@ mod tests {
         <tr><td><a href="/servicedetail?id=8008">Sydney Edge(srvS8D7Y6N5)</a></td></tr>
       </tbody>
     </table>
-    <a href="/clientarea?action=list&page=1">1</a>
-    <a href="/clientarea?page=2" data-page="2"></a>
+    <section class="page-links">
+      <a href="/clientarea?action=list&page=1">1</a>
+    </section>
+    <div class="spacer">帮助文档</div>
+    <aside>
+      <a href="/clientarea?page=2"></a>
+    </aside>
   </body>
 </html>"#;
         let parsed_unresolved = parse_clientarea_page(unresolved).unwrap();
@@ -3150,10 +3217,10 @@ mod tests {
       </tbody>
     </table>
     <div class="pager-primary">
-      <a href="/clientarea?action=list&page=1">1</a>
+      <a href="/clientarea?page=1">1</a>
     </div>
     <div class="pager-secondary">
-      <span><a href="/clientarea?page=2"><span aria-hidden="true">⇥</span></a></span>
+      <span><a href="/clientarea?page=2"></a></span>
     </div>
   </body>
 </html>"#;
