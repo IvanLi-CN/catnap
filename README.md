@@ -253,7 +253,7 @@ snapshot 使用 git notes `refs/notes/release-snapshots` 保存 `target_sha`、P
 
 如果仓库配置了 `RELEASE_WORKFLOW_TOKEN`，历史 snapshot 会直接把 release tag 落在原始 `target_sha` 上。
 
-如果仓库没有配置 `RELEASE_WORKFLOW_TOKEN`，`Release` 仍然可以补发历史 snapshot，但会进入 reissued 模式：GitHub Release 的 tag 改由**当前 `main` 上最新的非-workflow commit**承载，而附带的二进制和 GHCR 镜像仍然来自原始 `target_sha`。对应 PR 评论和 Release 正文都会同时写出 source snapshot commit 与 tag carrier commit。
+如果仓库没有配置 `RELEASE_WORKFLOW_TOKEN`，`Release` 仍然可以补发历史 snapshot，但会优先复用已经存在的历史 release tag；只有 release tag 尚不存在时，才进入 reissued 模式：GitHub Release 的 tag 改由**当前 `main` 上最新的非-workflow commit**承载，而附带的二进制和 GHCR 镜像仍然来自原始 `target_sha`。对应 PR 评论和 Release 正文都会同时写出 source snapshot commit，与仅在 reissued 模式下出现的 tag carrier commit。
 
 如果当前 `main` 的最新 commit 本身修改了 `.github/workflows/**`，默认 `GITHUB_TOKEN` 仍然无法从这个 head 创建 release/tag。此时需要先让 `main` 再前进到一个**不修改 workflow** 的 commit，队列就会自动继续 drain backlog；只有确实要把 tag 直接落在 workflow-changing target 上时，才需要 `RELEASE_WORKFLOW_TOKEN`。
 
@@ -298,7 +298,7 @@ sha256sum -c catnap_<semver>_linux_amd64_gnu.tar.gz.sha256
 - 用途：补发漏掉的版本，或重跑已冻结 snapshot 对应的发布链路
 - 手动补发会先校验该 commit 曾经通过 `CI Main`，或在迁移期通过过旧 `CI Pipeline` 的 `push main` 校验
 - 历史上没有 `channel:*` 的已合并未发布 PR，仅在这条手动 backfill 路径上允许一次性默认映射为 `channel:stable`
-- 若仓库没有 `RELEASE_WORKFLOW_TOKEN`，手动 backfill 会沿用当前 `main` 的最新非-workflow commit 作为 tag carrier；若当前 `main` head 仍修改了 `.github/workflows/**`，则需要先让 `main` 再前进到一个非-workflow commit
+- 若仓库没有 `RELEASE_WORKFLOW_TOKEN`，手动 backfill 会先复用已存在的历史 tag；只有 tag 尚不存在时，才沿用当前 `main` 的最新非-workflow commit 作为 tag carrier。若当前 `main` head 仍修改了 `.github/workflows/**`，则需要先让 `main` 再前进到一个非-workflow commit
 
 旧入口已经退役：
 
@@ -313,7 +313,7 @@ sha256sum -c catnap_<semver>_linux_amd64_gnu.tar.gz.sha256
 - `APP_EFFECTIVE_VERSION`
 - channel
 - source snapshot commit
-- reissued 模式下的 tag carrier commit
+- reissued 模式下额外写出的 tag carrier commit
 - GitHub Release 链接
 
 ### Smoke test（本地/CI）
