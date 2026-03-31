@@ -131,10 +131,11 @@ def validate_release(path: Path) -> None:
     )
     require_text(text, "publish_github_release.py", "release.yml")
     require_text(text, "Ensure release tag exists on release carrier", "release.yml")
-    require_text(text, "Release target does not change workflows; GitHub Release API will create tag", "release.yml")
-    require_text(text, "GitHub Release API will create ${RELEASE_TAG} from default branch head", "release.yml")
+    require_text(text, "resolve_release_tag.py", "release.yml")
+    require_text(text, 'source "${plan_file}"', "release.yml")
+    require_text(text, 'if [[ "${release_create_mode}" != "precreated_tag" ]]; then', "release.yml")
     require_text(text, "git config --local --unset-all http.https://github.com/.extraheader || true", "release.yml")
-    require_text(text, "git tag \"${RELEASE_TAG}\" \"${TARGET_SHA}\"", "release.yml")
+    require_text(text, "git tag -f \"${RELEASE_TAG}\" \"${TARGET_SHA}\"", "release.yml")
     require_text(text, "--artifacts-dir dist/release-assets", "release.yml")
     require_text(text, "RELEASE_CREATE_MODE: ${{ steps.ensure_release_tag.outputs.release_create_mode }}", "release.yml")
     require_text(text, 'if [[ "${RELEASE_CREATE_MODE}" == "api_target_sha" ]]; then', "release.yml")
@@ -177,6 +178,19 @@ def validate_release(path: Path) -> None:
     forbid_text(text, "Skipped blocked pending snapshots without RELEASE_WORKFLOW_TOKEN", "release.yml")
     forbid_text(text, "Require workflow-capable token for workflow commits", "release.yml")
     forbid_text(text, "Release queue is blocked by workflow-changing snapshots that need RELEASE_WORKFLOW_TOKEN", "release.yml")
+
+
+def validate_release_tag_resolver(path: Path) -> None:
+    text = path.read_text()
+    require_text(text, "reusing the historical tag instead of carrier", "resolve_release_tag.py")
+    require_text(text, "release_create_mode", "resolve_release_tag.py")
+    require_text(text, "resolved_release_tag_sha", "resolve_release_tag.py")
+    require_text(text, "expected one of", "resolve_release_tag.py")
+    require_text(text, "api_default_branch", "resolve_release_tag.py")
+    require_text(text, "api_target_sha", "resolve_release_tag.py")
+    require_text(text, "precreated_tag", "resolve_release_tag.py")
+    require_text(text, "Release target does not change workflows; GitHub Release API will create tag", "resolve_release_tag.py")
+    require_text(text, "GitHub Release API will create", "resolve_release_tag.py")
 
 
 def validate_label_gate(path: Path) -> None:
@@ -261,6 +275,7 @@ def main() -> int:
       validate_ci_pr(repo_root / ".github" / "workflows" / "ci-pr.yml")
       validate_ci_main(repo_root / ".github" / "workflows" / "ci-main.yml")
       validate_release(repo_root / ".github" / "workflows" / "release.yml")
+      validate_release_tag_resolver(repo_root / ".github" / "scripts" / "resolve_release_tag.py")
       validate_label_gate(repo_root / ".github" / "workflows" / "label-gate.yml")
       validate_review_policy(repo_root / ".github" / "workflows" / "review-policy.yml")
       validate_merge_group_helpers(module, fixtures_dir)
