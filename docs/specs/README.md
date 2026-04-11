@@ -60,4 +60,4 @@
 | wzc6m | 关于：版本号显示 + 升级提示 + 仓库地址显示 | 已完成 | `wzc6m-about-version-update-meta/SPEC.md` | 2026-02-17 | -  |
 | jqp64 | 上游站点域名迁移（lxc.lazycat.wiki） | 已完成 | `jqp64-upstream-domain-lxc-lazycat-wiki/SPEC.md` | 2026-02-21 | PR #44  |
 | xvecz | Codex：安装 UI UX Pro Max 技能 | 已完成 | `xvecz-install-ui-ux-pro-max-codex/SPEC.md` | 2026-02-26 | - |
-| 4ttc3 | 机器卡片：动作区上移与详情页入口 | 部分完成（3/4） | `4ttc3-machines-action-row-detail-link/SPEC.md` | 2026-04-11 | `detailUrl` 契约、四按钮动作区重排与 Storybook 视觉证据已完成，待 PR / review-loop 收口 |
+| 4ttc3 | 机器卡片：动作区上移与详情页入口 | 已完成 | `4ttc3-machines-action-row-detail-link/SPEC.md` | 2026-04-11 | PR #98：`detailUrl` 契约、四按钮动作区重排、视觉证据与 review-loop 收口完成 |

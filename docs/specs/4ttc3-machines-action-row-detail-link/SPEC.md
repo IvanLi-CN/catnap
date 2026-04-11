@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 部分完成（3/4）
+- Status: 已完成
 - Created: 2026-04-11
 - Last: 2026-04-11
 
@@ -90,7 +90,7 @@
 - [x] M1: 新增 delta spec 与 `detailUrl` HTTP 契约
 - [x] M2: 机器列表接口补 `detailUrl` 并覆盖 Rust/API 测试
 - [x] M3: MachinesView 完成动作区重排、详情按钮与响应式 2x2 网格
-- [ ] M4: Storybook autodocs / play / 视觉证据完成并收敛到 merge-ready PR
+- [x] M4: Storybook autodocs / play / 视觉证据完成并收敛到 merge-ready PR
 
 ## Visual Evidence
 
@@ -126,3 +126,4 @@
 - 2026-04-11: 创建 delta spec，冻结动作区上移、详情页入口与 responsive 验收口径。
 - 2026-04-11: 机器列表响应新增 `detailUrl`，MachinesView 完成四按钮头部重排与小屏 2x2 动作网格。
 - 2026-04-11: Storybook `MachinesView` 增补 autodocs、详情按钮交互断言与桌面/小屏视觉证据。
+- 2026-04-11: PR #98 已收敛到 merge-ready；本地质量门、GitHub checks 与 codex review-loop 均通过。
