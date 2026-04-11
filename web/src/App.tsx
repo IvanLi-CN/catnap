@@ -178,6 +178,7 @@ export type LazycatMachineView = {
   firstPrice?: string | null;
   panelKind?: string | null;
   panelUrl?: string | null;
+  detailUrl?: string | null;
   traffic?: LazycatTrafficView | null;
   portMappings: LazycatPortMappingView[];
   lastSiteSyncAt?: string | null;
@@ -577,8 +578,8 @@ function formatLazycatAddress(address?: string | null): string {
   return address?.trim() ? address.trim() : "—";
 }
 
-function getLazycatMachinePanelUrl(machine: Pick<LazycatMachineView, "panelUrl">): string | null {
-  const trimmed = machine.panelUrl?.trim();
+function normalizeExternalHttpUrl(raw?: string | null): string | null {
+  const trimmed = raw?.trim();
   if (!trimmed) return null;
   try {
     const url = new URL(trimmed);
@@ -587,6 +588,14 @@ function getLazycatMachinePanelUrl(machine: Pick<LazycatMachineView, "panelUrl">
   } catch {
     return null;
   }
+}
+
+function getLazycatMachinePanelUrl(machine: Pick<LazycatMachineView, "panelUrl">): string | null {
+  return normalizeExternalHttpUrl(machine.panelUrl);
+}
+
+function getLazycatMachineDetailUrl(machine: Pick<LazycatMachineView, "detailUrl">): string | null {
+  return normalizeExternalHttpUrl(machine.detailUrl);
 }
 
 function canResolveLazycatMachineVnc(machine: Pick<LazycatMachineView, "panelKind">): boolean {
@@ -606,6 +615,14 @@ function lazycatMachineVncButtonTitle(machine: Pick<LazycatMachineView, "panelKi
     return "当前机器没有可用的容器面板，无法获取网页 VNC 入口";
   }
   return "点击时实时解析并跳转到网页 VNC 控制台";
+}
+
+function lazycatMachineDetailButtonTitle(machine: Pick<LazycatMachineView, "detailUrl">): string {
+  const url = getLazycatMachineDetailUrl(machine);
+  if (!url) {
+    return "当前机器没有可用的上游详情页入口";
+  }
+  return `打开上游详情页\n${url}`;
 }
 
 function buildLazycatMachineVncConsoleUrl(serviceId: number): string {
@@ -3800,7 +3817,7 @@ export function MachinesView({
           </div>
           <div className="panel-subtitle">
             展开某台机器可查看端口映射、流量重置时间和明细同步状态；有面板入口的机器可直接打开 Web
-            面板，容器面板机器还可在点击时实时获取网页 VNC 链接并以新窗口打开。
+            面板，容器面板机器还可在点击时实时获取网页 VNC 链接，并直接跳到上游详情页。
           </div>
 
           {loading && items.length === 0 ? <div className="empty">正在读取机器缓存…</div> : null}
@@ -3815,6 +3832,7 @@ export function MachinesView({
               const expanded = expandedServiceId === item.serviceId;
               const trafficSnapshot = item.traffic ? buildLazycatTrafficCycle(item.traffic) : null;
               const panelUrl = getLazycatMachinePanelUrl(item);
+              const detailUrl = getLazycatMachineDetailUrl(item);
               const canResolveVnc = canResolveLazycatMachineVnc(item);
               return (
                 <section className="machines-card" key={item.serviceId}>
@@ -3824,6 +3842,58 @@ export function MachinesView({
                         <div className="machines-card-title">{item.serviceName}</div>
                         <div className="machines-card-code mono">{item.serviceCode}</div>
                       </div>
+                      <div className="machines-card-actions">
+                        <button
+                          type="button"
+                          className="pill machines-vnc-btn"
+                          disabled={!panelUrl}
+                          title={lazycatMachinePanelButtonTitle(item)}
+                          onClick={() => {
+                            if (!panelUrl) return;
+                            window.open(panelUrl, "_blank", "noopener,noreferrer");
+                          }}
+                        >
+                          打开面板
+                        </button>
+                        <button
+                          type="button"
+                          className="pill machines-vnc-btn"
+                          disabled={!canResolveVnc}
+                          title={lazycatMachineVncButtonTitle(item)}
+                          onClick={() => {
+                            if (!canResolveVnc) return;
+                            setError(null);
+                            if (!openLazycatMachineVncConsole(item.serviceId)) {
+                              setError("浏览器拦截了新窗口，请允许当前站点弹窗后重试。");
+                            }
+                          }}
+                        >
+                          打开 VNC
+                        </button>
+                        <button
+                          type="button"
+                          className="pill machines-detail-btn"
+                          disabled={!detailUrl}
+                          title={lazycatMachineDetailButtonTitle(item)}
+                          onClick={() => {
+                            if (!detailUrl) return;
+                            window.open(detailUrl, "_blank", "noopener,noreferrer");
+                          }}
+                        >
+                          打开详情页
+                        </button>
+                        <button
+                          type="button"
+                          className="pill machines-expand-btn"
+                          onClick={() => {
+                            setExpandedServiceId((current) =>
+                              current === item.serviceId ? null : item.serviceId,
+                            );
+                          }}
+                        >
+                          {expanded ? "收起详情" : "展开详情"}
+                        </button>
+                      </div>
                       <div className="machines-card-badges">
                         <span className={lazycatMachineStatusClass(item.status)}>
                           {item.status}
@@ -3832,46 +3902,6 @@ export function MachinesView({
                           {lazycatDetailLabel(item.detailState)}
                         </span>
                       </div>
-                    </div>
-                    <div className="machines-card-actions">
-                      <button
-                        type="button"
-                        className="pill machines-vnc-btn"
-                        disabled={!panelUrl}
-                        title={lazycatMachinePanelButtonTitle(item)}
-                        onClick={() => {
-                          if (!panelUrl) return;
-                          window.open(panelUrl, "_blank", "noopener,noreferrer");
-                        }}
-                      >
-                        打开面板
-                      </button>
-                      <button
-                        type="button"
-                        className="pill machines-vnc-btn"
-                        disabled={!canResolveVnc}
-                        title={lazycatMachineVncButtonTitle(item)}
-                        onClick={() => {
-                          if (!canResolveVnc) return;
-                          setError(null);
-                          if (!openLazycatMachineVncConsole(item.serviceId)) {
-                            setError("浏览器拦截了新窗口，请允许当前站点弹窗后重试。");
-                          }
-                        }}
-                      >
-                        打开 VNC
-                      </button>
-                      <button
-                        type="button"
-                        className="pill machines-expand-btn"
-                        onClick={() => {
-                          setExpandedServiceId((current) =>
-                            current === item.serviceId ? null : item.serviceId,
-                          );
-                        }}
-                      >
-                        {expanded ? "收起详情" : "展开详情"}
-                      </button>
                     </div>
                   </div>
 

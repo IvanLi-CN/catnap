@@ -310,6 +310,7 @@ impl LazycatMachineRow {
         &self,
         port_mappings: Vec<LazycatPortMappingView>,
         traffic: Option<LazycatTrafficView>,
+        detail_url: Option<String>,
     ) -> LazycatMachineView {
         LazycatMachineView {
             service_id: self.service_id,
@@ -325,6 +326,7 @@ impl LazycatMachineRow {
             first_price: self.first_price.clone(),
             panel_kind: self.panel_kind.clone(),
             panel_url: self.panel_url.clone(),
+            detail_url,
             traffic,
             port_mappings,
             last_site_sync_at: self.last_site_sync_at.clone(),

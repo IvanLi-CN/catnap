@@ -1,6 +1,8 @@
 use catnap::RuntimeConfig;
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::Row;
+use time::format_description::well_known::Rfc3339;
+use time::{Duration, OffsetDateTime};
 
 fn test_config() -> RuntimeConfig {
     RuntimeConfig {
@@ -751,26 +753,32 @@ async fn cleanup_notification_records_applies_day_and_row_limits() {
     .await
     .unwrap();
 
+    let now = OffsetDateTime::now_utc();
+    let old_created_at = (now - Duration::days(60)).format(&Rfc3339).unwrap();
+    let mid_created_at = (now - Duration::days(2)).format(&Rfc3339).unwrap();
+    let new_created_at = (now - Duration::days(1)).format(&Rfc3339).unwrap();
+    let other_created_at = (now - Duration::days(3)).format(&Rfc3339).unwrap();
+
     sqlx::query("UPDATE notification_records SET created_at = ? WHERE id = ?")
-        .bind("2020-01-01T00:00:00.000000000Z")
+        .bind(old_created_at)
         .bind(&old_id)
         .execute(&db)
         .await
         .unwrap();
     sqlx::query("UPDATE notification_records SET created_at = ? WHERE id = ?")
-        .bind("2026-03-10T00:00:00.000000000Z")
+        .bind(mid_created_at)
         .bind(&mid_id)
         .execute(&db)
         .await
         .unwrap();
     sqlx::query("UPDATE notification_records SET created_at = ? WHERE id = ?")
-        .bind("2026-03-11T00:00:00.000000000Z")
+        .bind(new_created_at)
         .bind(&new_id)
         .execute(&db)
         .await
         .unwrap();
     sqlx::query("UPDATE notification_records SET created_at = ? WHERE id = ?")
-        .bind("2026-03-09T00:00:00.000000000Z")
+        .bind(other_created_at)
         .bind(&other_user_id)
         .execute(&db)
         .await

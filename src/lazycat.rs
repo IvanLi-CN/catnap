@@ -963,6 +963,8 @@ pub async fn get_machines_response(
     }
     let mut items = Vec::with_capacity(machines.len());
     for machine in &machines {
+        let detail_url =
+            build_machine_detail_url(&state.config.lazycat_base_url, machine.service_id);
         let service_mappings = mappings_by_service
             .remove(&machine.service_id)
             .unwrap_or_default();
@@ -996,9 +998,21 @@ pub async fn get_machines_response(
         } else {
             None
         };
-        items.push(machine.to_view(service_mappings, traffic));
+        items.push(machine.to_view(service_mappings, traffic, detail_url));
     }
     Ok(LazycatMachinesResponse { account, items })
+}
+
+fn build_machine_detail_url(base_url: &str, service_id: i64) -> Option<String> {
+    let mut url = Url::parse(base_url).ok()?;
+    match url.scheme() {
+        "http" | "https" => {}
+        _ => return None,
+    }
+    url.set_path("/servicedetail");
+    url.set_query(Some(&format!("id={service_id}")));
+    url.set_fragment(None);
+    Some(url.to_string())
 }
 
 fn build_machine_traffic_view(
@@ -3780,5 +3794,21 @@ mod tests {
 
         let preserved = preserve_machine_traffic_cache(detail, &machine);
         assert!(build_traffic_sample(&preserved, false).is_none());
+    }
+
+    #[test]
+    fn builds_machine_detail_url_from_lazycat_base_url() {
+        assert_eq!(
+            build_machine_detail_url("https://lxc.lazycat.wiki", 2312).as_deref(),
+            Some("https://lxc.lazycat.wiki/servicedetail?id=2312")
+        );
+        assert_eq!(
+            build_machine_detail_url("https://lxc.lazycat.wiki/root", 5000).as_deref(),
+            Some("https://lxc.lazycat.wiki/servicedetail?id=5000")
+        );
+        assert_eq!(
+            build_machine_detail_url("ftp://lxc.lazycat.wiki", 2312),
+            None
+        );
     }
 }

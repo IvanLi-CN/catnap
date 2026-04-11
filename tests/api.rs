@@ -12,7 +12,7 @@ use std::sync::{
     Arc, Mutex,
 };
 use time::format_description::well_known::Rfc3339;
-use time::{Date, Duration, OffsetDateTime, PrimitiveDateTime, Time, UtcOffset};
+use time::{Date, Duration, Month, OffsetDateTime, PrimitiveDateTime, Time, UtcOffset};
 use tower::ServiceExt;
 
 fn test_config() -> RuntimeConfig {
@@ -274,6 +274,114 @@ async fn authed_json(
     (status, json)
 }
 
+fn is_leap_year(year: i32) -> bool {
+    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+}
+
+fn days_in_month(year: i32, month: Month) -> u8 {
+    match month {
+        Month::January
+        | Month::March
+        | Month::May
+        | Month::July
+        | Month::August
+        | Month::October
+        | Month::December => 31,
+        Month::April | Month::June | Month::September | Month::November => 30,
+        Month::February if is_leap_year(year) => 29,
+        Month::February => 28,
+    }
+}
+
+fn previous_month(year: i32, month: Month) -> (i32, Month) {
+    match month {
+        Month::January => (year - 1, Month::December),
+        Month::February => (year, Month::January),
+        Month::March => (year, Month::February),
+        Month::April => (year, Month::March),
+        Month::May => (year, Month::April),
+        Month::June => (year, Month::May),
+        Month::July => (year, Month::June),
+        Month::August => (year, Month::July),
+        Month::September => (year, Month::August),
+        Month::October => (year, Month::September),
+        Month::November => (year, Month::October),
+        Month::December => (year, Month::November),
+    }
+}
+
+fn next_month(year: i32, month: Month) -> (i32, Month) {
+    match month {
+        Month::January => (year, Month::February),
+        Month::February => (year, Month::March),
+        Month::March => (year, Month::April),
+        Month::April => (year, Month::May),
+        Month::May => (year, Month::June),
+        Month::June => (year, Month::July),
+        Month::July => (year, Month::August),
+        Month::August => (year, Month::September),
+        Month::September => (year, Month::October),
+        Month::October => (year, Month::November),
+        Month::November => (year, Month::December),
+        Month::December => (year + 1, Month::January),
+    }
+}
+
+fn utc_midnight(year: i32, month: Month, day: u8) -> OffsetDateTime {
+    PrimitiveDateTime::new(
+        Date::from_calendar_date(year, month, day.into()).unwrap(),
+        Time::MIDNIGHT,
+    )
+    .assume_offset(UtcOffset::UTC)
+}
+
+fn current_monthly_cycle(reset_day: u8, now: OffsetDateTime) -> (OffsetDateTime, OffsetDateTime) {
+    let current_month_reset_day = reset_day.min(days_in_month(now.year(), now.month()));
+    let current_month_reset = utc_midnight(now.year(), now.month(), current_month_reset_day);
+    let cycle_start = if now >= current_month_reset {
+        current_month_reset
+    } else {
+        let (year, month) = previous_month(now.year(), now.month());
+        utc_midnight(year, month, reset_day.min(days_in_month(year, month)))
+    };
+    let (next_year, next_month_value) = next_month(cycle_start.year(), cycle_start.month());
+    let cycle_end = utc_midnight(
+        next_year,
+        next_month_value,
+        reset_day.min(days_in_month(next_year, next_month_value)),
+    );
+    (cycle_start, cycle_end)
+}
+
+fn cycle_fixture_strings(
+    reset_day: u8,
+    now: OffsetDateTime,
+) -> (String, String, Vec<(String, String, f64)>) {
+    let (cycle_start, cycle_end) = current_monthly_cycle(reset_day, now);
+    let samples = [
+        (cycle_start, cycle_start + Duration::minutes(20), 88.2),
+        (
+            cycle_start + Duration::hours(1),
+            cycle_start + Duration::hours(1) + Duration::minutes(20),
+            123.4,
+        ),
+    ]
+    .into_iter()
+    .map(|(bucket_at, sampled_at, used_gb)| {
+        (
+            bucket_at.format(&Rfc3339).unwrap(),
+            sampled_at.format(&Rfc3339).unwrap(),
+            used_gb,
+        )
+    })
+    .collect::<Vec<_>>();
+    (
+        cycle_start.format(&Rfc3339).unwrap(),
+        cycle_end.format(&Rfc3339).unwrap(),
+        samples,
+    )
+}
+
 async fn seed_lazycat_machine(
     t: &TestApp,
     user_id: &str,
@@ -283,7 +391,10 @@ async fn seed_lazycat_machine(
     primary_address: &str,
 ) {
     ensure_user_exists(t, user_id).await;
-    let now = OffsetDateTime::now_utc().format(&Rfc3339).unwrap();
+    let now_dt = OffsetDateTime::now_utc();
+    let now = now_dt.format(&Rfc3339).unwrap();
+    let (traffic_cycle_start, traffic_cycle_end, traffic_samples) =
+        cycle_fixture_strings(11, now_dt);
 
     let account = catnap::db::LazycatAccountRow {
         user_id: user_id.to_string(),
@@ -319,7 +430,7 @@ async fn seed_lazycat_machine(
         billing_cycle: Some("monthly".to_string()),
         renew_price: Some("¥9.34元/月付".to_string()),
         first_price: Some("¥9.34元".to_string()),
-        expires_at: Some("2026-04-01T00:00:00Z".to_string()),
+        expires_at: Some(traffic_cycle_end.clone()),
         panel_kind: Some("container".to_string()),
         panel_url: Some(format!(
             "https://panel-{service_id}.example.test:8443/container/dashboard"
@@ -341,7 +452,7 @@ async fn seed_lazycat_machine(
         traffic_used_gb: Some(123.4),
         traffic_limit_gb: Some(800.0),
         traffic_reset_day: Some(11),
-        traffic_last_reset_at: Some("2026-03-11T00:00:00Z".to_string()),
+        traffic_last_reset_at: Some(traffic_cycle_start.clone()),
         traffic_display: Some("123.4 GB / 800 GB".to_string()),
         detail_state: "ready".to_string(),
         detail_error: None,
@@ -351,20 +462,17 @@ async fn seed_lazycat_machine(
         .await
         .unwrap();
 
-    for (bucket_at, sampled_at, used_gb) in [
-        ("2026-03-18T00:00:00Z", "2026-03-18T00:20:00Z", 88.2),
-        ("2026-03-19T00:00:00Z", "2026-03-19T00:20:00Z", 123.4),
-    ] {
+    for (bucket_at, sampled_at, used_gb) in traffic_samples {
         let sample = catnap::db::LazycatTrafficSampleRecord {
             service_id,
-            bucket_at: bucket_at.to_string(),
-            sampled_at: sampled_at.to_string(),
-            cycle_start_at: "2026-03-11T00:00:00Z".to_string(),
-            cycle_end_at: "2026-04-11T00:00:00Z".to_string(),
+            bucket_at,
+            sampled_at,
+            cycle_start_at: traffic_cycle_start.clone(),
+            cycle_end_at: traffic_cycle_end.clone(),
             used_gb,
             limit_gb: 800.0,
             reset_day: 11,
-            last_reset_at: Some("2026-03-11T00:00:00Z".to_string()),
+            last_reset_at: Some(traffic_cycle_start.clone()),
             display: Some("GB".to_string()),
         };
         catnap::db::upsert_lazycat_traffic_sample(&t.db, user_id, &sample)
@@ -589,6 +697,7 @@ async fn lazycat_machines_are_user_scoped_and_disconnect_cleans_current_user() {
 
     let (status_u1, json_u1) =
         authed_json(&t, "u_1", Method::GET, "/api/lazycat/machines", None).await;
+    let (expected_cycle_start, _, _) = cycle_fixture_strings(11, OffsetDateTime::now_utc());
     assert_eq!(status_u1, StatusCode::OK);
     assert_eq!(
         json_u1["account"]["email"].as_str(),
@@ -602,6 +711,10 @@ async fn lazycat_machines_are_user_scoped_and_disconnect_cleans_current_user() {
         Some("https://panel-2312.example.test:8443/container/dashboard")
     );
     assert_eq!(
+        json_u1["items"][0]["detailUrl"].as_str(),
+        Some("https://lxc.lazycat.wiki/servicedetail?id=2312")
+    );
+    assert_eq!(
         json_u1["items"][0]["portMappings"].as_array().map(Vec::len),
         Some(1)
     );
@@ -611,7 +724,7 @@ async fn lazycat_machines_are_user_scoped_and_disconnect_cleans_current_user() {
     );
     assert_eq!(
         json_u1["items"][0]["traffic"]["cycleStartAt"].as_str(),
-        Some("2026-03-11T00:00:00Z")
+        Some(expected_cycle_start.as_str())
     );
     assert_eq!(
         json_u1["items"][0]["traffic"]["history"]
@@ -628,6 +741,10 @@ async fn lazycat_machines_are_user_scoped_and_disconnect_cleans_current_user() {
         Some("second@example.com")
     );
     assert_eq!(json_u2["items"][0]["serviceId"].as_i64(), Some(3875));
+    assert_eq!(
+        json_u2["items"][0]["detailUrl"].as_str(),
+        Some("https://lxc.lazycat.wiki/servicedetail?id=3875")
+    );
 
     let (delete_status, delete_json) =
         authed_json(&t, "u_1", Method::DELETE, "/api/lazycat/account", None).await;
@@ -1197,7 +1314,10 @@ async fn lazycat_sync_preserves_cached_data_when_bare_pagination_is_unresolved()
     cfg.lazycat_base_url = base;
     let t = make_app_with_config(cfg).await;
     ensure_user_exists(&t, "u_1").await;
-    let now = OffsetDateTime::now_utc().format(&Rfc3339).unwrap();
+    let now_dt = OffsetDateTime::now_utc();
+    let now = now_dt.format(&Rfc3339).unwrap();
+    let (traffic_cycle_start, traffic_cycle_end, traffic_samples) =
+        cycle_fixture_strings(11, now_dt);
     let account = catnap::db::LazycatAccountRow {
         user_id: "u_1".to_string(),
         email: "first@example.com".to_string(),
@@ -1229,7 +1349,7 @@ async fn lazycat_sync_preserves_cached_data_when_bare_pagination_is_unresolved()
             billing_cycle: Some("monthly".to_string()),
             renew_price: Some("¥9.34元/月付".to_string()),
             first_price: Some("¥9.34元".to_string()),
-            expires_at: Some("2026-04-01T00:00:00Z".to_string()),
+            expires_at: Some(traffic_cycle_end.clone()),
             panel_kind: Some("container".to_string()),
             panel_url: Some("https://panel-2312.example.test:8443/container/dashboard".to_string()),
             panel_hash: Some("hash-2312".to_string()),
@@ -1246,7 +1366,7 @@ async fn lazycat_sync_preserves_cached_data_when_bare_pagination_is_unresolved()
             billing_cycle: Some("monthly".to_string()),
             renew_price: Some("¥9.34元/月付".to_string()),
             first_price: Some("¥9.34元".to_string()),
-            expires_at: Some("2026-04-01T00:00:00Z".to_string()),
+            expires_at: Some(traffic_cycle_end.clone()),
             panel_kind: Some("container".to_string()),
             panel_url: Some("https://panel-5845.example.test:8443/container/dashboard".to_string()),
             panel_hash: Some("hash-5845".to_string()),
@@ -1270,7 +1390,7 @@ async fn lazycat_sync_preserves_cached_data_when_bare_pagination_is_unresolved()
             traffic_used_gb: Some(123.4),
             traffic_limit_gb: Some(800.0),
             traffic_reset_day: Some(11),
-            traffic_last_reset_at: Some("2026-03-11T00:00:00Z".to_string()),
+            traffic_last_reset_at: Some(traffic_cycle_start.clone()),
             traffic_display: Some("123.4 GB / 800 GB".to_string()),
             detail_state: "ready".to_string(),
             detail_error: None,
@@ -1279,20 +1399,17 @@ async fn lazycat_sync_preserves_cached_data_when_bare_pagination_is_unresolved()
         catnap::db::update_lazycat_machine_detail(&t.db, "u_1", &detail)
             .await
             .unwrap();
-        for (bucket_at, sampled_at, used_gb) in [
-            ("2026-03-18T00:00:00Z", "2026-03-18T00:20:00Z", 88.2),
-            ("2026-03-19T00:00:00Z", "2026-03-19T00:20:00Z", 123.4),
-        ] {
+        for (bucket_at, sampled_at, used_gb) in &traffic_samples {
             let sample = catnap::db::LazycatTrafficSampleRecord {
                 service_id,
-                bucket_at: bucket_at.to_string(),
-                sampled_at: sampled_at.to_string(),
-                cycle_start_at: "2026-03-11T00:00:00Z".to_string(),
-                cycle_end_at: "2026-04-11T00:00:00Z".to_string(),
-                used_gb,
+                bucket_at: bucket_at.clone(),
+                sampled_at: sampled_at.clone(),
+                cycle_start_at: traffic_cycle_start.clone(),
+                cycle_end_at: traffic_cycle_end.clone(),
+                used_gb: *used_gb,
                 limit_gb: 800.0,
                 reset_day: 11,
-                last_reset_at: Some("2026-03-11T00:00:00Z".to_string()),
+                last_reset_at: Some(traffic_cycle_start.clone()),
                 display: Some("GB".to_string()),
             };
             catnap::db::upsert_lazycat_traffic_sample(&t.db, "u_1", &sample)
