@@ -389,7 +389,7 @@ async fn seed_lazycat_machine(
     email: &str,
     service_name: &str,
     primary_address: &str,
-) {
+) -> String {
     ensure_user_exists(t, user_id).await;
     let now_dt = OffsetDateTime::now_utc();
     let now = now_dt.format(&Rfc3339).unwrap();
@@ -498,6 +498,8 @@ async fn seed_lazycat_machine(
     catnap::db::replace_lazycat_port_mappings(&t.db, user_id, service_id, "v4", &[mapping], &now)
         .await
         .unwrap();
+
+    traffic_cycle_start
 }
 
 #[tokio::test]
@@ -666,7 +668,7 @@ async fn lazycat_login_rejects_when_sync_is_already_running() {
 #[tokio::test]
 async fn lazycat_machines_are_user_scoped_and_disconnect_cleans_current_user() {
     let t = make_app().await;
-    seed_lazycat_machine(
+    let expected_cycle_start = seed_lazycat_machine(
         &t,
         "u_1",
         2312,
@@ -697,7 +699,6 @@ async fn lazycat_machines_are_user_scoped_and_disconnect_cleans_current_user() {
 
     let (status_u1, json_u1) =
         authed_json(&t, "u_1", Method::GET, "/api/lazycat/machines", None).await;
-    let (expected_cycle_start, _, _) = cycle_fixture_strings(11, OffsetDateTime::now_utc());
     assert_eq!(status_u1, StatusCode::OK);
     assert_eq!(
         json_u1["account"]["email"].as_str(),
