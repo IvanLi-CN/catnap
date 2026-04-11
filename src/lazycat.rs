@@ -1009,6 +1009,12 @@ fn build_machine_detail_url(base_url: &str, service_id: i64) -> Option<String> {
         "http" | "https" => {}
         _ => return None,
     }
+    if url.set_username("").is_err() {
+        return None;
+    }
+    if url.set_password(None).is_err() {
+        return None;
+    }
     url.set_path("/servicedetail");
     url.set_query(Some(&format!("id={service_id}")));
     url.set_fragment(None);
@@ -3805,6 +3811,10 @@ mod tests {
         assert_eq!(
             build_machine_detail_url("https://lxc.lazycat.wiki/root", 5000).as_deref(),
             Some("https://lxc.lazycat.wiki/servicedetail?id=5000")
+        );
+        assert_eq!(
+            build_machine_detail_url("https://user:pass@lxc.lazycat.wiki/root", 6000).as_deref(),
+            Some("https://lxc.lazycat.wiki/servicedetail?id=6000")
         );
         assert_eq!(
             build_machine_detail_url("ftp://lxc.lazycat.wiki", 2312),
