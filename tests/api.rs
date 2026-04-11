@@ -329,7 +329,7 @@ fn next_month(year: i32, month: Month) -> (i32, Month) {
 
 fn utc_midnight(year: i32, month: Month, day: u8) -> OffsetDateTime {
     PrimitiveDateTime::new(
-        Date::from_calendar_date(year, month, day.into()).unwrap(),
+        Date::from_calendar_date(year, month, day).unwrap(),
         Time::MIDNIGHT,
     )
     .assume_offset(UtcOffset::UTC)
