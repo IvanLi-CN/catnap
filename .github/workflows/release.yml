@@ -90,6 +90,7 @@ jobs:
           fi
 
           echo "target_sha=${target_sha}" >> "${GITHUB_OUTPUT}"
+          echo "RELEASE_REQUESTED_SHA=${target_sha}"
 
       - name: Validate manual backfill target passed CI
         if: github.event_name == 'workflow_dispatch'
@@ -161,6 +162,7 @@ jobs:
             echo "target_sha=${REQUESTED_SHA}" >> "${GITHUB_OUTPUT}"
             echo "blocked_count=0" >> "${GITHUB_OUTPUT}"
             echo "blocked_targets_csv=" >> "${GITHUB_OUTPUT}"
+            echo "RELEASE_TARGET_SHA=${REQUESTED_SHA}"
             exit 0
           fi
 
@@ -176,6 +178,10 @@ jobs:
           )
           python3 .github/scripts/release_snapshot.py next-pending \
             "${next_pending_args[@]}"
+          resolved_target_sha="$(grep '^target_sha=' "${GITHUB_OUTPUT}" | tail -n1 | cut -d= -f2- || true)"
+          if [[ -n "${resolved_target_sha}" ]]; then
+            echo "RELEASE_TARGET_SHA=${resolved_target_sha}"
+          fi
 
       - name: Summarize pending release selection
         if: github.event_name != 'workflow_dispatch'
