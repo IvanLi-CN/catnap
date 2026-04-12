@@ -26,6 +26,7 @@
 
 | ID   | Title | Status | Spec | Last | Notes |
 |-----:|-------|--------|------|------|-------|
+| bk7en | Release 失败 Telegram 告警接入 | 已完成 | `bk7en-release-failure-telegram-alerts/SPEC.md` | 2026-04-12 | fast-track：repo-local notifier、release target SHA markers、Telegram smoke test |
 | za4kp | 懒猫云账号接入与机器资产面板 | 已完成 | `za4kp-lazycat-account-machines/SPEC.md` | 2026-03-28 | spec-sync：zero-discovery 改为 fail-closed，避免空机器发现误清空缓存与流量小时历史 |
 | j3zhd | 机器资产：VNC 新窗口按钮 | 已完成 | `j3zhd-machines-vnc-open-button/SPEC.md` | 2026-03-21 | 机器卡片新增 VNC 按钮；基于懒猫容器面板入口检测，并以网页面板 URL 新窗口打开 |
 | kqcgt | Telegram 多目标群/频道通知 | 部分完成（3/4） | `kqcgt-telegram-multi-target-notify/SPEC.md` | 2026-03-14 | spec-sync：多目标 settings / test / notification-record 实现已完成，待 PR / review-loop 收口 |
