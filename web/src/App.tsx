@@ -598,16 +598,78 @@ function getLazycatMachineDetailUrl(machine: Pick<LazycatMachineView, "detailUrl
   return normalizeExternalHttpUrl(machine.detailUrl);
 }
 
+const LAZYCAT_DETAIL_BRIDGE_MESSAGE_TYPE = "catnap.lazycat.detail-bridge";
+
+type LazycatDetailBridgeMessage = {
+  type: typeof LAZYCAT_DETAIL_BRIDGE_MESSAGE_TYPE;
+  popupId: string;
+  targetUrl: string;
+  redirectAfterMs: number;
+};
+
+function isLazycatDetailBridgeMessage(value: unknown): value is LazycatDetailBridgeMessage {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<LazycatDetailBridgeMessage>;
+  return (
+    candidate.type === LAZYCAT_DETAIL_BRIDGE_MESSAGE_TYPE &&
+    typeof candidate.popupId === "string" &&
+    typeof candidate.targetUrl === "string" &&
+    typeof candidate.redirectAfterMs === "number"
+  );
+}
+
+function buildLazycatMachineDetailPopupId(serviceId: number): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return `lazycat-detail-${serviceId}-${crypto.randomUUID()}`;
+  }
+  return `lazycat-detail-${serviceId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function buildLazycatMachineLocalPageUrl(serviceId: number, page: "detail" | "panel"): string {
+  return new URL(`/api/lazycat/machines/${serviceId}/${page}`, window.location.origin).toString();
+}
+
+function openLazycatMachineLocalPage(serviceId: number, page: "detail" | "panel"): boolean {
+  return (
+    window.open(
+      buildLazycatMachineLocalPageUrl(serviceId, page),
+      "_blank",
+      "noopener,noreferrer",
+    ) != null
+  );
+}
+
+function buildLazycatMachineDetailBridgeUrl(serviceId: number, popupId: string): string {
+  const url = new URL(`/api/lazycat/machines/${serviceId}/detail-bridge`, window.location.origin);
+  url.searchParams.set("popupId", popupId);
+  return url.toString();
+}
+
+function openLazycatMachineDetailBridgePage(serviceId: number, popupId: string): Window | null {
+  return window.open(buildLazycatMachineDetailBridgeUrl(serviceId, popupId), "_blank");
+}
+
+function canResolveLazycatMachinePanel(
+  machine: Pick<LazycatMachineView, "panelKind" | "panelUrl">,
+): boolean {
+  return machine.panelKind === "container" || getLazycatMachinePanelUrl(machine) != null;
+}
+
 function canResolveLazycatMachineVnc(machine: Pick<LazycatMachineView, "panelKind">): boolean {
   return machine.panelKind === "container";
 }
 
-function lazycatMachinePanelButtonTitle(machine: Pick<LazycatMachineView, "panelUrl">): string {
-  const url = getLazycatMachinePanelUrl(machine);
-  if (!url) {
+function lazycatMachinePanelButtonTitle(
+  machine: Pick<LazycatMachineView, "panelKind" | "panelUrl">,
+): string {
+  if (!canResolveLazycatMachinePanel(machine)) {
     return "当前机器没有可用的 Web 面板入口";
   }
-  return `打开 Web 面板\n${url}`;
+  const url = getLazycatMachinePanelUrl(machine);
+  if (!url) {
+    return "点击时通过 Catnap 本地代理打开 Web 面板，并实时校验懒猫登录态";
+  }
+  return `点击时通过 Catnap 本地代理打开 Web 面板，并实时校验懒猫登录态\n最近一次缓存入口：${url}`;
 }
 
 function lazycatMachineVncButtonTitle(machine: Pick<LazycatMachineView, "panelKind">): string {
@@ -625,15 +687,16 @@ function lazycatMachineDetailButtonTitle(machine: Pick<LazycatMachineView, "deta
   return `打开上游详情页\n${url}`;
 }
 
-function buildLazycatMachineVncConsoleUrl(serviceId: number): string {
-  return new URL(
-    `/api/lazycat/machines/${serviceId}/vnc-console`,
-    window.location.origin,
-  ).toString();
+function buildLazycatMachineActionUrl(serviceId: number, action: "panel" | "vnc-console"): string {
+  return new URL(`/api/lazycat/machines/${serviceId}/${action}`, window.location.origin).toString();
 }
 
-function openLazycatMachineVncConsole(serviceId: number): boolean {
-  const target = `lazycat-vnc-${serviceId}-${Date.now()}`;
+function openLazycatMachineAction(
+  serviceId: number,
+  action: "panel" | "vnc-console",
+  targetPrefix: "lazycat-panel" | "lazycat-vnc",
+): boolean {
+  const target = `${targetPrefix}-${serviceId}-${Date.now()}`;
   const popup = window.open("", target);
   if (!popup) return false;
   try {
@@ -644,7 +707,7 @@ function openLazycatMachineVncConsole(serviceId: number): boolean {
 
   const form = document.createElement("form");
   form.method = "POST";
-  form.action = buildLazycatMachineVncConsoleUrl(serviceId);
+  form.action = buildLazycatMachineActionUrl(serviceId, action);
   form.target = target;
   form.style.display = "none";
   document.body.appendChild(form);
@@ -654,6 +717,14 @@ function openLazycatMachineVncConsole(serviceId: number): boolean {
     form.remove();
   }
   return true;
+}
+
+function openLazycatMachinePanel(serviceId: number): boolean {
+  return openLazycatMachineLocalPage(serviceId, "panel");
+}
+
+function openLazycatMachineVncConsole(serviceId: number): boolean {
+  return openLazycatMachineAction(serviceId, "vnc-console", "lazycat-vnc");
 }
 
 const DEFAULT_FETCH_LAZYCAT_MACHINES = () => api<LazycatMachinesResponse>("/api/lazycat/machines");
@@ -3665,6 +3736,8 @@ export function MachinesView({
   const [syncPending, setSyncPending] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [expandedServiceId, setExpandedServiceId] = useState<number | null>(null);
+  const lazycatDetailBridgePopupsRef = useRef<Map<string, Window>>(new Map());
+  const lazycatDetailBridgeTimersRef = useRef<Map<string, number>>(new Map());
 
   const loadMachines = useCallback(
     async (mode: "load" | "refresh" = "load") => {
@@ -3721,6 +3794,56 @@ export function MachinesView({
     }, 3_000);
     return () => window.clearInterval(id);
   }, [account.state, loadMachines]);
+
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin || !isLazycatDetailBridgeMessage(event.data)) {
+        return;
+      }
+      const { popupId, targetUrl } = event.data;
+      const popup = lazycatDetailBridgePopupsRef.current.get(popupId);
+      if (!popup || popup.closed) {
+        lazycatDetailBridgePopupsRef.current.delete(popupId);
+        const staleTimer = lazycatDetailBridgeTimersRef.current.get(popupId);
+        if (staleTimer != null) {
+          window.clearTimeout(staleTimer);
+          lazycatDetailBridgeTimersRef.current.delete(popupId);
+        }
+        return;
+      }
+      const normalizedTargetUrl = normalizeExternalHttpUrl(targetUrl);
+      if (!normalizedTargetUrl) {
+        setError("详情页自动登录返回了无效的上游地址，请稍后重试。");
+        return;
+      }
+      const existingTimer = lazycatDetailBridgeTimersRef.current.get(popupId);
+      if (existingTimer != null) {
+        window.clearTimeout(existingTimer);
+      }
+      const redirectAfterMs = Math.max(1_000, Math.min(event.data.redirectAfterMs, 20_000));
+      const timer = window.setTimeout(() => {
+        try {
+          popup.location = normalizedTargetUrl;
+        } catch {
+          setError("详情页自动跳转失败，请关闭弹窗后重试。");
+        } finally {
+          lazycatDetailBridgePopupsRef.current.delete(popupId);
+          lazycatDetailBridgeTimersRef.current.delete(popupId);
+        }
+      }, redirectAfterMs);
+      lazycatDetailBridgeTimersRef.current.set(popupId, timer);
+    };
+
+    window.addEventListener("message", onMessage);
+    return () => {
+      window.removeEventListener("message", onMessage);
+      for (const timer of lazycatDetailBridgeTimersRef.current.values()) {
+        window.clearTimeout(timer);
+      }
+      lazycatDetailBridgeTimersRef.current.clear();
+      lazycatDetailBridgePopupsRef.current.clear();
+    };
+  }, []);
 
   const staleCount = items.filter((item) => item.detailState === "stale").length;
   const errorCount = items.filter((item) => item.detailState === "error").length;
@@ -3831,7 +3954,7 @@ export function MachinesView({
             {items.map((item) => {
               const expanded = expandedServiceId === item.serviceId;
               const trafficSnapshot = item.traffic ? buildLazycatTrafficCycle(item.traffic) : null;
-              const panelUrl = getLazycatMachinePanelUrl(item);
+              const canResolvePanel = canResolveLazycatMachinePanel(item);
               const detailUrl = getLazycatMachineDetailUrl(item);
               const canResolveVnc = canResolveLazycatMachineVnc(item);
               return (
@@ -3845,12 +3968,37 @@ export function MachinesView({
                       <div className="machines-card-actions">
                         <button
                           type="button"
+                          className="pill machines-detail-btn"
+                          disabled={!detailUrl}
+                          title={lazycatMachineDetailButtonTitle(item)}
+                          onClick={() => {
+                            if (!detailUrl) return;
+                            setError(null);
+                            const popupId = buildLazycatMachineDetailPopupId(item.serviceId);
+                            const popup = openLazycatMachineDetailBridgePage(
+                              item.serviceId,
+                              popupId,
+                            );
+                            if (!popup) {
+                              setError("浏览器拦截了新窗口，请允许当前站点弹窗后重试。");
+                              return;
+                            }
+                            lazycatDetailBridgePopupsRef.current.set(popupId, popup);
+                          }}
+                        >
+                          打开详情页
+                        </button>
+                        <button
+                          type="button"
                           className="pill machines-vnc-btn"
-                          disabled={!panelUrl}
+                          disabled={!canResolvePanel}
                           title={lazycatMachinePanelButtonTitle(item)}
                           onClick={() => {
-                            if (!panelUrl) return;
-                            window.open(panelUrl, "_blank", "noopener,noreferrer");
+                            if (!canResolvePanel) return;
+                            setError(null);
+                            if (!openLazycatMachinePanel(item.serviceId)) {
+                              setError("浏览器拦截了新窗口，请允许当前站点弹窗后重试。");
+                            }
                           }}
                         >
                           打开面板
@@ -3869,18 +4017,6 @@ export function MachinesView({
                           }}
                         >
                           打开 VNC
-                        </button>
-                        <button
-                          type="button"
-                          className="pill machines-detail-btn"
-                          disabled={!detailUrl}
-                          title={lazycatMachineDetailButtonTitle(item)}
-                          onClick={() => {
-                            if (!detailUrl) return;
-                            window.open(detailUrl, "_blank", "noopener,noreferrer");
-                          }}
-                        >
-                          打开详情页
                         </button>
                         <button
                           type="button"

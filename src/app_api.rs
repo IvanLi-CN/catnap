@@ -1,16 +1,19 @@
 use crate::app::{json_forbidden, json_invalid_argument};
 use crate::models::*;
 use crate::{app::AppState, db};
+use anyhow::Context;
 use axum::{
     body::Body,
-    extract::{Path, Query, State},
-    http::{header, Request, StatusCode},
+    extract::{Path, Query, RawQuery, State},
+    http::{header, HeaderMap, Method, Request, StatusCode},
     middleware::Next,
     response::sse::{Event, KeepAlive, Sse},
     response::{IntoResponse, Response},
-    routing::{get, patch, post},
+    routing::{any, get, patch, post},
     Json, Router,
 };
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use bytes::Bytes;
 use futures_util::stream;
 use futures_util::StreamExt;
 use serde::Deserialize;
@@ -58,6 +61,26 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/lazycat/sync", post(post_lazycat_sync))
         .route("/lazycat/machines", get(get_lazycat_machines))
+        .route(
+            "/lazycat/machines/:service_id/detail",
+            get(get_lazycat_machine_detail_page),
+        )
+        .route(
+            "/lazycat/machines/:service_id/detail-bridge",
+            get(get_lazycat_machine_detail_bridge_page),
+        )
+        .route(
+            "/lazycat/machines/:service_id/panel-url",
+            post(post_lazycat_machine_panel_url),
+        )
+        .route(
+            "/lazycat/machines/:service_id/panel",
+            get(get_lazycat_machine_panel_page).post(post_lazycat_machine_panel),
+        )
+        .route(
+            "/lazycat/machines/:service_id/panel-proxy/:origin_key/*path",
+            any(proxy_lazycat_machine_panel),
+        )
         .route(
             "/lazycat/machines/:service_id/vnc-url",
             post(post_lazycat_machine_vnc_url),
@@ -978,11 +1001,112 @@ async fn get_lazycat_machines(
         .map_err(|_| json_internal_error())
 }
 
+async fn post_lazycat_machine_panel_url(
+    State(state): State<AppState>,
+    user: axum::extract::Extension<UserView>,
+    Path(service_id): Path<i64>,
+) -> Result<Json<crate::models::LazycatMachineAccessUrlResponse>, (StatusCode, Json<ErrorResponse>)>
+{
+    let _ = db::ensure_user(&state.db, &state.config, &user.0.id)
+        .await
+        .map_err(|_| json_invalid_argument())?;
+    crate::lazycat::resolve_machine_panel_url(&state, &user.0.id, service_id)
+        .await
+        .map(Json)
+        .map_err(|err| json_invalid_argument_with_message(err.to_string()))
+}
+
+async fn get_lazycat_machine_detail_page(
+    State(state): State<AppState>,
+    user: axum::extract::Extension<UserView>,
+    Path(service_id): Path<i64>,
+) -> Response<Body> {
+    if db::ensure_user(&state.db, &state.config, &user.0.id)
+        .await
+        .is_err()
+    {
+        return lazycat_access_error_response(
+            StatusCode::BAD_REQUEST,
+            "详情页打开失败",
+            "无法确认当前用户身份，请刷新页面后重试。",
+            "详情页未能成功打开上游详情页。",
+        );
+    }
+
+    match crate::lazycat::fetch_machine_detail_html(&state, &user.0.id, service_id).await {
+        Ok(html) => lazycat_html_response(rewrite_lazycat_machine_detail_html(
+            &html,
+            &state.config.lazycat_base_url,
+        )),
+        Err(err) => lazycat_access_error_response(
+            StatusCode::BAD_GATEWAY,
+            "详情页打开失败",
+            &err.to_string(),
+            "详情页未能成功打开上游详情页。",
+        ),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LazycatDetailBridgeQuery {
+    popup_id: Option<String>,
+}
+
+async fn get_lazycat_machine_detail_bridge_page(
+    State(state): State<AppState>,
+    user: axum::extract::Extension<UserView>,
+    Path(service_id): Path<i64>,
+    Query(query): Query<LazycatDetailBridgeQuery>,
+) -> Response<Body> {
+    if db::ensure_user(&state.db, &state.config, &user.0.id)
+        .await
+        .is_err()
+    {
+        return lazycat_access_error_response(
+            StatusCode::BAD_REQUEST,
+            "详情页打开失败",
+            "无法确认当前用户身份，请刷新页面后重试。",
+            "详情页未能成功自动登录并跳转到上游详情页。",
+        );
+    }
+    let Some(popup_id) = query
+        .popup_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return lazycat_access_error_response(
+            StatusCode::BAD_REQUEST,
+            "详情页打开失败",
+            "缺少自动登录上下文，请从机器列表重新打开详情页。",
+            "详情页未能成功自动登录并跳转到上游详情页。",
+        );
+    };
+
+    match crate::lazycat::build_machine_detail_login_bridge(&state, &user.0.id, service_id).await {
+        Ok(bridge) => lazycat_login_bridge_response(
+            "详情页自动登录中",
+            "正在帮你登录懒猫云并打开真实详情页，这通常需要几秒。",
+            popup_id,
+            &bridge,
+            8_000,
+        ),
+        Err(err) => lazycat_access_error_response(
+            StatusCode::BAD_GATEWAY,
+            "详情页打开失败",
+            &err.to_string(),
+            "详情页未能成功自动登录并跳转到上游详情页。",
+        ),
+    }
+}
+
 async fn post_lazycat_machine_vnc_url(
     State(state): State<AppState>,
     user: axum::extract::Extension<UserView>,
     Path(service_id): Path<i64>,
-) -> Result<Json<LazycatMachineVncUrlResponse>, (StatusCode, Json<ErrorResponse>)> {
+) -> Result<Json<crate::models::LazycatMachineAccessUrlResponse>, (StatusCode, Json<ErrorResponse>)>
+{
     let _ = db::ensure_user(&state.db, &state.config, &user.0.id)
         .await
         .map_err(|_| json_invalid_argument())?;
@@ -990,6 +1114,172 @@ async fn post_lazycat_machine_vnc_url(
         .await
         .map(Json)
         .map_err(|err| json_invalid_argument_with_message(err.to_string()))
+}
+
+async fn get_lazycat_machine_panel_page(
+    State(state): State<AppState>,
+    user: axum::extract::Extension<UserView>,
+    Path(service_id): Path<i64>,
+) -> Response<Body> {
+    resolve_lazycat_machine_panel_page_response(&state, &user.0.id, service_id).await
+}
+
+async fn post_lazycat_machine_panel(
+    State(state): State<AppState>,
+    user: axum::extract::Extension<UserView>,
+    Path(service_id): Path<i64>,
+) -> Response<Body> {
+    resolve_lazycat_machine_panel_page_response(&state, &user.0.id, service_id).await
+}
+
+async fn proxy_lazycat_machine_panel(
+    State(state): State<AppState>,
+    user: axum::extract::Extension<UserView>,
+    Path((service_id, origin_key, path)): Path<(i64, String, String)>,
+    method: Method,
+    headers: HeaderMap,
+    raw_query: RawQuery,
+    body: Bytes,
+) -> Response<Body> {
+    if db::ensure_user(&state.db, &state.config, &user.0.id)
+        .await
+        .is_err()
+    {
+        return lazycat_access_error_response(
+            StatusCode::BAD_REQUEST,
+            "Web 面板打开失败",
+            "无法确认当前用户身份，请刷新页面后重试。",
+            "面板页未能成功通过本地代理加载。",
+        );
+    }
+    let Some(machine) = db::get_lazycat_machine(&state.db, &user.0.id, service_id)
+        .await
+        .ok()
+        .flatten()
+    else {
+        return lazycat_access_error_response(
+            StatusCode::NOT_FOUND,
+            "Web 面板打开失败",
+            "目标机器不存在或已失效。",
+            "面板页未能成功通过本地代理加载。",
+        );
+    };
+    if machine.panel_kind.as_deref() != Some("container") {
+        return lazycat_access_error_response(
+            StatusCode::BAD_REQUEST,
+            "Web 面板打开失败",
+            "当前机器没有可用的 Web 面板入口。",
+            "面板页未能成功通过本地代理加载。",
+        );
+    }
+    if path
+        .trim_matches('/')
+        .eq_ignore_ascii_case("container/login")
+    {
+        return resolve_lazycat_machine_panel_page_response(&state, &user.0.id, service_id).await;
+    }
+
+    let Ok(origin) = decode_lazycat_panel_origin_key(&origin_key) else {
+        return lazycat_access_error_response(
+            StatusCode::BAD_REQUEST,
+            "Web 面板打开失败",
+            "本地代理上下文无效，请关闭此页后重试。",
+            "面板页未能成功通过本地代理加载。",
+        );
+    };
+    let Ok(target_url) =
+        build_lazycat_panel_proxy_target_url(&origin, &path, raw_query.0.as_deref())
+    else {
+        return lazycat_access_error_response(
+            StatusCode::BAD_REQUEST,
+            "Web 面板打开失败",
+            "无法解析当前面板代理目标，请关闭此页后重试。",
+            "面板页未能成功通过本地代理加载。",
+        );
+    };
+
+    let Ok(client) = reqwest::Client::builder()
+        .danger_accept_invalid_certs(state.config.lazycat_allow_invalid_tls)
+        .danger_accept_invalid_hostnames(state.config.lazycat_allow_invalid_tls)
+        .build()
+    else {
+        return lazycat_access_error_response(
+            StatusCode::BAD_GATEWAY,
+            "Web 面板打开失败",
+            "无法创建本地代理客户端。",
+            "面板页未能成功通过本地代理加载。",
+        );
+    };
+
+    let mut upstream = client.request(method.clone(), target_url.clone());
+    for (name, value) in &headers {
+        if matches!(
+            name.as_str(),
+            "host" | "origin" | "referer" | "content-length" | "connection"
+        ) {
+            continue;
+        }
+        upstream = upstream.header(name, value);
+    }
+    if !body.is_empty() {
+        upstream = upstream.body(body.clone());
+    }
+
+    let Ok(response) = upstream.send().await else {
+        return lazycat_access_error_response(
+            StatusCode::BAD_GATEWAY,
+            "Web 面板打开失败",
+            "上游面板暂时无法访问，请稍后重试。",
+            "面板页未能成功通过本地代理加载。",
+        );
+    };
+    let status = response.status();
+    let response_headers = response.headers().clone();
+    let content_type = response_headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("application/octet-stream")
+        .to_string();
+    let Ok(bytes) = response.bytes().await else {
+        return lazycat_access_error_response(
+            StatusCode::BAD_GATEWAY,
+            "Web 面板打开失败",
+            "无法读取上游面板响应，请稍后重试。",
+            "面板页未能成功通过本地代理加载。",
+        );
+    };
+
+    if status.is_redirection() {
+        if let Some(location) = response_headers
+            .get(header::LOCATION)
+            .and_then(|value| value.to_str().ok())
+        {
+            let next =
+                rewrite_lazycat_panel_proxy_location(service_id, &origin_key, &origin, location);
+            return lazycat_access_redirect_response(next.as_deref().unwrap_or(location));
+        }
+    }
+
+    let body = if content_type.contains("text/html") {
+        let html = String::from_utf8_lossy(&bytes);
+        let rewritten = rewrite_lazycat_panel_html(&html, service_id, &origin_key);
+        Body::from(rewritten)
+    } else {
+        Body::from(bytes)
+    };
+
+    let mut proxied = Response::new(body);
+    *proxied.status_mut() = status;
+    proxied.headers_mut().insert(
+        header::CONTENT_TYPE,
+        header::HeaderValue::from_str(&content_type)
+            .unwrap_or_else(|_| header::HeaderValue::from_static("application/octet-stream")),
+    );
+    proxied.headers_mut().insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("no-store"),
+    );
+    proxied
 }
 
 async fn post_lazycat_machine_vnc_console(
@@ -1001,40 +1291,311 @@ async fn post_lazycat_machine_vnc_console(
         .await
         .is_err()
     {
-        return lazycat_console_error_response(
+        return lazycat_access_error_response(
             StatusCode::BAD_REQUEST,
             "网页 VNC 打开失败",
             "无法确认当前用户身份，请刷新页面后重试。",
+            "控制台页未能成功跳转到上游网页 VNC 页面。",
         );
     }
 
     match crate::lazycat::resolve_machine_vnc_url(&state, &user.0.id, service_id).await {
-        Ok(resolved) => {
-            let mut response = Response::new(Body::empty());
-            *response.status_mut() = StatusCode::SEE_OTHER;
-            response.headers_mut().insert(
-                header::LOCATION,
-                header::HeaderValue::from_str(&resolved.url)
-                    .unwrap_or_else(|_| header::HeaderValue::from_static("/")),
-            );
-            response.headers_mut().insert(
-                header::CACHE_CONTROL,
-                header::HeaderValue::from_static("no-store"),
-            );
-            response
-        }
-        Err(err) => lazycat_console_error_response(
+        Ok(resolved) => lazycat_access_redirect_response(&resolved.url),
+        Err(err) => lazycat_access_error_response(
             StatusCode::BAD_GATEWAY,
             "网页 VNC 打开失败",
             &err.to_string(),
+            "控制台页未能成功跳转到上游网页 VNC 页面。",
         ),
     }
 }
 
-fn lazycat_console_error_response(
+async fn resolve_lazycat_machine_panel_page_response(
+    state: &AppState,
+    user_id: &str,
+    service_id: i64,
+) -> Response<Body> {
+    if db::ensure_user(&state.db, &state.config, user_id)
+        .await
+        .is_err()
+    {
+        return lazycat_access_error_response(
+            StatusCode::BAD_REQUEST,
+            "Web 面板打开失败",
+            "无法确认当前用户身份，请刷新页面后重试。",
+            "面板页未能成功通过本地代理加载。",
+        );
+    }
+
+    match crate::lazycat::resolve_machine_panel_url(state, user_id, service_id).await {
+        Ok(resolved) => match build_lazycat_panel_proxy_entry_path(service_id, &resolved.url) {
+            Ok(path) => lazycat_access_redirect_response(&path),
+            Err(err) => lazycat_access_error_response(
+                StatusCode::BAD_GATEWAY,
+                "Web 面板打开失败",
+                &err.to_string(),
+                "面板页未能成功通过本地代理加载。",
+            ),
+        },
+        Err(err) => lazycat_access_error_response(
+            StatusCode::BAD_GATEWAY,
+            "Web 面板打开失败",
+            &err.to_string(),
+            "面板页未能成功通过本地代理加载。",
+        ),
+    }
+}
+
+fn build_lazycat_panel_proxy_entry_path(
+    service_id: i64,
+    resolved_url: &str,
+) -> anyhow::Result<String> {
+    let mut url = reqwest::Url::parse(resolved_url)
+        .with_context(|| format!("invalid lazycat panel url: {resolved_url}"))?;
+    let Some(hash) = url
+        .query_pairs()
+        .find_map(|(key, value)| (key == "hash").then_some(value.into_owned()))
+        .filter(|value| !value.trim().is_empty())
+    else {
+        return Err(anyhow::anyhow!("当前面板入口缺少访问参数，请稍后重试"));
+    };
+    let origin = url.origin().ascii_serialization();
+    if !(origin.starts_with("http://") || origin.starts_with("https://")) {
+        return Err(anyhow::anyhow!("当前面板入口缺少可用的主机地址"));
+    }
+    let origin_key = encode_lazycat_panel_origin_key(&origin);
+    url.set_path("/container/dashboard/base");
+    url.set_query(Some(&format!("hash={hash}")));
+    Ok(format!(
+        "/api/lazycat/machines/{service_id}/panel-proxy/{origin_key}{}{}",
+        url.path(),
+        url.query()
+            .map(|query| format!("?{query}"))
+            .unwrap_or_default()
+    ))
+}
+
+fn build_lazycat_panel_proxy_target_url(
+    origin: &str,
+    path: &str,
+    query: Option<&str>,
+) -> anyhow::Result<reqwest::Url> {
+    let base = reqwest::Url::parse(origin)
+        .with_context(|| format!("invalid lazycat panel origin: {origin}"))?;
+    let mut target = base
+        .join(&format!("/{}", path.trim_start_matches('/')))
+        .with_context(|| format!("invalid lazycat panel proxy path: {path}"))?;
+    if let Some(query) = query {
+        target.set_query(Some(query));
+    }
+    Ok(target)
+}
+
+fn rewrite_lazycat_panel_proxy_location(
+    service_id: i64,
+    origin_key: &str,
+    origin: &str,
+    location: &str,
+) -> Option<String> {
+    let local_panel_path = format!("/api/lazycat/machines/{service_id}/panel");
+    if location.starts_with("/container/login") {
+        return Some(local_panel_path);
+    }
+    let target = build_lazycat_panel_proxy_target_url(origin, location, None).ok()?;
+    if target.origin().ascii_serialization() != origin {
+        return None;
+    }
+    Some(format!(
+        "/api/lazycat/machines/{service_id}/panel-proxy/{origin_key}{}{}",
+        target.path(),
+        target
+            .query()
+            .map(|query| format!("?{query}"))
+            .unwrap_or_default()
+    ))
+}
+
+fn encode_lazycat_panel_origin_key(origin: &str) -> String {
+    URL_SAFE_NO_PAD.encode(origin)
+}
+
+fn decode_lazycat_panel_origin_key(origin_key: &str) -> anyhow::Result<String> {
+    let bytes = URL_SAFE_NO_PAD
+        .decode(origin_key)
+        .with_context(|| "invalid lazycat panel origin key")?;
+    String::from_utf8(bytes).with_context(|| "lazycat panel origin key is not utf-8")
+}
+
+fn rewrite_lazycat_panel_html(html: &str, service_id: i64, origin_key: &str) -> String {
+    let prefix = format!("/api/lazycat/machines/{service_id}/panel-proxy/{origin_key}/");
+    html.replace("/api/", "__CATNAP_PANEL_API__")
+        .replace("/container/", "__CATNAP_PANEL_CONTAINER__")
+        .replace("__CATNAP_PANEL_API__", &format!("{prefix}api/"))
+        .replace("__CATNAP_PANEL_CONTAINER__", &format!("{prefix}container/"))
+        .replace("container_hash", &format!("container_hash_{service_id}"))
+}
+
+fn rewrite_lazycat_machine_detail_html(html: &str, base_url: &str) -> String {
+    let Ok(mut url) = reqwest::Url::parse(base_url) else {
+        return html.to_string();
+    };
+    if url.set_username("").is_err() || url.set_password(None).is_err() {
+        return html.to_string();
+    }
+    url.set_path("/");
+    url.set_query(None);
+    url.set_fragment(None);
+    let base_tag = format!(r#"<base href="{}">"#, html_escape(url.as_str()));
+    if html.contains("<head>") {
+        return html.replacen("<head>", &format!("<head>{base_tag}"), 1);
+    }
+    format!("{base_tag}{html}")
+}
+
+fn lazycat_login_bridge_response(
+    title: &str,
+    description: &str,
+    popup_id: &str,
+    bridge: &crate::lazycat::LazycatBrowserLoginBridge,
+    redirect_after_ms: u64,
+) -> Response<Body> {
+    let title_json =
+        serde_json::to_string(title).unwrap_or_else(|_| "\"详情页自动登录中\"".to_string());
+    let popup_id_json = serde_json::to_string(popup_id).unwrap_or_else(|_| "\"\"".to_string());
+    let target_url_json =
+        serde_json::to_string(&bridge.target_url).unwrap_or_else(|_| "\"\"".to_string());
+    let html = format!(
+        r#"<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{title}</title>
+    <style>
+      :root {{
+        color-scheme: dark;
+        --bg: #07111f;
+        --card: rgba(13, 24, 43, 0.96);
+        --line: rgba(97, 153, 255, 0.22);
+        --text: #ecf2ff;
+        --muted: #9bb1d4;
+      }}
+      * {{ box-sizing: border-box; }}
+      body {{
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        background: radial-gradient(circle at top, rgba(54, 102, 189, 0.24), transparent 42%), var(--bg);
+        color: var(--text);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }}
+      .card {{
+        width: min(100%, 540px);
+        border-radius: 20px;
+        border: 1px solid var(--line);
+        background: linear-gradient(180deg, rgba(15, 29, 55, 0.98), var(--card));
+        padding: 28px;
+        box-shadow: 0 20px 70px rgba(0, 0, 0, 0.35);
+      }}
+      h1 {{ margin: 0 0 12px; font-size: 24px; }}
+      p {{ margin: 0; line-height: 1.7; color: var(--muted); }}
+      .spinner {{
+        width: 28px;
+        height: 28px;
+        border-radius: 999px;
+        border: 3px solid rgba(138, 178, 255, 0.18);
+        border-top-color: #9dd3ff;
+        margin-bottom: 16px;
+        animation: spin 0.9s linear infinite;
+      }}
+      @keyframes spin {{ to {{ transform: rotate(360deg); }} }}
+    </style>
+  </head>
+  <body>
+    <main class="card">
+      <div class="spinner" aria-hidden="true"></div>
+      <h1>{title}</h1>
+      <p>{description}</p>
+      <form id="lazycat-login-bridge-form" method="post" action="{login_url}">
+        <input type="hidden" name="token" value="{token}">
+        <input type="hidden" name="email" value="{email}">
+        <input type="hidden" name="password" value="{password}">
+      </form>
+    </main>
+    <script>
+      (() => {{
+        const payload = {{
+          type: "catnap.lazycat.detail-bridge",
+          popupId: {popup_id_json},
+          targetUrl: {target_url_json},
+          redirectAfterMs: {redirect_after_ms},
+        }};
+        try {{
+          if (window.opener) {{
+            window.opener.postMessage(payload, window.location.origin);
+          }}
+        }} catch {{
+          // Ignore opener relay failures; fallback leaves the user on the upstream account page.
+        }}
+        document.title = {title_json};
+        const form = document.getElementById("lazycat-login-bridge-form");
+        if (form instanceof HTMLFormElement) {{
+          form.submit();
+        }}
+      }})();
+    </script>
+  </body>
+</html>"#,
+        title = html_escape(title),
+        description = html_escape(description),
+        login_url = html_escape(&bridge.login_url),
+        token = html_escape(&bridge.token),
+        email = html_escape(&bridge.email),
+        password = html_escape(&bridge.password),
+        popup_id_json = popup_id_json,
+        target_url_json = target_url_json,
+        redirect_after_ms = redirect_after_ms,
+        title_json = title_json,
+    );
+    lazycat_html_response(html)
+}
+
+fn lazycat_html_response(html: String) -> Response<Body> {
+    let mut response = Response::new(Body::from(html));
+    *response.status_mut() = StatusCode::OK;
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        header::HeaderValue::from_static("text/html; charset=utf-8"),
+    );
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("no-store"),
+    );
+    response
+}
+
+fn lazycat_access_redirect_response(url: &str) -> Response<Body> {
+    let mut response = Response::new(Body::empty());
+    *response.status_mut() = StatusCode::SEE_OTHER;
+    response.headers_mut().insert(
+        header::LOCATION,
+        header::HeaderValue::from_str(url)
+            .unwrap_or_else(|_| header::HeaderValue::from_static("/")),
+    );
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("no-store"),
+    );
+    response
+}
+
+fn lazycat_access_error_response(
     status: StatusCode,
     title: &str,
     message: &str,
+    description: &str,
 ) -> Response<Body> {
     let html = format!(
         r#"<!doctype html>
@@ -1089,12 +1650,13 @@ fn lazycat_console_error_response(
   <body>
     <main class="card">
       <h1>{title}</h1>
-      <p>控制台页未能成功跳转到上游网页 VNC 页面。关闭此页后回到机器列表重试；如果问题持续存在，请把这页内容反馈给主人。</p>
+      <p>{description} 关闭此页后回到机器列表重试；如果问题持续存在，请把这页内容反馈给主人。</p>
       <div class="error">{message}</div>
     </main>
   </body>
 </html>"#,
         title = html_escape(title),
+        description = html_escape(description),
         message = html_escape(message),
     );
 

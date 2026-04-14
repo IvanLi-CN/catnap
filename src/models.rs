@@ -320,7 +320,7 @@ pub struct LazycatMachinesResponse {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct LazycatMachineVncUrlResponse {
+pub struct LazycatMachineAccessUrlResponse {
     pub url: String,
     pub kind: String,
 }

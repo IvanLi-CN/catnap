@@ -61,3 +61,4 @@
 | jqp64 | 上游站点域名迁移（lxc.lazycat.wiki） | 已完成 | `jqp64-upstream-domain-lxc-lazycat-wiki/SPEC.md` | 2026-02-21 | PR #44  |
 | xvecz | Codex：安装 UI UX Pro Max 技能 | 已完成 | `xvecz-install-ui-ux-pro-max-codex/SPEC.md` | 2026-02-26 | - |
 | 4ttc3 | 机器卡片：动作区上移与详情页入口 | 已完成 | `4ttc3-machines-action-row-detail-link/SPEC.md` | 2026-04-11 | PR #98：`detailUrl` 契约、四按钮动作区重排、视觉证据与 review-loop 收口完成 |
+| hcdnh | 机器卡片：打开面板自动登录直达 | 部分完成（3/4） | `hcdnh-machines-live-panel-access/SPEC.md` | 2026-04-11 | 本地实现/测试/Storybook 已完成；待把含视觉证据的变更推到 PR 并重新收敛 checks / review |

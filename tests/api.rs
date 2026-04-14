@@ -2,6 +2,7 @@ use axum::{
     body::{to_bytes, Body},
     http::{Method, Request, StatusCode},
 };
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use catnap::{build_app, AppState, RuntimeConfig};
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::Row;
@@ -272,6 +273,42 @@ async fn authed_json(
         serde_json::from_slice(&bytes).unwrap()
     };
     (status, json)
+}
+
+async fn authed_text(
+    t: &TestApp,
+    user_id: &str,
+    method: Method,
+    uri: &str,
+    body: Option<String>,
+) -> (StatusCode, String, String) {
+    let mut builder = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("host", "example.com")
+        .header("x-user", user_id)
+        .header("origin", "http://example.com");
+    let request = if let Some(body) = body {
+        builder = builder.header("content-type", "application/json");
+        builder.body(Body::from(body)).unwrap()
+    } else {
+        builder.body(Body::empty()).unwrap()
+    };
+
+    let response = t.app.clone().oneshot(request).await.unwrap();
+    let status = response.status();
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    (
+        status,
+        content_type,
+        String::from_utf8(bytes.to_vec()).unwrap(),
+    )
 }
 
 fn is_leap_year(year: i32) -> bool {
@@ -1499,6 +1536,363 @@ async fn lazycat_sync_preserves_cached_data_when_bare_pagination_is_unresolved()
     assert_eq!(lazycat_machine_count, 2);
     assert_eq!(lazycat_mapping_count, 2);
     assert_eq!(lazycat_traffic_sample_count, 4);
+}
+
+#[tokio::test]
+async fn lazycat_machine_panel_url_returns_live_dashboard_url_after_reauth() {
+    let login_posts = Arc::new(AtomicUsize::new(0));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let base = format!("http://{addr}");
+    let info_base = base.clone();
+    let login_posts_for_route = login_posts.clone();
+    let stub = axum::Router::new()
+        .route(
+            "/provision/custom/content",
+            axum::routing::get(move |headers: axum::http::HeaderMap| {
+                let info_base = info_base.clone();
+                async move {
+                    let cookie = headers
+                        .get(axum::http::header::COOKIE)
+                        .and_then(|value| value.to_str().ok())
+                        .unwrap_or_default();
+                    if cookie.contains("PHPSESSID=live-session-2312") {
+                        axum::response::Html(format!(
+                            r#"<a href="{info_base}/container/dashboard?hash=live-hash-2312">控制台</a>"#
+                        ))
+                    } else {
+                        axum::response::Html(include_str!("fixtures/lazycat/login.html").to_string())
+                    }
+                }
+            }),
+        )
+        .route(
+            "/login",
+            axum::routing::get(|| async {
+                axum::response::Html(include_str!("fixtures/lazycat/login.html"))
+            })
+            .post(move |body: String| {
+                let login_posts = login_posts_for_route.clone();
+                async move {
+                    login_posts.fetch_add(1, Ordering::SeqCst);
+                    assert!(body.contains("token=e80e9bfc52e78fa02f3de22ea20043c3"));
+                    assert!(body.contains("email=first%40example.com"));
+                    assert!(body.contains("password=secret"));
+                    (
+                        StatusCode::SEE_OTHER,
+                        [
+                            (
+                                axum::http::header::LOCATION,
+                                "/clientarea?action=list&page=1",
+                            ),
+                            (
+                                axum::http::header::SET_COOKIE,
+                                "PHPSESSID=live-session-2312; Path=/; HttpOnly",
+                            ),
+                        ],
+                    )
+                }
+            }),
+        )
+        .route(
+            "/clientarea",
+            axum::routing::get(|| async { axum::response::Html("<div>ok</div>") }),
+        );
+    tokio::spawn(async move {
+        axum::serve(listener, stub).await.unwrap();
+    });
+
+    let mut cfg = test_config();
+    cfg.lazycat_base_url = base.clone();
+    let t = make_app_with_config(cfg).await;
+    seed_lazycat_machine(
+        &t,
+        "u_1",
+        2312,
+        "first@example.com",
+        "港湾 Transit Mini",
+        "edge-user-1.example.net",
+    )
+    .await;
+
+    let (status, json) = authed_json(
+        &t,
+        "u_1",
+        Method::POST,
+        "/api/lazycat/machines/2312/panel-url",
+        None,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["kind"].as_str(), Some("panel"));
+    assert_eq!(
+        json["url"].as_str(),
+        Some(format!("{base}/container/dashboard?hash=live-hash-2312").as_str())
+    );
+    assert_eq!(login_posts.load(Ordering::SeqCst), 1);
+
+    let saved_account = catnap::db::get_lazycat_account(&t.db, "u_1")
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(saved_account
+        .cookies_json
+        .as_deref()
+        .is_some_and(|json| json.contains("live-session-2312")));
+    assert!(saved_account.last_authenticated_at.is_some());
+}
+
+#[tokio::test]
+async fn lazycat_machine_panel_redirects_to_live_dashboard_url() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let base = format!("http://{addr}");
+    let info_base = base.clone();
+    let stub = axum::Router::new().route(
+        "/provision/custom/content",
+        axum::routing::get(move || {
+            let info_base = info_base.clone();
+            async move {
+                axum::response::Html(format!(
+                    r#"<a href="{info_base}/container/dashboard?hash=live-hash-2312">控制台</a>"#
+                ))
+            }
+        }),
+    );
+    tokio::spawn(async move {
+        axum::serve(listener, stub).await.unwrap();
+    });
+
+    let mut cfg = test_config();
+    cfg.lazycat_base_url = base.clone();
+    let t = make_app_with_config(cfg).await;
+    seed_lazycat_machine(
+        &t,
+        "u_1",
+        2312,
+        "first@example.com",
+        "港湾 Transit Mini",
+        "edge-user-1.example.net",
+    )
+    .await;
+
+    let response = t
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/lazycat/machines/2312/panel")
+                .header("host", "example.com")
+                .header("x-user", "u_1")
+                .header("origin", "http://example.com")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let origin_key = URL_SAFE_NO_PAD.encode(base.as_bytes());
+    assert_eq!(
+        response
+            .headers()
+            .get("location")
+            .and_then(|value| value.to_str().ok()),
+        Some(
+            format!(
+                "/api/lazycat/machines/2312/panel-proxy/{origin_key}/container/dashboard/base?hash=live-hash-2312"
+            )
+            .as_str()
+        )
+    );
+}
+
+#[tokio::test]
+async fn lazycat_machine_panel_proxy_rewrites_html_and_forwards_requests() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let base = format!("http://{addr}");
+    let stub = axum::Router::new()
+        .route(
+            "/container/dashboard/base",
+            axum::routing::get(|| async {
+                axum::response::Html(
+                    r#"<!doctype html>
+<html>
+  <body>
+    <script>
+      const headers = { "X-Container-Hash": localStorage.getItem("container_hash") };
+      fetch('/api/container/info', { headers });
+      window.location.href = '/container/login';
+    </script>
+  </body>
+</html>"#,
+                )
+            }),
+        )
+        .route(
+            "/api/container/info",
+            axum::routing::get(|headers: axum::http::HeaderMap| async move {
+                let hash = headers
+                    .get("x-container-hash")
+                    .and_then(|value| value.to_str().ok())
+                    .unwrap_or_default()
+                    .to_string();
+                (
+                    StatusCode::OK,
+                    [(axum::http::header::CONTENT_TYPE, "application/json")],
+                    format!(r#"{{"hash":"{hash}"}}"#),
+                )
+            }),
+        );
+    tokio::spawn(async move {
+        axum::serve(listener, stub).await.unwrap();
+    });
+
+    let t = make_app().await;
+    seed_lazycat_machine(
+        &t,
+        "u_1",
+        2312,
+        "first@example.com",
+        "港湾 Transit Mini",
+        "edge-user-1.example.net",
+    )
+    .await;
+
+    let origin_key = URL_SAFE_NO_PAD.encode(base.as_bytes());
+    let (status, content_type, html) = authed_text(
+        &t,
+        "u_1",
+        Method::GET,
+        &format!(
+            "/api/lazycat/machines/2312/panel-proxy/{origin_key}/container/dashboard/base?hash=live-hash-2312"
+        ),
+        None,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert!(content_type.starts_with("text/html"));
+    assert!(html.contains(&format!(
+        "/api/lazycat/machines/2312/panel-proxy/{origin_key}/api/container/info"
+    )));
+    assert!(html.contains(&format!(
+        "/api/lazycat/machines/2312/panel-proxy/{origin_key}/container/login"
+    )));
+    assert!(html.contains("container_hash_2312"));
+
+    let (api_status, api_json) = authed_json(
+        &t,
+        "u_1",
+        Method::GET,
+        &format!("/api/lazycat/machines/2312/panel-proxy/{origin_key}/api/container/info"),
+        None,
+    )
+    .await;
+    assert_eq!(api_status, StatusCode::OK);
+    assert_eq!(api_json["hash"].as_str(), Some(""));
+}
+
+#[tokio::test]
+async fn lazycat_machine_detail_page_returns_live_upstream_html() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let base = format!("http://{addr}");
+    let stub = axum::Router::new().route(
+        "/servicedetail",
+        axum::routing::get(|| async {
+            axum::response::Html(
+                r#"<!doctype html><html><head><title>机器详情</title><link rel="stylesheet" href="/themes/detail.css"></head><body><main><h1>苗栗Hinet Mini</h1><a href="/clientarea">返回列表</a></main></body></html>"#,
+            )
+        }),
+    );
+    tokio::spawn(async move {
+        axum::serve(listener, stub).await.unwrap();
+    });
+
+    let mut cfg = test_config();
+    cfg.lazycat_base_url = base.clone();
+    let t = make_app_with_config(cfg).await;
+    seed_lazycat_machine(
+        &t,
+        "u_1",
+        2312,
+        "first@example.com",
+        "港湾 Transit Mini",
+        "edge-user-1.example.net",
+    )
+    .await;
+
+    let (status, content_type, html) = authed_text(
+        &t,
+        "u_1",
+        Method::GET,
+        "/api/lazycat/machines/2312/detail",
+        None,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert!(content_type.starts_with("text/html"));
+    assert!(html.contains("<title>机器详情</title>"));
+    assert!(html.contains("苗栗Hinet Mini"));
+    assert!(html.contains(&format!(r#"<base href="{base}/">"#)));
+    assert!(html.contains(r#"href="/clientarea""#));
+}
+
+#[tokio::test]
+async fn lazycat_machine_detail_bridge_page_returns_auto_login_form() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let base = format!("http://{addr}");
+    let stub = axum::Router::new().route(
+        "/login",
+        axum::routing::get(|| async {
+            axum::response::Html(
+                r#"<!doctype html><html><body><form id="loginForm" method="post" action="/login?action=email"><input type="hidden" name="token" value="bridge-token-2312"></form></body></html>"#,
+            )
+        }),
+    );
+    tokio::spawn(async move {
+        axum::serve(listener, stub).await.unwrap();
+    });
+
+    let mut cfg = test_config();
+    cfg.lazycat_base_url = base.clone();
+    let t = make_app_with_config(cfg).await;
+    seed_lazycat_machine(
+        &t,
+        "u_1",
+        2312,
+        "first@example.com",
+        "港湾 Transit Mini",
+        "edge-user-1.example.net",
+    )
+    .await;
+
+    let (status, content_type, html) = authed_text(
+        &t,
+        "u_1",
+        Method::GET,
+        "/api/lazycat/machines/2312/detail-bridge?popupId=test-popup-2312",
+        None,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert!(content_type.starts_with("text/html"));
+    assert!(html.contains(r#"action="http://"#));
+    assert!(html.contains(r#"/login?action=email"#));
+    assert!(html.contains(r#"name="token" value="bridge-token-2312""#));
+    assert!(html.contains(r#"name="email" value="first@example.com""#));
+    assert!(html.contains(r#"name="password" value="secret""#));
+    assert!(html.contains(r#"popupId: "test-popup-2312""#));
+    assert!(html.contains(r#"targetUrl: "http://"#));
+    assert!(html.contains(r#"/servicedetail?id=2312"#));
+    assert!(html.contains(r#"redirectAfterMs: 8000"#));
 }
 
 #[tokio::test]

@@ -4,9 +4,9 @@ use crate::db::{
     LazycatPortMappingRecord, LazycatSiteMachineRecord, LazycatTrafficSampleRecord,
     LazycatTrafficSampleRow,
 };
-use crate::models::LazycatMachineVncUrlResponse;
 use crate::models::{
-    LazycatAccountView, LazycatMachinesResponse, LazycatTrafficSampleView, LazycatTrafficView,
+    LazycatAccountView, LazycatMachineAccessUrlResponse, LazycatMachinesResponse,
+    LazycatTrafficSampleView, LazycatTrafficView,
 };
 use anyhow::{anyhow, Context};
 use futures_util::stream::{self, StreamExt};
@@ -252,6 +252,17 @@ impl LazycatService {
                 .last_login_at
                 .unwrap_or_else(current_timestamp_rfc3339),
         ))
+    }
+
+    async fn fetch_login_token(&self) -> anyhow::Result<String> {
+        let mut session = LazycatSession {
+            cookies: CookieJar::default(),
+            last_login_at: None,
+        };
+        let login_page = self
+            .site_request(&mut session, Method::GET, "/login", None, false)
+            .await?;
+        parse_login_token(&login_page.body)
     }
 
     async fn resolve_live_machine_panel_access(
@@ -1003,6 +1014,91 @@ pub async fn get_machines_response(
     Ok(LazycatMachinesResponse { account, items })
 }
 
+pub async fn fetch_machine_detail_html(
+    state: &AppState,
+    user_id: &str,
+    service_id: i64,
+) -> anyhow::Result<String> {
+    let Some(mut account) = db::get_lazycat_account(&state.db, user_id).await? else {
+        return Err(anyhow!("请先连接懒猫云账号"));
+    };
+    let Some(machine) = db::get_lazycat_machine(&state.db, user_id, service_id).await? else {
+        return Err(anyhow!("目标机器不存在或已失效"));
+    };
+    let service = LazycatService::new(&state.config)?;
+    let mut session = LazycatSession::from_account(&account);
+    let html = service
+        .site_get_html_with_reauth(
+            &mut session,
+            &account.email,
+            &account.password,
+            &format!("/servicedetail?id={}", machine.service_id),
+            false,
+        )
+        .await?;
+    if apply_session_to_account(&mut account, &session)? {
+        account.updated_at = current_timestamp_rfc3339();
+        db::put_lazycat_account(&state.db, &account).await?;
+    }
+    Ok(html)
+}
+
+#[derive(Debug, Clone)]
+pub struct LazycatBrowserLoginBridge {
+    pub login_url: String,
+    pub target_url: String,
+    pub email: String,
+    pub password: String,
+    pub token: String,
+}
+
+pub async fn build_machine_detail_login_bridge(
+    state: &AppState,
+    user_id: &str,
+    service_id: i64,
+) -> anyhow::Result<LazycatBrowserLoginBridge> {
+    let Some(account) = db::get_lazycat_account(&state.db, user_id).await? else {
+        return Err(anyhow!("请先连接懒猫云账号"));
+    };
+    if account.email.trim().is_empty() || account.password.trim().is_empty() {
+        return Err(anyhow!("当前懒猫云账号缺少可用的登录凭据"));
+    }
+    let Some(machine) = db::get_lazycat_machine(&state.db, user_id, service_id).await? else {
+        return Err(anyhow!("目标机器不存在或已失效"));
+    };
+    let target_url = build_machine_detail_url(&state.config.lazycat_base_url, machine.service_id)
+        .ok_or_else(|| anyhow!("无法生成上游详情页地址"))?;
+    let login_url = build_machine_login_url(&state.config.lazycat_base_url)
+        .ok_or_else(|| anyhow!("无法生成上游登录地址"))?;
+    let service = LazycatService::new(&state.config)?;
+    let token = service.fetch_login_token().await?;
+    Ok(LazycatBrowserLoginBridge {
+        login_url,
+        target_url,
+        email: account.email,
+        password: account.password,
+        token,
+    })
+}
+
+fn build_machine_login_url(base_url: &str) -> Option<String> {
+    let mut url = Url::parse(base_url).ok()?;
+    match url.scheme() {
+        "http" | "https" => {}
+        _ => return None,
+    }
+    if url.set_username("").is_err() {
+        return None;
+    }
+    if url.set_password(None).is_err() {
+        return None;
+    }
+    url.set_path("/login");
+    url.set_query(Some("action=email"));
+    url.set_fragment(None);
+    Some(url.to_string())
+}
+
 fn build_machine_detail_url(base_url: &str, service_id: i64) -> Option<String> {
     let mut url = Url::parse(base_url).ok()?;
     match url.scheme() {
@@ -1268,16 +1364,38 @@ fn format_timestamp(ts: OffsetDateTime) -> Option<String> {
     ts.to_offset(UtcOffset::UTC).format(&Rfc3339).ok()
 }
 
+pub async fn resolve_machine_panel_url(
+    state: &AppState,
+    user_id: &str,
+    service_id: i64,
+) -> anyhow::Result<LazycatMachineAccessUrlResponse> {
+    let panel_url = resolve_live_machine_panel_url(state, user_id, service_id).await?;
+    Ok(LazycatMachineAccessUrlResponse {
+        url: panel_url.to_string(),
+        kind: "panel".to_string(),
+    })
+}
+
 pub async fn resolve_machine_vnc_url(
     state: &AppState,
     user_id: &str,
     service_id: i64,
-) -> anyhow::Result<LazycatMachineVncUrlResponse> {
+) -> anyhow::Result<LazycatMachineAccessUrlResponse> {
     let console_url = resolve_live_machine_console_url(state, user_id, service_id).await?;
-    Ok(LazycatMachineVncUrlResponse {
+    Ok(LazycatMachineAccessUrlResponse {
         url: console_url.to_string(),
         kind: "console".to_string(),
     })
+}
+
+async fn resolve_live_machine_panel_url(
+    state: &AppState,
+    user_id: &str,
+    service_id: i64,
+) -> anyhow::Result<Url> {
+    let (_, _, access) =
+        resolve_live_machine_panel_access_from_state(state, user_id, service_id).await?;
+    Ok(access.dashboard_url)
 }
 
 async fn resolve_live_machine_console_url(
@@ -1285,25 +1403,17 @@ async fn resolve_live_machine_console_url(
     user_id: &str,
     service_id: i64,
 ) -> anyhow::Result<Url> {
-    let Some(mut account) = db::get_lazycat_account(&state.db, user_id).await? else {
-        return Err(anyhow!("请先连接懒猫云账号"));
-    };
-    let Some(machine) = db::get_lazycat_machine(&state.db, user_id, service_id).await? else {
-        return Err(anyhow!("目标机器不存在或已失效"));
-    };
-    if machine.panel_kind.as_deref() != Some("container") {
-        return Err(anyhow!("当前机器没有可用的网页 VNC 入口"));
-    }
-
-    let service = LazycatService::new(&state.config)?;
-    let (session, access) = service
-        .resolve_live_machine_panel_access(&machine, &account)
-        .await?;
-    if apply_session_to_account(&mut account, &session)? {
-        account.updated_at = current_timestamp_rfc3339();
-        db::put_lazycat_account(&state.db, &account).await?;
-    }
-
+    let (service, machine, access) =
+        resolve_live_machine_panel_access_from_state(state, user_id, service_id)
+            .await
+            .map_err(|err| {
+                let message = err.to_string();
+                if message == "当前机器没有可用的 Web 面板入口" {
+                    anyhow!("当前机器没有可用的网页 VNC 入口")
+                } else {
+                    anyhow!(message)
+                }
+            })?;
     let hostname = machine.service_code.trim();
     if !hostname.is_empty() {
         match service
@@ -1328,6 +1438,33 @@ async fn resolve_live_machine_console_url(
     }
 
     Err(anyhow!("暂未解析出网页 VNC 控制台入口"))
+}
+
+async fn resolve_live_machine_panel_access_from_state(
+    state: &AppState,
+    user_id: &str,
+    service_id: i64,
+) -> anyhow::Result<(LazycatService, LazycatMachineRow, ResolvedPanelAccess)> {
+    let Some(mut account) = db::get_lazycat_account(&state.db, user_id).await? else {
+        return Err(anyhow!("请先连接懒猫云账号"));
+    };
+    let Some(machine) = db::get_lazycat_machine(&state.db, user_id, service_id).await? else {
+        return Err(anyhow!("目标机器不存在或已失效"));
+    };
+    if machine.panel_kind.as_deref() != Some("container") {
+        return Err(anyhow!("当前机器没有可用的 Web 面板入口"));
+    }
+
+    let service = LazycatService::new(&state.config)?;
+    let (session, access) = service
+        .resolve_live_machine_panel_access(&machine, &account)
+        .await?;
+    if apply_session_to_account(&mut account, &session)? {
+        account.updated_at = current_timestamp_rfc3339();
+        db::put_lazycat_account(&state.db, &account).await?;
+    }
+
+    Ok((service, machine, access))
 }
 
 fn apply_session_to_account(

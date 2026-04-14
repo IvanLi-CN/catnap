@@ -39,6 +39,14 @@ function buildLazycatMachineDetailUrl(serviceId: number) {
   return `https://lxc.lazycat.wiki/servicedetail?id=${serviceId}`;
 }
 
+function buildLazycatMachineLocalPageUrl(serviceId: number, page: "detail" | "panel") {
+  return `${window.location.origin}/api/lazycat/machines/${serviceId}/${page}`;
+}
+
+function buildLazycatMachineDetailBridgeUrlPrefix(serviceId: number) {
+  return `${window.location.origin}/api/lazycat/machines/${serviceId}/detail-bridge?popupId=`;
+}
+
 function buildTrafficHistory(points: Array<[sampledAt: string, usedGb: number, limitGb: number]>) {
   return points.map(([sampledAt, usedGb, limitGb]) => ({
     sampledAt,
@@ -444,10 +452,10 @@ export const VncAction: Story = {
       await userEvent.click(within(vncCard).getByRole("button", { name: "打开详情页" }));
       await userEvent.click(within(vncCard).getByRole("button", { name: "打开 VNC" }));
       await waitFor(() => expect(openCalls.length).toBe(3));
-      expect(openCalls[0]?.url).toBe(
-        "https://edge-node-24.example.net:8443/container/dashboard?hash=8d1f0c27b4a9e3f2",
-      );
-      expect(openCalls[1]?.url).toBe("https://lxc.lazycat.wiki/servicedetail?id=2312");
+      expect(openCalls[0]?.url).toBe(buildLazycatMachineLocalPageUrl(2312, "panel"));
+      expect(openCalls[0]?.target).toBe("_blank");
+      expect(openCalls[1]?.url).toContain(buildLazycatMachineDetailBridgeUrlPrefix(2312));
+      expect(openCalls[1]?.target).toBe("_blank");
       expect(openCalls[2]?.url).toBe("");
       expect(openCalls[2]?.target).toMatch(/^lazycat-vnc-2312-/);
       expect(submitCalls[0]).toEqual({
@@ -456,22 +464,27 @@ export const VncAction: Story = {
         target: openCalls[2]?.target ?? "",
       });
 
-      const noVncCard = findMachineCard(canvasElement as HTMLElement, "Apex Compute Lite");
-      expect(within(noVncCard).getByRole("button", { name: "打开面板" })).toBeDisabled();
-      const detailButton = within(noVncCard).getByRole("button", { name: "打开详情页" });
+      const livePanelCard = findMachineCard(canvasElement as HTMLElement, "Apex Compute Lite");
+      const panelButton = within(livePanelCard).getByRole("button", { name: "打开面板" });
+      expect(panelButton).toBeEnabled();
+      await userEvent.click(panelButton);
+      const detailButton = within(livePanelCard).getByRole("button", { name: "打开详情页" });
       expect(detailButton).toBeEnabled();
       await userEvent.click(detailButton);
-      const liveVncButton = within(noVncCard).getByRole("button", { name: "打开 VNC" });
+      const liveVncButton = within(livePanelCard).getByRole("button", { name: "打开 VNC" });
       expect(liveVncButton).toBeEnabled();
       await userEvent.click(liveVncButton);
-      await waitFor(() => expect(openCalls.length).toBe(5));
-      expect(openCalls[3]?.url).toBe("https://lxc.lazycat.wiki/servicedetail?id=2314");
-      expect(openCalls[4]?.url).toBe("");
-      expect(openCalls[4]?.target).toMatch(/^lazycat-vnc-2314-/);
+      await waitFor(() => expect(openCalls.length).toBe(6));
+      expect(openCalls[3]?.url).toBe(buildLazycatMachineLocalPageUrl(2314, "panel"));
+      expect(openCalls[3]?.target).toBe("_blank");
+      expect(openCalls[4]?.url).toContain(buildLazycatMachineDetailBridgeUrlPrefix(2314));
+      expect(openCalls[4]?.target).toBe("_blank");
+      expect(openCalls[5]?.url).toBe("");
+      expect(openCalls[5]?.target).toMatch(/^lazycat-vnc-2314-/);
       expect(submitCalls[1]).toEqual({
         action: `${window.location.origin}/api/lazycat/machines/2314/vnc-console`,
         method: "POST",
-        target: openCalls[4]?.target ?? "",
+        target: openCalls[5]?.target ?? "",
       });
     } finally {
       window.open = originalOpen;
