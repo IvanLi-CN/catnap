@@ -385,25 +385,6 @@ async fn authed_text(
     )
 }
 
-fn is_leap_year(year: i32) -> bool {
-    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
-}
-
-fn days_in_month(year: i32, month: Month) -> u8 {
-    match month {
-        Month::January
-        | Month::March
-        | Month::May
-        | Month::July
-        | Month::August
-        | Month::October
-        | Month::December => 31,
-        Month::April | Month::June | Month::September | Month::November => 30,
-        Month::February if is_leap_year(year) => 29,
-        Month::February => 28,
-    }
-}
-
 async fn seed_lazycat_machine(
     t: &TestApp,
     user_id: &str,
@@ -519,7 +500,7 @@ async fn seed_lazycat_machine(
         .await
         .unwrap();
 
-    traffic_cycle_start
+    traffic.cycle_start_at.clone()
 }
 
 #[tokio::test]
