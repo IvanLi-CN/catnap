@@ -64,11 +64,11 @@
 
 - Given 桌面宽度下的机器卡片
   When 页面渲染完成
-  Then 四个按钮全部位于标题行内，顺序固定为“打开面板 / 打开 VNC / 打开详情页 / 展开详情”，状态徽标仍位于最右侧。
+  Then 四个按钮全部位于标题行内，顺序固定为“打开详情页 / 打开面板 / 打开 VNC / 展开详情”，状态徽标仍位于最右侧。
 
 - Given 用户点击“打开详情页”
   When 当前机器存在 `detailUrl`
-  Then 前端必须以 `window.open(url, "_blank", "noopener,noreferrer")` 在新窗口打开上游详情页。
+  Then 前端必须以新窗口命中 Catnap 的同源 POST 详情桥接入口；当上游登录页可被浏览器桥接重放时自动登录并落到对应的上游详情页，否则直接跳转到真实 `detailUrl`。
 
 - Given 小屏宽度断点
   When 查看机器卡片动作区
@@ -100,7 +100,7 @@
   sensitive_exclusion: N/A
   story_id_or_title: Pages/MachinesView/Default
   state: desktop inline action row
-  evidence_note: 桌面态机器卡片头部已收口为“标题块 / 动作区 / 状态徽标”三段式布局，四个按钮位于标题行内，顺序为“打开面板 / 打开 VNC / 打开详情页 / 展开详情”。
+  evidence_note: 桌面态机器卡片头部已收口为“标题块 / 动作区 / 状态徽标”三段式布局，四个按钮位于标题行内，顺序为“打开详情页 / 打开面板 / 打开 VNC / 展开详情”。
   image:
   PR: include
   ![Machines action row desktop](./assets/machines-actions-desktop.png)
@@ -126,4 +126,4 @@
 - 2026-04-11: 创建 delta spec，冻结动作区上移、详情页入口与 responsive 验收口径。
 - 2026-04-11: 机器列表响应新增 `detailUrl`，MachinesView 完成四按钮头部重排与小屏 2x2 动作网格。
 - 2026-04-11: Storybook `MachinesView` 增补 autodocs、详情按钮交互断言与桌面/小屏视觉证据。
-- 2026-04-11: PR #98 已收敛到 merge-ready；本地质量门、GitHub checks 与 codex review-loop 均通过。
+- 2026-04-15: 详情页桥接入口收紧为同源 POST，并在上游登录页依赖浏览器匿名会话时回退为直达真实详情页，避免把脆弱自动登录链路暴露给跨站 GET。

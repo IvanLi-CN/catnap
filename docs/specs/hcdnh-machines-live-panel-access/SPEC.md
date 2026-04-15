@@ -97,7 +97,7 @@
   sensitive_exclusion: N/A
   story_id_or_title: Pages/MachinesView/Default
   state: desktop action row after live panel redirect switch
-  evidence_note: 本次改动不改变卡片视觉布局；桌面态复核显示“打开面板 / 打开 VNC / 打开详情页 / 展开详情”仍位于标题行内，其中“打开面板”现已切到实时校验登录态后的 live redirect 链路。
+  evidence_note: 本次改动不改变卡片视觉布局；桌面态复核显示“打开详情页 / 打开面板 / 打开 VNC / 展开详情”仍位于标题行内，其中“打开面板”现已切到实时校验登录态后的 live redirect 链路。
   image:
   PR: include
   ![Machines live panel desktop](./assets/machines-panel-live-desktop.png)
@@ -123,3 +123,4 @@
 - 2026-04-11: 创建 follow-up spec，冻结“打开面板自动登录直达”的接口与交互验收口径。
 - 2026-04-11: 后端新增 live panel URL / redirect 入口，并在 stale cookie 场景下自动重登后刷新保存的 cookies。
 - 2026-04-11: 前端“打开面板”切换为 POST redirect，新窗口改由 Catnap 代解析 live panel URL；Storybook 交互断言与视觉证据已更新，本地质量门通过，待 push / PR 再收敛。
+- 2026-04-15: 面板跳转入口收紧为同源 POST-only，避免跨站 GET 触发 live panel 解析与上游状态探测。

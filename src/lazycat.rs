@@ -254,7 +254,7 @@ impl LazycatService {
         ))
     }
 
-    async fn fetch_login_token(&self) -> anyhow::Result<String> {
+    async fn fetch_login_bridge_material(&self) -> anyhow::Result<LazycatLoginBridgeMaterial> {
         let mut session = LazycatSession {
             cookies: CookieJar::default(),
             last_login_at: None,
@@ -262,7 +262,10 @@ impl LazycatService {
         let login_page = self
             .site_request(&mut session, Method::GET, "/login", None, false)
             .await?;
-        parse_login_token(&login_page.body)
+        Ok(LazycatLoginBridgeMaterial {
+            token: parse_login_token(&login_page.body)?,
+            requires_browser_session: session.cookies.header_value().is_some(),
+        })
     }
 
     async fn resolve_live_machine_panel_access(
@@ -284,25 +287,38 @@ impl LazycatService {
                 ),
                 false,
             )
-            .await
-            .ok();
-        if let Some(info_html) = info_html.as_deref() {
-            if let Some(panel) = parse_container_panel_snapshot(info_html) {
+            .await;
+        let refresh_error = info_html.as_ref().err().map(ToString::to_string);
+        if let Ok(info_html) = info_html {
+            if let Some(panel) = parse_container_panel_snapshot(&info_html) {
                 panel_url = Some(panel.panel_url);
                 panel_hash = Some(panel.panel_hash);
             }
+        }
+        if let Some(message) = refresh_error.as_deref() {
+            return Err(anyhow!(message.to_string()));
         }
 
         let panel_url = panel_url
             .as_deref()
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .ok_or_else(|| anyhow!("当前机器没有可用的容器面板入口"))?;
+            .ok_or_else(|| {
+                refresh_error
+                    .as_deref()
+                    .map(|message| anyhow!(message.to_string()))
+                    .unwrap_or_else(|| anyhow!("当前机器没有可用的容器面板入口"))
+            })?;
         let panel_hash = panel_hash
             .as_deref()
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .ok_or_else(|| anyhow!("当前机器缺少容器面板访问凭证"))?;
+            .ok_or_else(|| {
+                refresh_error
+                    .as_deref()
+                    .map(|message| anyhow!(message.to_string()))
+                    .unwrap_or_else(|| anyhow!("当前机器缺少容器面板访问凭证"))
+            })?;
 
         Ok((
             session,
@@ -1014,35 +1030,6 @@ pub async fn get_machines_response(
     Ok(LazycatMachinesResponse { account, items })
 }
 
-pub async fn fetch_machine_detail_html(
-    state: &AppState,
-    user_id: &str,
-    service_id: i64,
-) -> anyhow::Result<String> {
-    let Some(mut account) = db::get_lazycat_account(&state.db, user_id).await? else {
-        return Err(anyhow!("请先连接懒猫云账号"));
-    };
-    let Some(machine) = db::get_lazycat_machine(&state.db, user_id, service_id).await? else {
-        return Err(anyhow!("目标机器不存在或已失效"));
-    };
-    let service = LazycatService::new(&state.config)?;
-    let mut session = LazycatSession::from_account(&account);
-    let html = service
-        .site_get_html_with_reauth(
-            &mut session,
-            &account.email,
-            &account.password,
-            &format!("/servicedetail?id={}", machine.service_id),
-            false,
-        )
-        .await?;
-    if apply_session_to_account(&mut account, &session)? {
-        account.updated_at = current_timestamp_rfc3339();
-        db::put_lazycat_account(&state.db, &account).await?;
-    }
-    Ok(html)
-}
-
 #[derive(Debug, Clone)]
 pub struct LazycatBrowserLoginBridge {
     pub login_url: String,
@@ -1052,11 +1039,23 @@ pub struct LazycatBrowserLoginBridge {
     pub token: String,
 }
 
-pub async fn build_machine_detail_login_bridge(
+#[derive(Debug, Clone)]
+pub enum LazycatMachineDetailAccess {
+    BrowserLogin(LazycatBrowserLoginBridge),
+    DirectRedirect { target_url: String },
+}
+
+#[derive(Debug, Clone)]
+struct LazycatLoginBridgeMaterial {
+    token: String,
+    requires_browser_session: bool,
+}
+
+pub async fn build_machine_detail_access(
     state: &AppState,
     user_id: &str,
     service_id: i64,
-) -> anyhow::Result<LazycatBrowserLoginBridge> {
+) -> anyhow::Result<LazycatMachineDetailAccess> {
     let Some(account) = db::get_lazycat_account(&state.db, user_id).await? else {
         return Err(anyhow!("请先连接懒猫云账号"));
     };
@@ -1071,14 +1070,24 @@ pub async fn build_machine_detail_login_bridge(
     let login_url = build_machine_login_url(&state.config.lazycat_base_url)
         .ok_or_else(|| anyhow!("无法生成上游登录地址"))?;
     let service = LazycatService::new(&state.config)?;
-    let token = service.fetch_login_token().await?;
-    Ok(LazycatBrowserLoginBridge {
-        login_url,
-        target_url,
-        email: account.email,
-        password: account.password,
-        token,
-    })
+    let bridge = service
+        .fetch_login_bridge_material()
+        .await
+        .with_context(|| {
+            format!("fetch lazycat detail bridge preflight failed for {service_id}")
+        })?;
+    if bridge.requires_browser_session {
+        return Ok(LazycatMachineDetailAccess::DirectRedirect { target_url });
+    }
+    Ok(LazycatMachineDetailAccess::BrowserLogin(
+        LazycatBrowserLoginBridge {
+            login_url,
+            target_url,
+            email: account.email,
+            password: account.password,
+            token: bridge.token,
+        },
+    ))
 }
 
 fn build_machine_login_url(base_url: &str) -> Option<String> {
@@ -1369,7 +1378,7 @@ pub async fn resolve_machine_panel_url(
     user_id: &str,
     service_id: i64,
 ) -> anyhow::Result<LazycatMachineAccessUrlResponse> {
-    let panel_url = resolve_live_machine_panel_url(state, user_id, service_id).await?;
+    let panel_url = resolve_machine_panel_destination_url(state, user_id, service_id).await?;
     Ok(LazycatMachineAccessUrlResponse {
         url: panel_url.to_string(),
         kind: "panel".to_string(),
@@ -1396,6 +1405,42 @@ async fn resolve_live_machine_panel_url(
     let (_, _, access) =
         resolve_live_machine_panel_access_from_state(state, user_id, service_id).await?;
     Ok(access.dashboard_url)
+}
+
+async fn resolve_machine_panel_destination_url(
+    state: &AppState,
+    user_id: &str,
+    service_id: i64,
+) -> anyhow::Result<Url> {
+    let machine = db::get_lazycat_machine(&state.db, user_id, service_id).await?;
+    let cached_panel_url = machine
+        .as_ref()
+        .and_then(|machine| machine.panel_url.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .and_then(|value| normalize_panel_dashboard_url(value).ok())
+        .and_then(|value| Url::parse(&value).ok());
+    let missing_cached_panel_hash = machine
+        .as_ref()
+        .and_then(|machine| machine.panel_hash.as_deref())
+        .map(str::trim)
+        .is_none_or(str::is_empty);
+
+    match resolve_live_machine_panel_url(state, user_id, service_id).await {
+        Ok(url) => Ok(url),
+        Err(err) => {
+            if let Some(url) = cached_panel_url.filter(|_| missing_cached_panel_hash) {
+                warn!(
+                    user_id,
+                    service_id,
+                    error = %err,
+                    "lazycat live panel hash unavailable; falling back to cached panel url"
+                );
+                return Ok(url);
+            }
+            Err(err)
+        }
+    }
 }
 
 async fn resolve_live_machine_console_url(

@@ -30,6 +30,7 @@
 - Auth: same as existing Catnap API user identity.
 - Purpose: open the live container panel in a new window without exposing the reauth flow to the main UI thread.
 - Behavior:
+  - requires a same-origin `POST` submission from the current Catnap page;
   - calls the same live panel resolution flow as `panel-url`;
   - returns `303 See Other` with `Location=<resolved live panel url>` on success;
   - returns a rendered error page on failure so the popup/tab can show a user-readable reason.

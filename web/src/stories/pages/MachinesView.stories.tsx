@@ -39,12 +39,11 @@ function buildLazycatMachineDetailUrl(serviceId: number) {
   return `https://lxc.lazycat.wiki/servicedetail?id=${serviceId}`;
 }
 
-function buildLazycatMachineLocalPageUrl(serviceId: number, page: "detail" | "panel") {
-  return `${window.location.origin}/api/lazycat/machines/${serviceId}/${page}`;
-}
-
-function buildLazycatMachineDetailBridgeUrlPrefix(serviceId: number) {
-  return `${window.location.origin}/api/lazycat/machines/${serviceId}/detail-bridge?popupId=`;
+function buildLazycatMachineActionUrl(
+  serviceId: number,
+  action: "detail-bridge" | "panel" | "vnc-console",
+) {
+  return `${window.location.origin}/api/lazycat/machines/${serviceId}/${action}`;
 }
 
 function buildTrafficHistory(points: Array<[sampledAt: string, usedGb: number, limitGb: number]>) {
@@ -309,6 +308,17 @@ function findMachineCard(canvasElement: HTMLElement, title: string) {
   return card;
 }
 
+function expectMachineActionOrder(card: HTMLElement, expected: string[]) {
+  const actions = card.querySelector(".machines-card-actions");
+  if (!(actions instanceof HTMLElement)) {
+    throw new Error("Unable to find machine action row");
+  }
+  const labels = Array.from(actions.querySelectorAll("button")).map(
+    (button) => button.textContent?.trim() ?? "",
+  );
+  expect(labels).toEqual(expected);
+}
+
 function MachinesViewDemo({
   bootstrap: initialBootstrap = buildBootstrapWithLazycat(readyAccount),
   items: initialItems = healthyMachines,
@@ -448,23 +458,35 @@ export const VncAction: Story = {
 
     try {
       const vncCard = findMachineCard(canvasElement as HTMLElement, "港湾 Transit Basic");
-      await userEvent.click(within(vncCard).getByRole("button", { name: "打开面板" }));
+      expectMachineActionOrder(vncCard, ["打开详情页", "打开面板", "打开 VNC", "展开详情"]);
       await userEvent.click(within(vncCard).getByRole("button", { name: "打开详情页" }));
+      await userEvent.click(within(vncCard).getByRole("button", { name: "打开面板" }));
       await userEvent.click(within(vncCard).getByRole("button", { name: "打开 VNC" }));
       await waitFor(() => expect(openCalls.length).toBe(3));
-      expect(openCalls[0]?.url).toBe(buildLazycatMachineLocalPageUrl(2312, "panel"));
-      expect(openCalls[0]?.target).toBe("_blank");
-      expect(openCalls[1]?.url).toContain(buildLazycatMachineDetailBridgeUrlPrefix(2312));
-      expect(openCalls[1]?.target).toBe("_blank");
+      expect(openCalls[0]?.url).toBe("");
+      expect(openCalls[0]?.target).toMatch(/^lazycat-detail-2312-/);
+      expect(openCalls[1]?.url).toBe("");
+      expect(openCalls[1]?.target).toMatch(/^lazycat-panel-2312-/);
       expect(openCalls[2]?.url).toBe("");
       expect(openCalls[2]?.target).toMatch(/^lazycat-vnc-2312-/);
       expect(submitCalls[0]).toEqual({
-        action: `${window.location.origin}/api/lazycat/machines/2312/vnc-console`,
+        action: buildLazycatMachineActionUrl(2312, "detail-bridge"),
+        method: "POST",
+        target: openCalls[0]?.target ?? "",
+      });
+      expect(submitCalls[1]).toEqual({
+        action: buildLazycatMachineActionUrl(2312, "panel"),
+        method: "POST",
+        target: openCalls[1]?.target ?? "",
+      });
+      expect(submitCalls[2]).toEqual({
+        action: buildLazycatMachineActionUrl(2312, "vnc-console"),
         method: "POST",
         target: openCalls[2]?.target ?? "",
       });
 
       const livePanelCard = findMachineCard(canvasElement as HTMLElement, "Apex Compute Lite");
+      expectMachineActionOrder(livePanelCard, ["打开详情页", "打开面板", "打开 VNC", "展开详情"]);
       const panelButton = within(livePanelCard).getByRole("button", { name: "打开面板" });
       expect(panelButton).toBeEnabled();
       await userEvent.click(panelButton);
@@ -475,14 +497,24 @@ export const VncAction: Story = {
       expect(liveVncButton).toBeEnabled();
       await userEvent.click(liveVncButton);
       await waitFor(() => expect(openCalls.length).toBe(6));
-      expect(openCalls[3]?.url).toBe(buildLazycatMachineLocalPageUrl(2314, "panel"));
-      expect(openCalls[3]?.target).toBe("_blank");
-      expect(openCalls[4]?.url).toContain(buildLazycatMachineDetailBridgeUrlPrefix(2314));
-      expect(openCalls[4]?.target).toBe("_blank");
+      expect(openCalls[3]?.url).toBe("");
+      expect(openCalls[3]?.target).toMatch(/^lazycat-panel-2314-/);
+      expect(openCalls[4]?.url).toBe("");
+      expect(openCalls[4]?.target).toMatch(/^lazycat-detail-2314-/);
       expect(openCalls[5]?.url).toBe("");
       expect(openCalls[5]?.target).toMatch(/^lazycat-vnc-2314-/);
-      expect(submitCalls[1]).toEqual({
-        action: `${window.location.origin}/api/lazycat/machines/2314/vnc-console`,
+      expect(submitCalls[3]).toEqual({
+        action: buildLazycatMachineActionUrl(2314, "panel"),
+        method: "POST",
+        target: openCalls[3]?.target ?? "",
+      });
+      expect(submitCalls[4]).toEqual({
+        action: buildLazycatMachineActionUrl(2314, "detail-bridge"),
+        method: "POST",
+        target: openCalls[4]?.target ?? "",
+      });
+      expect(submitCalls[5]).toEqual({
+        action: buildLazycatMachineActionUrl(2314, "vnc-console"),
         method: "POST",
         target: openCalls[5]?.target ?? "",
       });
