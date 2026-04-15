@@ -36,5 +36,7 @@
 
 # Local build/runtime outputs
 /out
+/.codex-artifacts
+/.codex-preview
 
 /dist/docker

@@ -2142,9 +2142,9 @@ select {
 }
 
 .machines-card-title-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: flex-start;
-  justify-content: space-between;
   gap: 14px;
 }
 
@@ -2169,15 +2169,17 @@ select {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-  margin-left: auto;
   justify-content: flex-end;
+  justify-self: end;
 }
 
 .machines-card-actions {
   display: flex;
   flex-wrap: wrap;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: flex-start;
   gap: 10px;
+  min-width: 0;
 }
 
 .machines-card-grid {
@@ -2215,6 +2217,7 @@ select {
 }
 
 .machines-vnc-btn,
+.machines-detail-btn,
 .machines-expand-btn {
   min-width: 132px;
   justify-content: center;
@@ -3462,9 +3465,15 @@ select {
     align-items: stretch;
   }
 
+  .machines-card-title-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
   .machines-card-actions {
+    grid-column: 1 / -1;
     justify-content: flex-start;
   }
+
   .machines-card-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -3602,6 +3611,14 @@ select {
     height: 112px;
   }
 
+  .machines-card-title-row {
+    grid-template-columns: 1fr;
+  }
+
+  .machines-card-badges {
+    justify-self: start;
+  }
+
   .machines-card-actions {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3613,12 +3630,12 @@ select {
     gap: 12px 14px;
   }
 
-  .machines-card-field--wide,
-  .machines-expand-btn {
+  .machines-card-field--wide {
     grid-column: 1 / -1;
   }
 
   .machines-vnc-btn,
+  .machines-detail-btn,
   .machines-expand-btn {
     width: 100%;
     min-width: 0;

@@ -35,6 +35,17 @@ function delay(ms: number) {
   });
 }
 
+function buildLazycatMachineDetailUrl(serviceId: number) {
+  return `https://lxc.lazycat.wiki/servicedetail?id=${serviceId}`;
+}
+
+function buildLazycatMachineActionUrl(
+  serviceId: number,
+  action: "detail-bridge" | "panel" | "vnc-console",
+) {
+  return `${window.location.origin}/api/lazycat/machines/${serviceId}/${action}`;
+}
+
 function buildTrafficHistory(points: Array<[sampledAt: string, usedGb: number, limitGb: number]>) {
   return points.map(([sampledAt, usedGb, limitGb]) => ({
     sampledAt,
@@ -87,6 +98,7 @@ const healthyMachines: LazycatMachineView[] = [
     firstPrice: "¥8.00元/月付",
     panelKind: "container",
     panelUrl: "https://edge-node-24.example.net:8443/container/dashboard?hash=8d1f0c27b4a9e3f2",
+    detailUrl: buildLazycatMachineDetailUrl(2312),
     traffic: {
       usedGb: 61.53,
       limitGb: 750,
@@ -154,6 +166,7 @@ const healthyMachines: LazycatMachineView[] = [
     firstPrice: "¥9.34元/月付",
     panelKind: "container",
     panelUrl: null,
+    detailUrl: buildLazycatMachineDetailUrl(2313),
     traffic: {
       usedGb: 702,
       limitGb: 800,
@@ -202,6 +215,7 @@ const healthyMachines: LazycatMachineView[] = [
     firstPrice: "¥0.00元/月付",
     panelKind: "container",
     panelUrl: null,
+    detailUrl: buildLazycatMachineDetailUrl(2314),
     traffic: {
       usedGb: 0,
       limitGb: 700,
@@ -236,6 +250,7 @@ const degradedMachines: LazycatMachineView[] = [
     firstPrice: "¥1.50元/月付",
     panelKind: null,
     panelUrl: null,
+    detailUrl: buildLazycatMachineDetailUrl(2315),
     traffic: null,
     portMappings: [
       {
@@ -268,6 +283,7 @@ const degradedMachines: LazycatMachineView[] = [
     firstPrice: "¥0.00元/免费",
     panelKind: null,
     panelUrl: null,
+    detailUrl: buildLazycatMachineDetailUrl(2316),
     traffic: null,
     portMappings: [],
     lastSiteSyncAt: "2026-03-20T00:46:13Z",
@@ -290,6 +306,17 @@ function findMachineCard(canvasElement: HTMLElement, title: string) {
     throw new Error(`Unable to find machine card for ${title}`);
   }
   return card;
+}
+
+function expectMachineActionOrder(card: HTMLElement, expected: string[]) {
+  const actions = card.querySelector(".machines-card-actions");
+  if (!(actions instanceof HTMLElement)) {
+    throw new Error("Unable to find machine action row");
+  }
+  const labels = Array.from(actions.querySelectorAll("button")).map(
+    (button) => button.textContent?.trim() ?? "",
+  );
+  expect(labels).toEqual(expected);
 }
 
 function MachinesViewDemo({
@@ -371,6 +398,7 @@ function MachinesViewDemo({
 const meta = {
   title: "Pages/MachinesView",
   component: MachinesViewDemo,
+  tags: ["autodocs"],
 } satisfies Meta<typeof MachinesViewDemo>;
 
 export default meta;
@@ -430,32 +458,65 @@ export const VncAction: Story = {
 
     try {
       const vncCard = findMachineCard(canvasElement as HTMLElement, "港湾 Transit Basic");
+      expectMachineActionOrder(vncCard, ["打开详情页", "打开面板", "打开 VNC", "展开详情"]);
+      await userEvent.click(within(vncCard).getByRole("button", { name: "打开详情页" }));
       await userEvent.click(within(vncCard).getByRole("button", { name: "打开面板" }));
       await userEvent.click(within(vncCard).getByRole("button", { name: "打开 VNC" }));
-      await waitFor(() => expect(openCalls.length).toBe(2));
-      expect(openCalls[0]?.url).toBe(
-        "https://edge-node-24.example.net:8443/container/dashboard?hash=8d1f0c27b4a9e3f2",
-      );
+      await waitFor(() => expect(openCalls.length).toBe(3));
+      expect(openCalls[0]?.url).toBe("");
+      expect(openCalls[0]?.target).toMatch(/^lazycat-detail-2312-/);
       expect(openCalls[1]?.url).toBe("");
-      expect(openCalls[1]?.target).toMatch(/^lazycat-vnc-2312-/);
+      expect(openCalls[1]?.target).toMatch(/^lazycat-panel-2312-/);
+      expect(openCalls[2]?.url).toBe("");
+      expect(openCalls[2]?.target).toMatch(/^lazycat-vnc-2312-/);
       expect(submitCalls[0]).toEqual({
-        action: `${window.location.origin}/api/lazycat/machines/2312/vnc-console`,
+        action: buildLazycatMachineActionUrl(2312, "detail-bridge"),
+        method: "POST",
+        target: openCalls[0]?.target ?? "",
+      });
+      expect(submitCalls[1]).toEqual({
+        action: buildLazycatMachineActionUrl(2312, "panel"),
         method: "POST",
         target: openCalls[1]?.target ?? "",
       });
-
-      const noVncCard = findMachineCard(canvasElement as HTMLElement, "Apex Compute Lite");
-      expect(within(noVncCard).getByRole("button", { name: "打开面板" })).toBeDisabled();
-      const liveVncButton = within(noVncCard).getByRole("button", { name: "打开 VNC" });
-      expect(liveVncButton).toBeEnabled();
-      await userEvent.click(liveVncButton);
-      await waitFor(() => expect(openCalls.length).toBe(3));
-      expect(openCalls[2]?.url).toBe("");
-      expect(openCalls[2]?.target).toMatch(/^lazycat-vnc-2314-/);
-      expect(submitCalls[1]).toEqual({
-        action: `${window.location.origin}/api/lazycat/machines/2314/vnc-console`,
+      expect(submitCalls[2]).toEqual({
+        action: buildLazycatMachineActionUrl(2312, "vnc-console"),
         method: "POST",
         target: openCalls[2]?.target ?? "",
+      });
+
+      const livePanelCard = findMachineCard(canvasElement as HTMLElement, "Apex Compute Lite");
+      expectMachineActionOrder(livePanelCard, ["打开详情页", "打开面板", "打开 VNC", "展开详情"]);
+      const panelButton = within(livePanelCard).getByRole("button", { name: "打开面板" });
+      expect(panelButton).toBeEnabled();
+      await userEvent.click(panelButton);
+      const detailButton = within(livePanelCard).getByRole("button", { name: "打开详情页" });
+      expect(detailButton).toBeEnabled();
+      await userEvent.click(detailButton);
+      const liveVncButton = within(livePanelCard).getByRole("button", { name: "打开 VNC" });
+      expect(liveVncButton).toBeEnabled();
+      await userEvent.click(liveVncButton);
+      await waitFor(() => expect(openCalls.length).toBe(6));
+      expect(openCalls[3]?.url).toBe("");
+      expect(openCalls[3]?.target).toMatch(/^lazycat-panel-2314-/);
+      expect(openCalls[4]?.url).toBe("");
+      expect(openCalls[4]?.target).toMatch(/^lazycat-detail-2314-/);
+      expect(openCalls[5]?.url).toBe("");
+      expect(openCalls[5]?.target).toMatch(/^lazycat-vnc-2314-/);
+      expect(submitCalls[3]).toEqual({
+        action: buildLazycatMachineActionUrl(2314, "panel"),
+        method: "POST",
+        target: openCalls[3]?.target ?? "",
+      });
+      expect(submitCalls[4]).toEqual({
+        action: buildLazycatMachineActionUrl(2314, "detail-bridge"),
+        method: "POST",
+        target: openCalls[4]?.target ?? "",
+      });
+      expect(submitCalls[5]).toEqual({
+        action: buildLazycatMachineActionUrl(2314, "vnc-console"),
+        method: "POST",
+        target: openCalls[5]?.target ?? "",
       });
     } finally {
       window.open = originalOpen;
@@ -558,5 +619,7 @@ export const ResponsiveAllBreakpoints: Story = {
   ),
   play: async ({ canvasElement }) => {
     await expectResponsiveBreakpoints(canvasElement, "page-machines");
+    const card = findMachineCard(canvasElement as HTMLElement, "北湾 NAT 02");
+    expect(within(card).getByRole("button", { name: "打开详情页" })).toBeVisible();
   },
 };

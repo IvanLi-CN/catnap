@@ -297,6 +297,8 @@ pub struct LazycatMachineView {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub panel_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub traffic: Option<LazycatTrafficView>,
     #[serde(default)]
     pub port_mappings: Vec<LazycatPortMappingView>,
@@ -318,7 +320,7 @@ pub struct LazycatMachinesResponse {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct LazycatMachineVncUrlResponse {
+pub struct LazycatMachineAccessUrlResponse {
     pub url: String,
     pub kind: String,
 }
