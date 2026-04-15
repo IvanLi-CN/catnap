@@ -754,31 +754,31 @@ async fn cleanup_notification_records_applies_day_and_row_limits() {
     .unwrap();
 
     let now = OffsetDateTime::now_utc();
-    let old_created_at = (now - Duration::days(60)).format(&Rfc3339).unwrap();
-    let mid_created_at = (now - Duration::days(2)).format(&Rfc3339).unwrap();
+    let old_created_at = (now - Duration::days(400)).format(&Rfc3339).unwrap();
+    let mid_created_at = (now - Duration::days(31)).format(&Rfc3339).unwrap();
     let new_created_at = (now - Duration::days(1)).format(&Rfc3339).unwrap();
-    let other_created_at = (now - Duration::days(3)).format(&Rfc3339).unwrap();
+    let other_user_created_at = (now - Duration::days(2)).format(&Rfc3339).unwrap();
 
     sqlx::query("UPDATE notification_records SET created_at = ? WHERE id = ?")
-        .bind(old_created_at)
+        .bind(&old_created_at)
         .bind(&old_id)
         .execute(&db)
         .await
         .unwrap();
     sqlx::query("UPDATE notification_records SET created_at = ? WHERE id = ?")
-        .bind(mid_created_at)
+        .bind(&mid_created_at)
         .bind(&mid_id)
         .execute(&db)
         .await
         .unwrap();
     sqlx::query("UPDATE notification_records SET created_at = ? WHERE id = ?")
-        .bind(new_created_at)
+        .bind(&new_created_at)
         .bind(&new_id)
         .execute(&db)
         .await
         .unwrap();
     sqlx::query("UPDATE notification_records SET created_at = ? WHERE id = ?")
-        .bind(other_created_at)
+        .bind(&other_user_created_at)
         .bind(&other_user_id)
         .execute(&db)
         .await
