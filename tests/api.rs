@@ -1724,6 +1724,16 @@ async fn lazycat_machine_panel_proxy_rewrites_html_and_forwards_requests() {
         "edge-user-1.example.net",
     )
     .await;
+    sqlx::query(
+        "UPDATE lazycat_machines SET panel_url = ?, panel_hash = ? WHERE user_id = ? AND service_id = ?",
+    )
+    .bind(format!("{base}/container/dashboard?hash=live-hash-2312"))
+    .bind("live-hash-2312")
+    .bind("u_1")
+    .bind(2312_i64)
+    .execute(&t.db)
+    .await
+    .unwrap();
 
     let origin_key = URL_SAFE_NO_PAD.encode(base.as_bytes());
     let (status, content_type, html) = authed_text(
@@ -1757,6 +1767,35 @@ async fn lazycat_machine_panel_proxy_rewrites_html_and_forwards_requests() {
     .await;
     assert_eq!(api_status, StatusCode::OK);
     assert_eq!(api_json["hash"].as_str(), Some(""));
+}
+
+#[tokio::test]
+async fn lazycat_machine_panel_proxy_rejects_tampered_origin_key() {
+    let t = make_app().await;
+    seed_lazycat_machine(
+        &t,
+        "u_1",
+        2312,
+        "first@example.com",
+        "港湾 Transit Mini",
+        "edge-user-1.example.net",
+    )
+    .await;
+
+    let origin_key = URL_SAFE_NO_PAD.encode("http://127.0.0.1:9".as_bytes());
+    let (status, _content_type, html) = authed_text(
+        &t,
+        "u_1",
+        Method::GET,
+        &format!(
+            "/api/lazycat/machines/2312/panel-proxy/{origin_key}/container/dashboard/base?hash=live-hash-2312"
+        ),
+        None,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(html.contains("本地代理入口已失效"));
 }
 
 #[tokio::test]
@@ -1803,7 +1842,8 @@ async fn lazycat_machine_detail_page_returns_live_upstream_html() {
     assert!(html.contains("<title>机器详情</title>"));
     assert!(html.contains("苗栗Hinet Mini"));
     assert!(html.contains(&format!(r#"<base href="{base}/">"#)));
-    assert!(html.contains(r#"href="/clientarea""#));
+    assert!(html.contains(&format!(r#"href="{base}/clientarea""#)));
+    assert!(html.contains(&format!(r#"href="{base}/themes/detail.css""#)));
 }
 
 #[tokio::test]

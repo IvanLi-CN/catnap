@@ -1187,6 +1187,24 @@ async fn proxy_lazycat_machine_panel(
             "面板页未能成功通过本地代理加载。",
         );
     };
+    let Ok(allowed_origin) =
+        resolve_lazycat_panel_proxy_origin(&state, &user.0.id, service_id).await
+    else {
+        return lazycat_access_error_response(
+            StatusCode::BAD_GATEWAY,
+            "Web 面板打开失败",
+            "无法校验当前面板代理入口，请关闭此页后重试。",
+            "面板页未能成功通过本地代理加载。",
+        );
+    };
+    if origin != allowed_origin {
+        return lazycat_access_error_response(
+            StatusCode::BAD_REQUEST,
+            "Web 面板打开失败",
+            "本地代理入口已失效，请从机器列表重新打开面板。",
+            "面板页未能成功通过本地代理加载。",
+        );
+    }
     let Ok(target_url) =
         build_lazycat_panel_proxy_target_url(&origin, &path, raw_query.0.as_deref())
     else {
@@ -1359,10 +1377,7 @@ fn build_lazycat_panel_proxy_entry_path(
     else {
         return Err(anyhow::anyhow!("当前面板入口缺少访问参数，请稍后重试"));
     };
-    let origin = url.origin().ascii_serialization();
-    if !(origin.starts_with("http://") || origin.starts_with("https://")) {
-        return Err(anyhow::anyhow!("当前面板入口缺少可用的主机地址"));
-    }
+    let origin = normalize_lazycat_http_origin(url.as_str())?;
     let origin_key = encode_lazycat_panel_origin_key(&origin);
     url.set_path("/container/dashboard/base");
     url.set_query(Some(&format!("hash={hash}")));
@@ -1423,7 +1438,9 @@ fn decode_lazycat_panel_origin_key(origin_key: &str) -> anyhow::Result<String> {
     let bytes = URL_SAFE_NO_PAD
         .decode(origin_key)
         .with_context(|| "invalid lazycat panel origin key")?;
-    String::from_utf8(bytes).with_context(|| "lazycat panel origin key is not utf-8")
+    let origin =
+        String::from_utf8(bytes).with_context(|| "lazycat panel origin key is not utf-8")?;
+    normalize_lazycat_http_origin(&origin)
 }
 
 fn rewrite_lazycat_panel_html(html: &str, service_id: i64, origin_key: &str) -> String {
@@ -1446,10 +1463,65 @@ fn rewrite_lazycat_machine_detail_html(html: &str, base_url: &str) -> String {
     url.set_query(None);
     url.set_fragment(None);
     let base_tag = format!(r#"<base href="{}">"#, html_escape(url.as_str()));
-    if html.contains("<head>") {
-        return html.replacen("<head>", &format!("<head>{base_tag}"), 1);
+    let with_base = if html.contains("<head>") {
+        html.replacen("<head>", &format!("<head>{base_tag}"), 1)
+    } else {
+        format!("{base_tag}{html}")
+    };
+    rewrite_root_relative_html_urls(&with_base, &url.origin().ascii_serialization())
+}
+
+fn rewrite_root_relative_html_urls(html: &str, origin: &str) -> String {
+    let mut rewritten = html.to_string();
+    for attr in ["href", "src", "action"] {
+        rewritten = rewrite_root_relative_attr(&rewritten, attr, '"', origin);
+        rewritten = rewrite_root_relative_attr(&rewritten, attr, '\'', origin);
     }
-    format!("{base_tag}{html}")
+    rewritten
+}
+
+fn rewrite_root_relative_attr(html: &str, attr: &str, quote: char, origin: &str) -> String {
+    let pattern = format!("{attr}={quote}/");
+    let replacement = format!("{attr}={quote}{origin}/");
+    let bytes = html.as_bytes();
+    let mut rewritten = String::with_capacity(html.len() + 64);
+    let mut cursor = 0;
+
+    while let Some(offset) = html[cursor..].find(&pattern) {
+        let start = cursor + offset;
+        let after = start + pattern.len();
+        if bytes.get(after) == Some(&b'/') {
+            rewritten.push_str(&html[cursor..after]);
+            cursor = after;
+            continue;
+        }
+        rewritten.push_str(&html[cursor..start]);
+        rewritten.push_str(&replacement);
+        cursor = after;
+    }
+
+    rewritten.push_str(&html[cursor..]);
+    rewritten
+}
+
+fn normalize_lazycat_http_origin(value: &str) -> anyhow::Result<String> {
+    let origin = reqwest::Url::parse(value)
+        .with_context(|| format!("invalid lazycat panel origin: {value}"))?
+        .origin()
+        .ascii_serialization();
+    if !(origin.starts_with("http://") || origin.starts_with("https://")) {
+        return Err(anyhow::anyhow!("当前面板入口缺少可用的主机地址"));
+    }
+    Ok(origin)
+}
+
+async fn resolve_lazycat_panel_proxy_origin(
+    state: &AppState,
+    user_id: &str,
+    service_id: i64,
+) -> anyhow::Result<String> {
+    let resolved = crate::lazycat::resolve_machine_panel_url(state, user_id, service_id).await?;
+    normalize_lazycat_http_origin(&resolved.url)
 }
 
 fn lazycat_login_bridge_response(
