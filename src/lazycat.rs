@@ -1037,12 +1037,7 @@ pub struct LazycatBrowserLoginBridge {
     pub email: String,
     pub password: String,
     pub token: String,
-}
-
-#[derive(Debug, Clone)]
-pub enum LazycatMachineDetailAccess {
-    BrowserLogin(LazycatBrowserLoginBridge),
-    DirectRedirect { target_url: String },
+    pub prime_login_page: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -1055,7 +1050,7 @@ pub async fn build_machine_detail_access(
     state: &AppState,
     user_id: &str,
     service_id: i64,
-) -> anyhow::Result<LazycatMachineDetailAccess> {
+) -> anyhow::Result<LazycatBrowserLoginBridge> {
     let Some(account) = db::get_lazycat_account(&state.db, user_id).await? else {
         return Err(anyhow!("请先连接懒猫云账号"));
     };
@@ -1076,18 +1071,14 @@ pub async fn build_machine_detail_access(
         .with_context(|| {
             format!("fetch lazycat detail bridge preflight failed for {service_id}")
         })?;
-    if bridge.requires_browser_session {
-        return Ok(LazycatMachineDetailAccess::DirectRedirect { target_url });
-    }
-    Ok(LazycatMachineDetailAccess::BrowserLogin(
-        LazycatBrowserLoginBridge {
-            login_url,
-            target_url,
-            email: account.email,
-            password: account.password,
-            token: bridge.token,
-        },
-    ))
+    Ok(LazycatBrowserLoginBridge {
+        login_url,
+        target_url,
+        email: account.email,
+        password: account.password,
+        token: bridge.token,
+        prime_login_page: bridge.requires_browser_session,
+    })
 }
 
 fn build_machine_login_url(base_url: &str) -> Option<String> {

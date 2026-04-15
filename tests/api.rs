@@ -1823,15 +1823,16 @@ async fn lazycat_machine_detail_bridge_page_returns_auto_login_form() {
     assert!(html.contains(r#"name="token" value="bridge-token-2312""#));
     assert!(html.contains(r#"name="email" value="first@example.com""#));
     assert!(html.contains(r#"name="password" value="secret""#));
-    assert!(html.contains(r#"name="lazycat-login-bridge-target""#));
     assert!(html.contains(r#"const targetUrl = "http://"#));
+    assert!(html.contains(r#"const loginUrl = "http://"#));
+    assert!(html.contains(r#"const primeLoginPage = false"#));
+    assert!(html.contains(r#"frame.name = "lazycat-login-bridge-target""#));
     assert!(html.contains(r#"/servicedetail?id=2312"#));
     assert!(html.contains(r#"window.location.replace(targetUrl)"#));
 }
 
 #[tokio::test]
-async fn lazycat_machine_detail_bridge_falls_back_to_direct_redirect_when_login_requires_browser_session(
-) {
+async fn lazycat_machine_detail_bridge_primes_login_page_when_browser_session_cookie_is_required() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let base = format!("http://{addr}");
@@ -1863,30 +1864,21 @@ async fn lazycat_machine_detail_bridge_falls_back_to_direct_redirect_when_login_
     )
     .await;
 
-    let response = t
-        .app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method(Method::POST)
-                .uri("/api/lazycat/machines/2312/detail-bridge")
-                .header("host", "example.com")
-                .header("x-user", "u_1")
-                .header("origin", "http://example.com")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let (status, content_type, html) = authed_text(
+        &t,
+        "u_1",
+        Method::POST,
+        "/api/lazycat/machines/2312/detail-bridge",
+        None,
+    )
+    .await;
 
-    assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    assert_eq!(
-        response
-            .headers()
-            .get("location")
-            .and_then(|value| value.to_str().ok()),
-        Some(format!("{base}/servicedetail?id=2312").as_str())
-    );
+    assert_eq!(status, StatusCode::OK);
+    assert!(content_type.starts_with("text/html"));
+    assert!(html.contains(r#"const primeLoginPage = true"#));
+    assert!(html.contains(r#"frame.src = loginUrl"#));
+    assert!(html.contains(r#"frame.name = "lazycat-login-bridge-target""#));
+    assert!(html.contains(r#"name="password" value="secret""#));
 }
 
 #[tokio::test]

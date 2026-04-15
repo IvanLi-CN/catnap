@@ -23,17 +23,13 @@ Rules:
 - Purpose: open the upstream lazycat detail page in a new window while keeping the Catnap main UI on the same origin.
 - Behavior:
   - requires a same-origin `POST` submission from the current Catnap page;
-  - if the upstream login token can be replayed without a browser-bound anonymous session, returns a short-lived HTML bridge that auto-submits the saved lazycat credentials and then lands on the real `detailUrl`;
-  - if the upstream login page establishes a browser-bound anonymous session first, falls back to a direct `303 See Other` redirect to the real upstream `detailUrl` instead of attempting a brittle auto-login replay.
+  - returns a short-lived HTML bridge that auto-submits the saved lazycat credentials and then lands on the real `detailUrl`;
+  - if the upstream login page establishes a browser-bound anonymous session first, the bridge must first prime the browser with a real `GET /login` in the popup target before replaying the saved login form, so the browser receives any anonymous session / CSRF cookie needed by the subsequent login POST.
 
 ### Success responses
 
 - Status: `200 OK`
-  - Body: HTML bridge page that auto-submits the lazycat login form and then navigates to the real upstream detail page.
-- Status: `303 See Other`
-  - Headers:
-    - `Location: <detailUrl>`
-    - `Cache-Control: no-store`
+  - Body: HTML bridge page that primes upstream login when needed, auto-submits the lazycat login form, and then navigates to the real upstream detail page.
 
 ### Failure response
 

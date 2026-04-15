@@ -1049,16 +1049,11 @@ async fn post_lazycat_machine_detail_bridge_page(
     }
 
     match crate::lazycat::build_machine_detail_access(&state, &user.0.id, service_id).await {
-        Ok(crate::lazycat::LazycatMachineDetailAccess::BrowserLogin(bridge)) => {
-            lazycat_login_bridge_response(
-                "详情页自动登录中",
-                "正在帮你登录懒猫云并打开真实详情页，这通常需要几秒。",
-                &bridge,
-            )
-        }
-        Ok(crate::lazycat::LazycatMachineDetailAccess::DirectRedirect { target_url }) => {
-            lazycat_access_redirect_response(&target_url)
-        }
+        Ok(bridge) => lazycat_login_bridge_response(
+            "详情页自动登录中",
+            "正在帮你登录懒猫云并打开真实详情页，这通常需要几秒。",
+            &bridge,
+        ),
         Err(err) => lazycat_access_error_response(
             StatusCode::BAD_GATEWAY,
             "详情页打开失败",
@@ -1156,6 +1151,8 @@ fn lazycat_login_bridge_response(
         serde_json::to_string(title).unwrap_or_else(|_| "\"详情页自动登录中\"".to_string());
     let target_url_json =
         serde_json::to_string(&bridge.target_url).unwrap_or_else(|_| "\"\"".to_string());
+    let login_url_json =
+        serde_json::to_string(&bridge.login_url).unwrap_or_else(|_| "\"\"".to_string());
     let html = format!(
         r#"<!doctype html>
 <html lang="zh-CN">
@@ -1215,40 +1212,57 @@ fn lazycat_login_bridge_response(
         <input type="hidden" name="email" value="{email}">
         <input type="hidden" name="password" value="{password}">
       </form>
-      <iframe
-        id="lazycat-login-bridge-target"
-        name="lazycat-login-bridge-target"
-        hidden
-        aria-hidden="true"
-        tabindex="-1"
-        referrerpolicy="no-referrer"
-        sandbox="allow-forms allow-same-origin allow-scripts"
-      ></iframe>
     </main>
     <script>
       (() => {{
         document.title = {title_json};
         const targetUrl = {target_url_json};
+        const loginUrl = {login_url_json};
+        const primeLoginPage = {prime_login_page};
         const form = document.getElementById("lazycat-login-bridge-form");
-        const frame = document.getElementById("lazycat-login-bridge-target");
-        if (!(form instanceof HTMLFormElement) || !(frame instanceof HTMLIFrameElement)) {{
+        if (!(form instanceof HTMLFormElement)) {{
           return;
         }}
-        let awaitingLogin = false;
+        const frame = document.createElement("iframe");
+        frame.id = "lazycat-login-bridge-target";
+        frame.name = "lazycat-login-bridge-target";
+        frame.hidden = true;
+        frame.ariaHidden = "true";
+        frame.tabIndex = -1;
+        frame.referrerPolicy = "no-referrer";
+        frame.setAttribute("sandbox", "allow-forms allow-same-origin allow-scripts");
+        document.body.appendChild(frame);
+        let loginSubmitted = false;
         let redirected = false;
-        frame.addEventListener("load", () => {{
-          if (!awaitingLogin || redirected) {{
+        const submitLogin = () => {{
+          if (loginSubmitted) {{
             return;
           }}
-          awaitingLogin = false;
+          loginSubmitted = true;
+          if (typeof form.requestSubmit === "function") {{
+            form.requestSubmit();
+          }} else {{
+            form.submit();
+          }}
+        }};
+        frame.addEventListener("load", () => {{
+          if (redirected) {{
+            return;
+          }}
+          if (primeLoginPage && !loginSubmitted) {{
+            submitLogin();
+            return;
+          }}
+          if (!loginSubmitted) {{
+            return;
+          }}
           redirected = true;
           window.location.replace(targetUrl);
         }});
-        awaitingLogin = true;
-        if (typeof form.requestSubmit === "function") {{
-          form.requestSubmit();
+        if (primeLoginPage) {{
+          frame.src = loginUrl;
         }} else {{
-          form.submit();
+          submitLogin();
         }}
       }})();
     </script>
@@ -1261,6 +1275,12 @@ fn lazycat_login_bridge_response(
         email = html_escape(&bridge.email),
         password = html_escape(&bridge.password),
         target_url_json = target_url_json,
+        login_url_json = login_url_json,
+        prime_login_page = if bridge.prime_login_page {
+            "true"
+        } else {
+            "false"
+        },
         title_json = title_json,
     );
     lazycat_html_response(html)
