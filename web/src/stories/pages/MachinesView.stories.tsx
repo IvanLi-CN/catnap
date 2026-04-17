@@ -4,6 +4,7 @@ import { expect, userEvent, waitFor, within } from "storybook/test";
 import {
   type BootstrapResponse,
   type LazycatAccountView,
+  type LazycatMachineDetailLoginBridgeResponse,
   type LazycatMachineView,
   type LazycatMachinesResponse,
   MachinesView,
@@ -19,6 +20,10 @@ type DemoProps = {
   syncNextAccount?: LazycatAccountView;
   syncNextItems?: LazycatMachineView[];
   syncError?: string | null;
+  detailBridgeDelayMs?: number;
+  detailBridgePrimeDelayMs?: number;
+  detailBridgeRedirectAfterMs?: number;
+  detailBridgeError?: string | null;
 };
 
 function cloneBootstrap(bootstrap: BootstrapResponse = demoBootstrap): BootstrapResponse {
@@ -39,11 +44,16 @@ function buildLazycatMachineDetailUrl(serviceId: number) {
   return `https://lxc.lazycat.wiki/servicedetail?id=${serviceId}`;
 }
 
-function buildLazycatMachineActionUrl(
-  serviceId: number,
-  action: "detail-bridge" | "panel" | "vnc-console",
-) {
+function buildLazycatMachineActionUrl(serviceId: number, action: "panel" | "vnc-console") {
   return `${window.location.origin}/api/lazycat/machines/${serviceId}/${action}`;
+}
+
+function buildLazycatMachineDetailLoginBridgeApiUrl(serviceId: number) {
+  return `${window.location.origin}/api/lazycat/machines/${serviceId}/detail-login-bridge`;
+}
+
+function buildLazycatMachineDetailPopupName(serviceId: number) {
+  return `lazycat-detail-${serviceId}-`;
 }
 
 function buildTrafficHistory(points: Array<[sampledAt: string, usedGb: number, limitGb: number]>) {
@@ -327,6 +337,10 @@ function MachinesViewDemo({
   syncNextAccount,
   syncNextItems,
   syncError = null,
+  detailBridgeDelayMs = 0,
+  detailBridgePrimeDelayMs = 5,
+  detailBridgeRedirectAfterMs = 1_000,
+  detailBridgeError = null,
 }: DemoProps) {
   const bootstrap = useMemo(() => cloneBootstrap(initialBootstrap), [initialBootstrap]);
   const [account, setAccount] = useState<LazycatAccountView>(() =>
@@ -385,12 +399,41 @@ function MachinesViewDemo({
     return nextAccount;
   };
 
+  const fetchDetailLoginBridge = async (
+    serviceId: number,
+  ): Promise<LazycatMachineDetailLoginBridgeResponse> => {
+    window.dispatchEvent(
+      new CustomEvent("machines-story-detail-login-bridge", {
+        detail: {
+          serviceId,
+          url: buildLazycatMachineDetailLoginBridgeApiUrl(serviceId),
+        },
+      }),
+    );
+    if (detailBridgeDelayMs > 0) {
+      await delay(detailBridgeDelayMs);
+    }
+    if (detailBridgeError) {
+      throw new Error(detailBridgeError);
+    }
+    return {
+      loginUrl: "https://lxc.lazycat.wiki/login?action=email",
+      targetUrl: buildLazycatMachineDetailUrl(serviceId),
+      email: "demo@lazycat.example",
+      password: "secret",
+      token: `bridge-token-${serviceId}`,
+      primeDelayMs: detailBridgePrimeDelayMs,
+      redirectAfterMs: detailBridgeRedirectAfterMs,
+    };
+  };
+
   return (
     <MachinesView
       bootstrap={{ ...bootstrap, lazycat: account }}
       onSync={onSync}
       onRefreshAccount={async () => structuredClone(accountRef.current)}
       fetchMachines={fetchMachines}
+      fetchDetailLoginBridge={fetchDetailLoginBridge}
     />
   );
 }
@@ -432,6 +475,7 @@ export const VncAction: Story = {
       machineCount: healthyMachines.length,
     }),
     items: healthyMachines,
+    detailBridgeRedirectAfterMs: 25,
   },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
@@ -439,14 +483,32 @@ export const VncAction: Story = {
 
     const openCalls: Array<{ url: string; target: string }> = [];
     const submitCalls: Array<{ action: string; method: string; target: string }> = [];
+    const replaceCalls: Array<{ url: string; target: string }> = [];
+    const detailBridgeCalls: Array<{ serviceId: number; url: string }> = [];
     const originalOpen = window.open;
     const originalSubmit = HTMLFormElement.prototype.submit;
+    const onDetailBridge = (event: Event) => {
+      const detail = (event as CustomEvent<{ serviceId: number; url: string }>).detail;
+      detailBridgeCalls.push(detail);
+    };
+    window.addEventListener("machines-story-detail-login-bridge", onDetailBridge as EventListener);
     window.open = ((url?: string | URL, target?: string) => {
       openCalls.push({
         url: url == null ? "" : String(url),
         target: target == null ? "" : String(target),
       });
-      return { opener: window } as Window;
+      return {
+        closed: false,
+        opener: window,
+        location: {
+          replace(nextUrl: string | URL) {
+            replaceCalls.push({
+              url: String(nextUrl),
+              target: target == null ? "" : String(target),
+            });
+          },
+        },
+      } as unknown as Window;
     }) as typeof window.open;
     HTMLFormElement.prototype.submit = function submit() {
       submitCalls.push({
@@ -460,26 +522,49 @@ export const VncAction: Story = {
       const vncCard = findMachineCard(canvasElement as HTMLElement, "港湾 Transit Basic");
       expectMachineActionOrder(vncCard, ["打开详情页", "打开面板", "打开 VNC", "展开详情"]);
       await userEvent.click(within(vncCard).getByRole("button", { name: "打开详情页" }));
+      await waitFor(() => expect(openCalls.length).toBe(1));
+      expect(openCalls[0]?.url).toBe(buildLazycatMachineDetailUrl(2312));
+      expect(openCalls[0]?.target).toContain(buildLazycatMachineDetailPopupName(2312));
+      await waitFor(() =>
+        expect(detailBridgeCalls).toContainEqual({
+          serviceId: 2312,
+          url: buildLazycatMachineDetailLoginBridgeApiUrl(2312),
+        }),
+      );
+      await waitFor(() =>
+        expect(submitCalls).toContainEqual({
+          action: "https://lxc.lazycat.wiki/login?action=email",
+          method: "POST",
+          target: openCalls[0]?.target ?? "",
+        }),
+      );
+      await waitFor(
+        () =>
+          expect(replaceCalls).toContainEqual({
+            url: buildLazycatMachineDetailUrl(2312),
+            target: openCalls[0]?.target ?? "",
+          }),
+        { timeout: 2_500 },
+      );
+      expect(submitCalls).not.toContainEqual({
+        action: buildLazycatMachineDetailUrl(2312),
+        method: "GET",
+        target: openCalls[0]?.target ?? "",
+      });
+
       await userEvent.click(within(vncCard).getByRole("button", { name: "打开面板" }));
       await userEvent.click(within(vncCard).getByRole("button", { name: "打开 VNC" }));
       await waitFor(() => expect(openCalls.length).toBe(3));
-      expect(openCalls[0]?.url).toBe("");
-      expect(openCalls[0]?.target).toMatch(/^lazycat-detail-2312-/);
       expect(openCalls[1]?.url).toBe("");
       expect(openCalls[1]?.target).toMatch(/^lazycat-panel-2312-/);
       expect(openCalls[2]?.url).toBe("");
       expect(openCalls[2]?.target).toMatch(/^lazycat-vnc-2312-/);
-      expect(submitCalls[0]).toEqual({
-        action: buildLazycatMachineActionUrl(2312, "detail-bridge"),
-        method: "POST",
-        target: openCalls[0]?.target ?? "",
-      });
-      expect(submitCalls[1]).toEqual({
+      expect(submitCalls).toContainEqual({
         action: buildLazycatMachineActionUrl(2312, "panel"),
         method: "POST",
         target: openCalls[1]?.target ?? "",
       });
-      expect(submitCalls[2]).toEqual({
+      expect(submitCalls).toContainEqual({
         action: buildLazycatMachineActionUrl(2312, "vnc-console"),
         method: "POST",
         target: openCalls[2]?.target ?? "",
@@ -487,38 +572,65 @@ export const VncAction: Story = {
 
       const livePanelCard = findMachineCard(canvasElement as HTMLElement, "Apex Compute Lite");
       expectMachineActionOrder(livePanelCard, ["打开详情页", "打开面板", "打开 VNC", "展开详情"]);
-      const panelButton = within(livePanelCard).getByRole("button", { name: "打开面板" });
-      expect(panelButton).toBeEnabled();
-      await userEvent.click(panelButton);
       const detailButton = within(livePanelCard).getByRole("button", { name: "打开详情页" });
       expect(detailButton).toBeEnabled();
       await userEvent.click(detailButton);
+      await waitFor(() => expect(openCalls.length).toBe(4));
+      expect(openCalls[3]?.url).toBe(buildLazycatMachineDetailUrl(2314));
+      expect(openCalls[3]?.target).toContain(buildLazycatMachineDetailPopupName(2314));
+      await waitFor(() =>
+        expect(detailBridgeCalls).toContainEqual({
+          serviceId: 2314,
+          url: buildLazycatMachineDetailLoginBridgeApiUrl(2314),
+        }),
+      );
+      await waitFor(() =>
+        expect(submitCalls).toContainEqual({
+          action: "https://lxc.lazycat.wiki/login?action=email",
+          method: "POST",
+          target: openCalls[3]?.target ?? "",
+        }),
+      );
+      await waitFor(
+        () =>
+          expect(replaceCalls).toContainEqual({
+            url: buildLazycatMachineDetailUrl(2314),
+            target: openCalls[3]?.target ?? "",
+          }),
+        { timeout: 2_500 },
+      );
+      expect(submitCalls).not.toContainEqual({
+        action: buildLazycatMachineDetailUrl(2314),
+        method: "GET",
+        target: openCalls[3]?.target ?? "",
+      });
+
+      const panelButton = within(livePanelCard).getByRole("button", { name: "打开面板" });
+      expect(panelButton).toBeEnabled();
+      await userEvent.click(panelButton);
       const liveVncButton = within(livePanelCard).getByRole("button", { name: "打开 VNC" });
       expect(liveVncButton).toBeEnabled();
       await userEvent.click(liveVncButton);
       await waitFor(() => expect(openCalls.length).toBe(6));
-      expect(openCalls[3]?.url).toBe("");
-      expect(openCalls[3]?.target).toMatch(/^lazycat-panel-2314-/);
       expect(openCalls[4]?.url).toBe("");
-      expect(openCalls[4]?.target).toMatch(/^lazycat-detail-2314-/);
+      expect(openCalls[4]?.target).toMatch(/^lazycat-panel-2314-/);
       expect(openCalls[5]?.url).toBe("");
       expect(openCalls[5]?.target).toMatch(/^lazycat-vnc-2314-/);
-      expect(submitCalls[3]).toEqual({
+      expect(submitCalls).toContainEqual({
         action: buildLazycatMachineActionUrl(2314, "panel"),
-        method: "POST",
-        target: openCalls[3]?.target ?? "",
-      });
-      expect(submitCalls[4]).toEqual({
-        action: buildLazycatMachineActionUrl(2314, "detail-bridge"),
         method: "POST",
         target: openCalls[4]?.target ?? "",
       });
-      expect(submitCalls[5]).toEqual({
+      expect(submitCalls).toContainEqual({
         action: buildLazycatMachineActionUrl(2314, "vnc-console"),
         method: "POST",
         target: openCalls[5]?.target ?? "",
       });
     } finally {
+      window.removeEventListener(
+        "machines-story-detail-login-bridge",
+        onDetailBridge as EventListener,
+      );
       window.open = originalOpen;
       HTMLFormElement.prototype.submit = originalSubmit;
     }
@@ -546,6 +658,47 @@ export const PartialFailure: Story = {
     expect(
       within(staleCard).getByText("面板 TLS 校验失败，已保留最近一次成功缓存。"),
     ).toBeVisible();
+  },
+};
+
+export const DetailLoginBridgeFailure: Story = {
+  args: {
+    bootstrap: buildBootstrapWithLazycat({
+      ...readyAccount,
+      machineCount: healthyMachines.length,
+    }),
+    items: healthyMachines,
+    detailBridgeError: "懒猫登录桥接失败",
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await canvas.findByTestId("page-machines");
+
+    const submitCalls: Array<{ action: string; method: string; target: string }> = [];
+    const originalOpen = window.open;
+    const originalSubmit = HTMLFormElement.prototype.submit;
+    window.open = ((_url?: string | URL, _target?: string) =>
+      ({
+        closed: false,
+        opener: window,
+      }) as unknown as Window) as typeof window.open;
+    HTMLFormElement.prototype.submit = function submit() {
+      submitCalls.push({
+        action: this.action,
+        method: this.method.toUpperCase(),
+        target: this.target,
+      });
+    };
+
+    try {
+      const card = findMachineCard(canvasElement as HTMLElement, "港湾 Transit Basic");
+      await userEvent.click(within(card).getByRole("button", { name: "打开详情页" }));
+      await waitFor(() => expect(canvas.getByText("懒猫登录桥接失败")).toBeVisible());
+      expect(submitCalls).toHaveLength(0);
+    } finally {
+      window.open = originalOpen;
+      HTMLFormElement.prototype.submit = originalSubmit;
+    }
   },
 };
 

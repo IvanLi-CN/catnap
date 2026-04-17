@@ -4,7 +4,7 @@
 
 - Status: 已完成
 - Created: 2026-04-11
-- Last: 2026-04-11
+- Last: 2026-04-18
 
 ## 背景 / 问题陈述
 
@@ -68,7 +68,7 @@
 
 - Given 用户点击“打开详情页”
   When 当前机器存在 `detailUrl`
-  Then 前端必须以新窗口命中 Catnap 的同源 POST 详情桥接入口；桥接页必须自动登录并落到对应的上游详情页；若上游登录页先建立浏览器匿名会话，桥接页必须先在弹窗目标里执行一次真实 `GET /login` 再回放登录表单。
+  Then 前端必须先以新窗口打开真实上游详情页，再请求 Catnap 的 `detail-login-bridge` JSON payload，并在同一个 popup 中回放一次懒猫登录表单；随后必须对该 popup 追加一次保底重导航，最终落到对应的上游详情页而不是停在登录页。
 
 - Given 小屏宽度断点
   When 查看机器卡片动作区
@@ -91,6 +91,8 @@
 - [x] M2: 机器列表接口补 `detailUrl` 并覆盖 Rust/API 测试
 - [x] M3: MachinesView 完成动作区重排、详情按钮与响应式 2x2 网格
 - [x] M4: Storybook autodocs / play / 视觉证据完成并收敛到 merge-ready PR
+
+- [x] M5: 详情页自动登录改为 popup-first + JSON bridge，避免旧 HTML bridge 在跨站上下文中丢失登录态
 
 ## Visual Evidence
 
@@ -115,6 +117,16 @@
   image:
   PR: include
   ![Machines action row mobile](./assets/machines-actions-mobile.png)
+
+- source_type: chrome-devtools
+  target_program: browser
+  capture_scope: popup-window
+  sensitive_exclusion: limited-to-lazycat-detail-popup
+  story_id_or_title: live site detail action
+  state: popup-first lazycat detail auto-login
+  evidence_note: 点击“打开详情页”后先打开真实 `servicedetail`，随后由主窗口提交同一 popup 的登录表单，并在保底重导航后仍落到真实上游详情页。
+  image:
+  PR: omit
 
 ## 风险 / 假设
 

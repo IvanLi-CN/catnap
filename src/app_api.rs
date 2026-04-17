@@ -59,8 +59,8 @@ pub fn router(state: AppState) -> Router {
         .route("/lazycat/sync", post(post_lazycat_sync))
         .route("/lazycat/machines", get(get_lazycat_machines))
         .route(
-            "/lazycat/machines/:service_id/detail-bridge",
-            post(post_lazycat_machine_detail_bridge_page),
+            "/lazycat/machines/:service_id/detail-login-bridge",
+            post(post_lazycat_machine_detail_login_bridge),
         )
         .route(
             "/lazycat/machines/:service_id/panel-url",
@@ -1031,36 +1031,32 @@ async fn post_lazycat_machine_panel_url(
         .map_err(json_lazycat_panel_url_error)
 }
 
-async fn post_lazycat_machine_detail_bridge_page(
+const LAZYCAT_DETAIL_LOGIN_PRIME_DELAY_MS: u64 = 1_500;
+const LAZYCAT_DETAIL_LOGIN_REDIRECT_AFTER_MS: u64 = 8_000;
+
+async fn post_lazycat_machine_detail_login_bridge(
     State(state): State<AppState>,
     user: axum::extract::Extension<UserView>,
     Path(service_id): Path<i64>,
-) -> Response<Body> {
-    if db::ensure_user(&state.db, &state.config, &user.0.id)
+) -> Result<Response<Body>, (StatusCode, Json<ErrorResponse>)> {
+    let _ = db::ensure_user(&state.db, &state.config, &user.0.id)
         .await
-        .is_err()
-    {
-        return lazycat_access_error_response(
-            StatusCode::BAD_REQUEST,
-            "详情页打开失败",
-            "无法确认当前用户身份，请刷新页面后重试。",
-            "详情页未能成功自动登录并跳转到上游详情页。",
-        );
-    }
+        .map_err(|_| json_invalid_argument())?;
+    let bridge = crate::lazycat::build_machine_detail_access(&state, &user.0.id, service_id)
+        .await
+        .map_err(|err| json_invalid_argument_with_message(err.to_string()))?;
 
-    match crate::lazycat::build_machine_detail_access(&state, &user.0.id, service_id).await {
-        Ok(bridge) => lazycat_login_bridge_response(
-            "详情页自动登录中",
-            "正在帮你登录懒猫云并打开真实详情页，这通常需要几秒。",
-            &bridge,
-        ),
-        Err(err) => lazycat_access_error_response(
-            StatusCode::BAD_GATEWAY,
-            "详情页打开失败",
-            &err.to_string(),
-            "详情页未能成功自动登录并跳转到上游详情页。",
-        ),
-    }
+    Ok(json_no_store_response(
+        &crate::models::LazycatMachineDetailLoginBridgeResponse {
+            login_url: bridge.login_url,
+            target_url: bridge.target_url,
+            email: bridge.email,
+            password: bridge.password,
+            token: bridge.token,
+            prime_delay_ms: LAZYCAT_DETAIL_LOGIN_PRIME_DELAY_MS,
+            redirect_after_ms: LAZYCAT_DETAIL_LOGIN_REDIRECT_AFTER_MS,
+        },
+    ))
 }
 
 async fn post_lazycat_machine_vnc_url(
@@ -1142,157 +1138,8 @@ async fn resolve_lazycat_machine_panel_page_response(
     }
 }
 
-fn lazycat_login_bridge_response(
-    title: &str,
-    description: &str,
-    bridge: &crate::lazycat::LazycatBrowserLoginBridge,
-) -> Response<Body> {
-    let title_json =
-        serde_json::to_string(title).unwrap_or_else(|_| "\"详情页自动登录中\"".to_string());
-    let target_url_json =
-        serde_json::to_string(&bridge.target_url).unwrap_or_else(|_| "\"\"".to_string());
-    let login_url_json =
-        serde_json::to_string(&bridge.login_url).unwrap_or_else(|_| "\"\"".to_string());
-    let html = format!(
-        r#"<!doctype html>
-<html lang="zh-CN">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{title}</title>
-    <style>
-      :root {{
-        color-scheme: dark;
-        --bg: #07111f;
-        --card: rgba(13, 24, 43, 0.96);
-        --line: rgba(97, 153, 255, 0.22);
-        --text: #ecf2ff;
-        --muted: #9bb1d4;
-      }}
-      * {{ box-sizing: border-box; }}
-      body {{
-        margin: 0;
-        min-height: 100vh;
-        display: grid;
-        place-items: center;
-        padding: 24px;
-        background: radial-gradient(circle at top, rgba(54, 102, 189, 0.24), transparent 42%), var(--bg);
-        color: var(--text);
-        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      }}
-      .card {{
-        width: min(100%, 540px);
-        border-radius: 20px;
-        border: 1px solid var(--line);
-        background: linear-gradient(180deg, rgba(15, 29, 55, 0.98), var(--card));
-        padding: 28px;
-        box-shadow: 0 20px 70px rgba(0, 0, 0, 0.35);
-      }}
-      h1 {{ margin: 0 0 12px; font-size: 24px; }}
-      p {{ margin: 0; line-height: 1.7; color: var(--muted); }}
-      .spinner {{
-        width: 28px;
-        height: 28px;
-        border-radius: 999px;
-        border: 3px solid rgba(138, 178, 255, 0.18);
-        border-top-color: #9dd3ff;
-        margin-bottom: 16px;
-        animation: spin 0.9s linear infinite;
-      }}
-      @keyframes spin {{ to {{ transform: rotate(360deg); }} }}
-    </style>
-  </head>
-  <body>
-    <main class="card">
-      <div class="spinner" aria-hidden="true"></div>
-      <h1>{title}</h1>
-      <p>{description}</p>
-      <form id="lazycat-login-bridge-form" method="post" action="{login_url}" target="lazycat-login-bridge-target">
-        <input type="hidden" name="token" value="{token}">
-        <input type="hidden" name="email" value="{email}">
-        <input type="hidden" name="password" value="{password}">
-      </form>
-    </main>
-    <script>
-      (() => {{
-        document.title = {title_json};
-        const targetUrl = {target_url_json};
-        const loginUrl = {login_url_json};
-        const primeLoginPage = {prime_login_page};
-        const form = document.getElementById("lazycat-login-bridge-form");
-        if (!(form instanceof HTMLFormElement)) {{
-          return;
-        }}
-        const frame = document.createElement("iframe");
-        frame.id = "lazycat-login-bridge-target";
-        frame.name = "lazycat-login-bridge-target";
-        frame.hidden = true;
-        frame.ariaHidden = "true";
-        frame.tabIndex = -1;
-        frame.referrerPolicy = "no-referrer";
-        frame.setAttribute("sandbox", "allow-forms allow-same-origin allow-scripts");
-        document.body.appendChild(frame);
-        let loginSubmitted = false;
-        let redirected = false;
-        const submitLogin = () => {{
-          if (loginSubmitted) {{
-            return;
-          }}
-          loginSubmitted = true;
-          if (typeof form.requestSubmit === "function") {{
-            form.requestSubmit();
-          }} else {{
-            form.submit();
-          }}
-        }};
-        frame.addEventListener("load", () => {{
-          if (redirected) {{
-            return;
-          }}
-          if (primeLoginPage && !loginSubmitted) {{
-            submitLogin();
-            return;
-          }}
-          if (!loginSubmitted) {{
-            return;
-          }}
-          redirected = true;
-          window.location.replace(targetUrl);
-        }});
-        if (primeLoginPage) {{
-          frame.src = loginUrl;
-        }} else {{
-          submitLogin();
-        }}
-      }})();
-    </script>
-  </body>
-</html>"#,
-        title = html_escape(title),
-        description = html_escape(description),
-        login_url = html_escape(&bridge.login_url),
-        token = html_escape(&bridge.token),
-        email = html_escape(&bridge.email),
-        password = html_escape(&bridge.password),
-        target_url_json = target_url_json,
-        login_url_json = login_url_json,
-        prime_login_page = if bridge.prime_login_page {
-            "true"
-        } else {
-            "false"
-        },
-        title_json = title_json,
-    );
-    lazycat_html_response(html)
-}
-
-fn lazycat_html_response(html: String) -> Response<Body> {
-    let mut response = Response::new(Body::from(html));
-    *response.status_mut() = StatusCode::OK;
-    response.headers_mut().insert(
-        header::CONTENT_TYPE,
-        header::HeaderValue::from_static("text/html; charset=utf-8"),
-    );
+fn json_no_store_response<T: serde::Serialize>(value: &T) -> Response<Body> {
+    let mut response = Json(value).into_response();
     response.headers_mut().insert(
         header::CACHE_CONTROL,
         header::HeaderValue::from_static("no-store"),
