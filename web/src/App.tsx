@@ -3833,6 +3833,11 @@ export function MachinesView({
         setError("浏览器拦截了新窗口，请允许当前站点弹窗后重试。");
         return;
       }
+      try {
+        popup.opener = null;
+      } catch {
+        // Ignore browsers that expose opener as read-only.
+      }
 
       let bridge: LazycatMachineDetailLoginBridgeResponse;
       try {

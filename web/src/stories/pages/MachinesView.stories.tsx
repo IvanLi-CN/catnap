@@ -482,6 +482,7 @@ export const VncAction: Story = {
     await canvas.findByTestId("page-machines");
 
     const openCalls: Array<{ url: string; target: string }> = [];
+    const popupWindows: Array<{ opener: Window | null }> = [];
     const submitCalls: Array<{ action: string; method: string; target: string }> = [];
     const replaceCalls: Array<{ url: string; target: string }> = [];
     const detailBridgeCalls: Array<{ serviceId: number; url: string }> = [];
@@ -497,7 +498,7 @@ export const VncAction: Story = {
         url: url == null ? "" : String(url),
         target: target == null ? "" : String(target),
       });
-      return {
+      const popup = {
         closed: false,
         opener: window,
         location: {
@@ -508,7 +509,9 @@ export const VncAction: Story = {
             });
           },
         },
-      } as unknown as Window;
+      } as unknown as Window & { opener: Window | null };
+      popupWindows.push(popup);
+      return popup;
     }) as typeof window.open;
     HTMLFormElement.prototype.submit = function submit() {
       submitCalls.push({
@@ -525,6 +528,7 @@ export const VncAction: Story = {
       await waitFor(() => expect(openCalls.length).toBe(1));
       expect(openCalls[0]?.url).toBe(buildLazycatMachineDetailUrl(2312));
       expect(openCalls[0]?.target).toContain(buildLazycatMachineDetailPopupName(2312));
+      expect(popupWindows[0]?.opener).toBeNull();
       await waitFor(() =>
         expect(detailBridgeCalls).toContainEqual({
           serviceId: 2312,
@@ -578,6 +582,7 @@ export const VncAction: Story = {
       await waitFor(() => expect(openCalls.length).toBe(4));
       expect(openCalls[3]?.url).toBe(buildLazycatMachineDetailUrl(2314));
       expect(openCalls[3]?.target).toContain(buildLazycatMachineDetailPopupName(2314));
+      expect(popupWindows[3]?.opener).toBeNull();
       await waitFor(() =>
         expect(detailBridgeCalls).toContainEqual({
           serviceId: 2314,
