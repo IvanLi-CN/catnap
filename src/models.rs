@@ -325,6 +325,18 @@ pub struct LazycatMachineAccessUrlResponse {
     pub kind: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LazycatMachineDetailLoginBridgeResponse {
+    pub login_url: String,
+    pub target_url: String,
+    pub email: String,
+    pub password: String,
+    pub token: String,
+    pub prime_delay_ms: u64,
+    pub redirect_after_ms: u64,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LazycatLoginRequest {

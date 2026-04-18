@@ -348,42 +348,6 @@ async fn authed_json(
     (status, json)
 }
 
-async fn authed_text(
-    t: &TestApp,
-    user_id: &str,
-    method: Method,
-    uri: &str,
-    body: Option<String>,
-) -> (StatusCode, String, String) {
-    let mut builder = Request::builder()
-        .method(method)
-        .uri(uri)
-        .header("host", "example.com")
-        .header("x-user", user_id)
-        .header("origin", "http://example.com");
-    let request = if let Some(body) = body {
-        builder = builder.header("content-type", "application/json");
-        builder.body(Body::from(body)).unwrap()
-    } else {
-        builder.body(Body::empty()).unwrap()
-    };
-
-    let response = t.app.clone().oneshot(request).await.unwrap();
-    let status = response.status();
-    let content_type = response
-        .headers()
-        .get("content-type")
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or_default()
-        .to_string();
-    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-    (
-        status,
-        content_type,
-        String::from_utf8(bytes.to_vec()).unwrap(),
-    )
-}
-
 async fn seed_lazycat_machine(
     t: &TestApp,
     user_id: &str,
@@ -1777,7 +1741,7 @@ async fn lazycat_machine_panel_url_returns_502_when_live_refresh_fails_with_stal
 }
 
 #[tokio::test]
-async fn lazycat_machine_detail_bridge_page_returns_auto_login_form() {
+async fn lazycat_machine_detail_login_bridge_returns_json_payload() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let base = format!("http://{addr}");
@@ -1806,83 +1770,45 @@ async fn lazycat_machine_detail_bridge_page_returns_auto_login_form() {
     )
     .await;
 
-    let (status, content_type, html) = authed_text(
-        &t,
-        "u_1",
-        Method::POST,
-        "/api/lazycat/machines/2312/detail-bridge",
-        None,
-    )
-    .await;
+    let response = t
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/lazycat/machines/2312/detail-login-bridge")
+                .header("host", "example.com")
+                .header("x-user", "u_1")
+                .header("origin", "http://example.com")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
 
-    assert_eq!(status, StatusCode::OK);
-    assert!(content_type.starts_with("text/html"));
-    assert!(html.contains(r#"action="http://"#));
-    assert!(html.contains(r#"/login?action=email"#));
-    assert!(html.contains(r#"target="lazycat-login-bridge-target""#));
-    assert!(html.contains(r#"name="token" value="bridge-token-2312""#));
-    assert!(html.contains(r#"name="email" value="first@example.com""#));
-    assert!(html.contains(r#"name="password" value="secret""#));
-    assert!(html.contains(r#"const targetUrl = "http://"#));
-    assert!(html.contains(r#"const loginUrl = "http://"#));
-    assert!(html.contains(r#"const primeLoginPage = false"#));
-    assert!(html.contains(r#"frame.name = "lazycat-login-bridge-target""#));
-    assert!(html.contains(r#"/servicedetail?id=2312"#));
-    assert!(html.contains(r#"window.location.replace(targetUrl)"#));
-}
-
-#[tokio::test]
-async fn lazycat_machine_detail_bridge_primes_login_page_when_browser_session_cookie_is_required() {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    let base = format!("http://{addr}");
-    let stub = axum::Router::new().route(
-        "/login",
-        axum::routing::get(|| async {
-            (
-                [(axum::http::header::SET_COOKIE, "PHPSESSID=bridge-session-2312; Path=/; HttpOnly")],
-                axum::response::Html(
-                    r#"<!doctype html><html><body><form id="loginForm" method="post" action="/login?action=email"><input type="hidden" name="token" value="bridge-token-2312"></form></body></html>"#,
-                ),
-            )
-        }),
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers().get(axum::http::header::CACHE_CONTROL),
+        Some(&axum::http::HeaderValue::from_static("no-store"))
     );
-    tokio::spawn(async move {
-        axum::serve(listener, stub).await.unwrap();
-    });
-
-    let mut cfg = test_config();
-    cfg.lazycat_base_url = base.clone();
-    let t = make_app_with_config(cfg).await;
-    seed_lazycat_machine(
-        &t,
-        "u_1",
-        2312,
-        "first@example.com",
-        "港湾 Transit Mini",
-        "edge-user-1.example.net",
-    )
-    .await;
-
-    let (status, content_type, html) = authed_text(
-        &t,
-        "u_1",
-        Method::POST,
-        "/api/lazycat/machines/2312/detail-bridge",
-        None,
-    )
-    .await;
-
-    assert_eq!(status, StatusCode::OK);
-    assert!(content_type.starts_with("text/html"));
-    assert!(html.contains(r#"const primeLoginPage = true"#));
-    assert!(html.contains(r#"frame.src = loginUrl"#));
-    assert!(html.contains(r#"frame.name = "lazycat-login-bridge-target""#));
-    assert!(html.contains(r#"name="password" value="secret""#));
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!({
+            "loginUrl": format!("{base}/login?action=email"),
+            "targetUrl": format!("{base}/servicedetail?id=2312"),
+            "email": "first@example.com",
+            "password": "secret",
+            "token": "bridge-token-2312",
+            "primeDelayMs": 1500,
+            "redirectAfterMs": 8000
+        })
+    );
 }
 
 #[tokio::test]
-async fn lazycat_machine_detail_bridge_returns_error_page_when_preflight_fails() {
+async fn lazycat_machine_detail_login_bridge_returns_error_when_preflight_fails() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let base = format!("http://{addr}");
@@ -1903,23 +1829,46 @@ async fn lazycat_machine_detail_bridge_returns_error_page_when_preflight_fails()
     )
     .await;
 
-    let (status, content_type, html) = authed_text(
+    let (status, json) = authed_json(
         &t,
         "u_1",
         Method::POST,
-        "/api/lazycat/machines/2312/detail-bridge",
+        "/api/lazycat/machines/2312/detail-login-bridge",
         None,
     )
     .await;
 
-    assert_eq!(status, StatusCode::BAD_GATEWAY);
-    assert!(content_type.starts_with("text/html"));
-    assert!(html.contains("详情页打开失败"));
-    assert!(html.contains("详情页未能成功自动登录并跳转到上游详情页。"));
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(json["error"]["code"].as_str(), Some("INVALID_ARGUMENT"));
+    assert!(json["error"]["message"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("fetch lazycat detail bridge token failed"));
 }
 
 #[tokio::test]
-async fn lazycat_machine_detail_bridge_rejects_cross_site_post() {
+async fn lazycat_machine_detail_login_bridge_returns_error_without_account() {
+    let t = make_app().await;
+
+    let (status, json) = authed_json(
+        &t,
+        "u_1",
+        Method::POST,
+        "/api/lazycat/machines/2312/detail-login-bridge",
+        None,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(json["error"]["code"].as_str(), Some("INVALID_ARGUMENT"));
+    assert_eq!(
+        json["error"]["message"].as_str(),
+        Some("请先连接懒猫云账号")
+    );
+}
+
+#[tokio::test]
+async fn lazycat_machine_detail_login_bridge_rejects_cross_site_post() {
     let t = make_app().await;
     seed_lazycat_machine(
         &t,
@@ -1937,7 +1886,7 @@ async fn lazycat_machine_detail_bridge_rejects_cross_site_post() {
         .oneshot(
             Request::builder()
                 .method(Method::POST)
-                .uri("/api/lazycat/machines/2312/detail-bridge")
+                .uri("/api/lazycat/machines/2312/detail-login-bridge")
                 .header("host", "example.com")
                 .header("x-user", "u_1")
                 .header("origin", "https://evil.example")

@@ -197,6 +197,16 @@ export type LazycatMachineVncUrlResponse = {
   kind: string;
 };
 
+export type LazycatMachineDetailLoginBridgeResponse = {
+  loginUrl: string;
+  targetUrl: string;
+  email: string;
+  password: string;
+  token: string;
+  primeDelayMs: number;
+  redirectAfterMs: number;
+};
+
 export type BootstrapResponse = {
   user: UserView;
   catalog: {
@@ -636,17 +646,14 @@ function lazycatMachineDetailButtonTitle(machine: Pick<LazycatMachineView, "deta
   return `打开上游详情页\n${url}`;
 }
 
-function buildLazycatMachineActionUrl(
-  serviceId: number,
-  action: "detail-bridge" | "panel" | "vnc-console",
-): string {
+function buildLazycatMachineActionUrl(serviceId: number, action: "panel" | "vnc-console"): string {
   return new URL(`/api/lazycat/machines/${serviceId}/${action}`, window.location.origin).toString();
 }
 
 function openLazycatMachineAction(
   serviceId: number,
-  action: "detail-bridge" | "panel" | "vnc-console",
-  targetPrefix: "lazycat-detail" | "lazycat-panel" | "lazycat-vnc",
+  action: "panel" | "vnc-console",
+  targetPrefix: "lazycat-panel" | "lazycat-vnc",
 ): boolean {
   const target = `${targetPrefix}-${serviceId}-${Date.now()}`;
   const popup = window.open("", target);
@@ -675,15 +682,55 @@ function openLazycatMachinePanel(serviceId: number): boolean {
   return openLazycatMachineAction(serviceId, "panel", "lazycat-panel");
 }
 
-function openLazycatMachineDetailBridgePage(serviceId: number): boolean {
-  return openLazycatMachineAction(serviceId, "detail-bridge", "lazycat-detail");
-}
-
 function openLazycatMachineVncConsole(serviceId: number): boolean {
   return openLazycatMachineAction(serviceId, "vnc-console", "lazycat-vnc");
 }
 
 const DEFAULT_FETCH_LAZYCAT_MACHINES = () => api<LazycatMachinesResponse>("/api/lazycat/machines");
+const DEFAULT_FETCH_LAZYCAT_DETAIL_LOGIN_BRIDGE = (serviceId: number) =>
+  api<LazycatMachineDetailLoginBridgeResponse>(
+    `/api/lazycat/machines/${serviceId}/detail-login-bridge`,
+    {
+      method: "POST",
+    },
+  );
+function buildLazycatMachineDetailPopupName(serviceId: number): string {
+  return `lazycat-detail-${serviceId}-${Date.now()}`;
+}
+
+function submitLazycatMachineDetailLoginBridge({
+  loginUrl,
+  popupName,
+  token,
+  email,
+  password,
+}: {
+  loginUrl: string;
+  popupName: string;
+  token: string;
+  email: string;
+  password: string;
+}) {
+  const form = document.createElement("form");
+  form.method = "POST";
+  form.action = loginUrl;
+  form.target = popupName;
+  form.style.display = "none";
+  const fields = { token, email, password };
+  for (const [name, value] of Object.entries(fields)) {
+    const input = document.createElement("input");
+    input.type = "hidden";
+    input.name = name;
+    input.value = value;
+    form.appendChild(input);
+  }
+  document.body.appendChild(form);
+  try {
+    form.submit();
+  } finally {
+    form.remove();
+  }
+}
 
 type OrderLinkMode = "configureproduct";
 type OrderLink = { url: string; mode: OrderLinkMode };
@@ -3679,11 +3726,13 @@ export function MachinesView({
   bootstrap,
   onSync,
   fetchMachines = DEFAULT_FETCH_LAZYCAT_MACHINES,
+  fetchDetailLoginBridge = DEFAULT_FETCH_LAZYCAT_DETAIL_LOGIN_BRIDGE,
 }: {
   bootstrap: BootstrapResponse;
   onSync: () => Promise<LazycatAccountView>;
   onRefreshAccount: () => Promise<LazycatAccountView>;
   fetchMachines?: () => Promise<LazycatMachinesResponse>;
+  fetchDetailLoginBridge?: (serviceId: number) => Promise<LazycatMachineDetailLoginBridgeResponse>;
 }) {
   const [account, setAccount] = useState<LazycatAccountView>(() => bootstrap.lazycat);
   const [items, setItems] = useState<LazycatMachineView[]>([]);
@@ -3692,6 +3741,7 @@ export function MachinesView({
   const [syncPending, setSyncPending] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [expandedServiceId, setExpandedServiceId] = useState<number | null>(null);
+  const detailPopupTimersRef = useRef<Set<number>>(new Set());
 
   const loadMachines = useCallback(
     async (mode: "load" | "refresh" = "load") => {
@@ -3748,6 +3798,123 @@ export function MachinesView({
     }, 3_000);
     return () => window.clearInterval(id);
   }, [account.state, loadMachines]);
+
+  useEffect(() => {
+    return () => {
+      for (const timerId of detailPopupTimersRef.current) {
+        window.clearTimeout(timerId);
+      }
+      detailPopupTimersRef.current.clear();
+    };
+  }, []);
+
+  const scheduleDetailPopupTimer = useCallback((fn: () => void, delayMs: number) => {
+    const timerId = window.setTimeout(() => {
+      detailPopupTimersRef.current.delete(timerId);
+      fn();
+    }, delayMs);
+    detailPopupTimersRef.current.add(timerId);
+    return timerId;
+  }, []);
+
+  const handleOpenLazycatDetail = useCallback(
+    async (item: LazycatMachineView) => {
+      const detailUrl = getLazycatMachineDetailUrl(item);
+      if (!detailUrl) {
+        return;
+      }
+      setError(null);
+      const popupName = buildLazycatMachineDetailPopupName(item.serviceId);
+      const popup = window.open("", popupName);
+      if (!popup) {
+        setError("浏览器拦截了新窗口，请允许当前站点弹窗后重试。");
+        return;
+      }
+      try {
+        popup.opener = null;
+      } catch {
+        // Ignore browsers that expose opener as read-only.
+      }
+
+      let bridge: LazycatMachineDetailLoginBridgeResponse;
+      try {
+        bridge = await fetchDetailLoginBridge(item.serviceId);
+      } catch (e) {
+        try {
+          popup.close();
+        } catch {
+          // Ignore browsers that reject programmatic close on transient popups.
+        }
+        setError(e instanceof Error ? e.message : String(e));
+        return;
+      }
+
+      if (popup.closed) {
+        return;
+      }
+
+      const loginUrl = normalizeExternalHttpUrl(bridge.loginUrl);
+      const targetUrl = normalizeExternalHttpUrl(bridge.targetUrl);
+      const token = bridge.token.trim();
+      if (!loginUrl || !targetUrl || !token) {
+        setError("详情页自动登录返回了无效的上游地址，请稍后重试。");
+        return;
+      }
+
+      const primeDelayMs = clampNumber(Math.round(bridge.primeDelayMs || 1_500), 0, 10_000);
+      const redirectAfterMs = clampNumber(
+        Math.round(bridge.redirectAfterMs || 8_000),
+        1_000,
+        20_000,
+      );
+      let loginSubmitted = false;
+      const submitBridgeLogin = () => {
+        if (loginSubmitted) return;
+        loginSubmitted = true;
+        if (popup.closed) {
+          return;
+        }
+        submitLazycatMachineDetailLoginBridge({
+          loginUrl,
+          popupName,
+          token,
+          email: bridge.email,
+          password: bridge.password,
+        });
+      };
+      const onPopupLoad = () => {
+        submitBridgeLogin();
+      };
+      popup.addEventListener("load", onPopupLoad, { once: true });
+      try {
+        popup.location.replace(targetUrl);
+      } catch {
+        try {
+          popup.removeEventListener("load", onPopupLoad);
+        } catch {
+          // Ignore browsers that do not allow observer cleanup on cross-origin popups.
+        }
+        setError("详情页弹窗初始化失败，请关闭弹窗后重试。");
+        return;
+      }
+
+      scheduleDetailPopupTimer(() => {
+        submitBridgeLogin();
+      }, primeDelayMs);
+
+      scheduleDetailPopupTimer(() => {
+        if (popup.closed) {
+          return;
+        }
+        try {
+          popup.location.replace(targetUrl);
+        } catch {
+          setError("详情页自动跳转失败，请关闭弹窗后重试。");
+        }
+      }, primeDelayMs + redirectAfterMs);
+    },
+    [fetchDetailLoginBridge, scheduleDetailPopupTimer],
+  );
 
   const staleCount = items.filter((item) => item.detailState === "stale").length;
   const errorCount = items.filter((item) => item.detailState === "error").length;
@@ -3875,13 +4042,7 @@ export function MachinesView({
                           className="pill machines-detail-btn"
                           disabled={!detailUrl}
                           title={lazycatMachineDetailButtonTitle(item)}
-                          onClick={() => {
-                            if (!detailUrl) return;
-                            setError(null);
-                            if (!openLazycatMachineDetailBridgePage(item.serviceId)) {
-                              setError("浏览器拦截了新窗口，请允许当前站点弹窗后重试。");
-                            }
-                          }}
+                          onClick={() => void handleOpenLazycatDetail(item)}
                         >
                           打开详情页
                         </button>

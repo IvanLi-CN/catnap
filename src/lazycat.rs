@@ -254,7 +254,7 @@ impl LazycatService {
         ))
     }
 
-    async fn fetch_login_bridge_material(&self) -> anyhow::Result<LazycatLoginBridgeMaterial> {
+    async fn fetch_login_token(&self) -> anyhow::Result<String> {
         let mut session = LazycatSession {
             cookies: CookieJar::default(),
             last_login_at: None,
@@ -262,10 +262,7 @@ impl LazycatService {
         let login_page = self
             .site_request(&mut session, Method::GET, "/login", None, false)
             .await?;
-        Ok(LazycatLoginBridgeMaterial {
-            token: parse_login_token(&login_page.body)?,
-            requires_browser_session: session.cookies.header_value().is_some(),
-        })
+        parse_login_token(&login_page.body)
     }
 
     async fn resolve_live_machine_panel_access(
@@ -1037,13 +1034,6 @@ pub struct LazycatBrowserLoginBridge {
     pub email: String,
     pub password: String,
     pub token: String,
-    pub prime_login_page: bool,
-}
-
-#[derive(Debug, Clone)]
-struct LazycatLoginBridgeMaterial {
-    token: String,
-    requires_browser_session: bool,
 }
 
 pub async fn build_machine_detail_access(
@@ -1065,19 +1055,16 @@ pub async fn build_machine_detail_access(
     let login_url = build_machine_login_url(&state.config.lazycat_base_url)
         .ok_or_else(|| anyhow!("无法生成上游登录地址"))?;
     let service = LazycatService::new(&state.config)?;
-    let bridge = service
-        .fetch_login_bridge_material()
+    let token = service
+        .fetch_login_token()
         .await
-        .with_context(|| {
-            format!("fetch lazycat detail bridge preflight failed for {service_id}")
-        })?;
+        .with_context(|| format!("fetch lazycat detail bridge token failed for {service_id}"))?;
     Ok(LazycatBrowserLoginBridge {
         login_url,
         target_url,
         email: account.email,
         password: account.password,
-        token: bridge.token,
-        prime_login_page: bridge.requires_browser_session,
+        token,
     })
 }
 
@@ -1673,7 +1660,7 @@ async fn sync_user_inner(state: &AppState, user_id: &str) -> anyhow::Result<()> 
 
     let concurrency = state.config.lazycat_panel_concurrency.max(1);
     let db_pool = state.db.clone();
-    let panel_summary = stream::iter(site_machines.into_iter())
+    let panel_summary = stream::iter(site_machines)
         .map(|site_machine| {
             let service = service.clone();
             let db_pool = db_pool.clone();
