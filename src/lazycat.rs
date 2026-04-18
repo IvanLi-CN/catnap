@@ -1660,7 +1660,7 @@ async fn sync_user_inner(state: &AppState, user_id: &str) -> anyhow::Result<()> 
 
     let concurrency = state.config.lazycat_panel_concurrency.max(1);
     let db_pool = state.db.clone();
-    let panel_summary = stream::iter(site_machines.into_iter())
+    let panel_summary = stream::iter(site_machines)
         .map(|site_machine| {
             let service = service.clone();
             let db_pool = db_pool.clone();
