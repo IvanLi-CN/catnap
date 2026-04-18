@@ -3853,7 +3853,6 @@ export function MachinesView({
       }
 
       if (popup.closed) {
-        setError("详情页弹窗已关闭，请重新打开。");
         return;
       }
 
@@ -3876,7 +3875,6 @@ export function MachinesView({
         if (loginSubmitted) return;
         loginSubmitted = true;
         if (popup.closed) {
-          setError("详情页弹窗已关闭，请重新打开。");
           return;
         }
         submitLazycatMachineDetailLoginBridge({
@@ -3911,7 +3909,6 @@ export function MachinesView({
         scheduleDetailPopupTimer(
           () => {
             if (popup.closed) {
-              setError("详情页弹窗已关闭，请重新打开。");
               return;
             }
             try {
