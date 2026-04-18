@@ -694,9 +694,6 @@ const DEFAULT_FETCH_LAZYCAT_DETAIL_LOGIN_BRIDGE = (serviceId: number) =>
       method: "POST",
     },
   );
-const LAZYCAT_DETAIL_TARGET_RENAVIGATION_ATTEMPTS = 3;
-const LAZYCAT_DETAIL_TARGET_RENAVIGATION_INTERVAL_MS = 3_000;
-
 function buildLazycatMachineDetailPopupName(serviceId: number): string {
   return `lazycat-detail-${serviceId}-${Date.now()}`;
 }
@@ -3905,23 +3902,16 @@ export function MachinesView({
         submitBridgeLogin();
       }, primeDelayMs);
 
-      for (let attempt = 0; attempt < LAZYCAT_DETAIL_TARGET_RENAVIGATION_ATTEMPTS; attempt += 1) {
-        scheduleDetailPopupTimer(
-          () => {
-            if (popup.closed) {
-              return;
-            }
-            try {
-              popup.location.replace(targetUrl);
-            } catch {
-              if (attempt + 1 === LAZYCAT_DETAIL_TARGET_RENAVIGATION_ATTEMPTS) {
-                setError("详情页自动跳转失败，请关闭弹窗后重试。");
-              }
-            }
-          },
-          primeDelayMs + redirectAfterMs + attempt * LAZYCAT_DETAIL_TARGET_RENAVIGATION_INTERVAL_MS,
-        );
-      }
+      scheduleDetailPopupTimer(() => {
+        if (popup.closed) {
+          return;
+        }
+        try {
+          popup.location.replace(targetUrl);
+        } catch {
+          setError("详情页自动跳转失败，请关闭弹窗后重试。");
+        }
+      }, primeDelayMs + redirectAfterMs);
     },
     [fetchDetailLoginBridge, scheduleDetailPopupTimer],
   );
