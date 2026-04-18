@@ -3887,7 +3887,7 @@ export function MachinesView({
       };
       popup.addEventListener("load", onPopupLoad, { once: true });
       try {
-        popup.location.replace(detailUrl);
+        popup.location.replace(targetUrl);
       } catch {
         try {
           popup.removeEventListener("load", onPopupLoad);
