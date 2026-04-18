@@ -3828,7 +3828,7 @@ export function MachinesView({
       }
       setError(null);
       const popupName = buildLazycatMachineDetailPopupName(item.serviceId);
-      const popup = window.open(detailUrl, popupName);
+      const popup = window.open("", popupName);
       if (!popup) {
         setError("浏览器拦截了新窗口，请允许当前站点弹窗后重试。");
         return;
@@ -3843,6 +3843,11 @@ export function MachinesView({
       try {
         bridge = await fetchDetailLoginBridge(item.serviceId);
       } catch (e) {
+        try {
+          popup.close();
+        } catch {
+          // Ignore browsers that reject programmatic close on transient popups.
+        }
         setError(e instanceof Error ? e.message : String(e));
         return;
       }
@@ -3866,8 +3871,10 @@ export function MachinesView({
         1_000,
         20_000,
       );
-
-      scheduleDetailPopupTimer(() => {
+      let loginSubmitted = false;
+      const submitBridgeLogin = () => {
+        if (loginSubmitted) return;
+        loginSubmitted = true;
         if (popup.closed) {
           setError("详情页弹窗已关闭，请重新打开。");
           return;
@@ -3879,6 +3886,25 @@ export function MachinesView({
           email: bridge.email,
           password: bridge.password,
         });
+      };
+      const onPopupLoad = () => {
+        submitBridgeLogin();
+      };
+      popup.addEventListener("load", onPopupLoad, { once: true });
+      try {
+        popup.location.replace(detailUrl);
+      } catch {
+        try {
+          popup.removeEventListener("load", onPopupLoad);
+        } catch {
+          // Ignore browsers that do not allow observer cleanup on cross-origin popups.
+        }
+        setError("详情页弹窗初始化失败，请关闭弹窗后重试。");
+        return;
+      }
+
+      scheduleDetailPopupTimer(() => {
+        submitBridgeLogin();
       }, primeDelayMs);
 
       for (let attempt = 0; attempt < LAZYCAT_DETAIL_TARGET_RENAVIGATION_ATTEMPTS; attempt += 1) {

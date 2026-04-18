@@ -486,6 +486,10 @@ export const VncAction: Story = {
     const submitCalls: Array<{ action: string; method: string; target: string }> = [];
     const replaceCalls: Array<{ url: string; target: string }> = [];
     const detailBridgeCalls: Array<{ serviceId: number; url: string }> = [];
+    const popupLoadListeners = new Map<
+      string,
+      { callback: EventListenerOrEventListenerObject; once: boolean }
+    >();
     const originalOpen = window.open;
     const originalSubmit = HTMLFormElement.prototype.submit;
     const onDetailBridge = (event: Event) => {
@@ -498,15 +502,41 @@ export const VncAction: Story = {
         url: url == null ? "" : String(url),
         target: target == null ? "" : String(target),
       });
+      const popupTarget = target == null ? "" : String(target);
       const popup = {
         closed: false,
         opener: window,
+        addEventListener(
+          event: string,
+          callback: EventListenerOrEventListenerObject,
+          options?: AddEventListenerOptions | boolean,
+        ) {
+          if (event !== "load") return;
+          popupLoadListeners.set(popupTarget, {
+            callback,
+            once: typeof options === "object" ? Boolean(options?.once) : false,
+          });
+        },
+        removeEventListener(event: string) {
+          if (event !== "load") return;
+          popupLoadListeners.delete(popupTarget);
+        },
         location: {
           replace(nextUrl: string | URL) {
             replaceCalls.push({
               url: String(nextUrl),
-              target: target == null ? "" : String(target),
+              target: popupTarget,
             });
+            const listener = popupLoadListeners.get(popupTarget);
+            if (!listener) return;
+            if (typeof listener.callback === "function") {
+              listener.callback(new Event("load"));
+            } else {
+              listener.callback.handleEvent(new Event("load"));
+            }
+            if (listener.once) {
+              popupLoadListeners.delete(popupTarget);
+            }
           },
         },
       } as unknown as Window & { opener: Window | null };
@@ -526,7 +556,7 @@ export const VncAction: Story = {
       expectMachineActionOrder(vncCard, ["打开详情页", "打开面板", "打开 VNC", "展开详情"]);
       await userEvent.click(within(vncCard).getByRole("button", { name: "打开详情页" }));
       await waitFor(() => expect(openCalls.length).toBe(1));
-      expect(openCalls[0]?.url).toBe(buildLazycatMachineDetailUrl(2312));
+      expect(openCalls[0]?.url).toBe("");
       expect(openCalls[0]?.target).toContain(buildLazycatMachineDetailPopupName(2312));
       expect(popupWindows[0]?.opener).toBeNull();
       await waitFor(() =>
@@ -539,6 +569,12 @@ export const VncAction: Story = {
         expect(submitCalls).toContainEqual({
           action: "https://lxc.lazycat.wiki/login?action=email",
           method: "POST",
+          target: openCalls[0]?.target ?? "",
+        }),
+      );
+      await waitFor(() =>
+        expect(replaceCalls).toContainEqual({
+          url: buildLazycatMachineDetailUrl(2312),
           target: openCalls[0]?.target ?? "",
         }),
       );
@@ -580,7 +616,7 @@ export const VncAction: Story = {
       expect(detailButton).toBeEnabled();
       await userEvent.click(detailButton);
       await waitFor(() => expect(openCalls.length).toBe(4));
-      expect(openCalls[3]?.url).toBe(buildLazycatMachineDetailUrl(2314));
+      expect(openCalls[3]?.url).toBe("");
       expect(openCalls[3]?.target).toContain(buildLazycatMachineDetailPopupName(2314));
       expect(popupWindows[3]?.opener).toBeNull();
       await waitFor(() =>
@@ -593,6 +629,12 @@ export const VncAction: Story = {
         expect(submitCalls).toContainEqual({
           action: "https://lxc.lazycat.wiki/login?action=email",
           method: "POST",
+          target: openCalls[3]?.target ?? "",
+        }),
+      );
+      await waitFor(() =>
+        expect(replaceCalls).toContainEqual({
+          url: buildLazycatMachineDetailUrl(2314),
           target: openCalls[3]?.target ?? "",
         }),
       );
