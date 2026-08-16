@@ -22,6 +22,12 @@ REQUIRED_CHECKS = {
     "Review Policy Gate",
 }
 
+METADATA_CONCURRENCY_GROUPS = {
+    "ci-pr.yml": "ci-pr-${{ github.event_name == 'pull_request' && github.event.action == 'edited' && format('metadata-{0}-{1}', github.event.pull_request.number, github.run_id) || github.event.pull_request.number || github.ref }}",
+    "label-gate.yml": "label-gate-${{ github.event_name == 'pull_request' && github.event.action == 'edited' && format('metadata-{0}-{1}', github.event.pull_request.number, github.run_id) || github.event.pull_request.number || github.event.inputs.pull_number || github.run_id }}",
+    "review-policy.yml": "review-policy-${{ github.event_name == 'pull_request' && github.event.action == 'edited' && format('metadata-{0}-{1}', github.event.pull_request.number, github.run_id) || github.event.pull_request.number || github.event.inputs.pull_number || github.run_id }}",
+}
+
 
 def load_module(path: Path):
     spec = importlib.util.spec_from_file_location("metadata_gate", path)
@@ -44,6 +50,13 @@ def require_text(text: str, needle: str, where: str) -> None:
 
 def forbid_text(text: str, needle: str, where: str) -> None:
     require(needle not in text, f"{where}: unexpected text {needle!r}")
+
+
+def validate_metadata_concurrency(path: Path) -> None:
+    text = path.read_text()
+    expected_group = METADATA_CONCURRENCY_GROUPS[path.name]
+    require_text(text, f"  group: {expected_group}", path.name)
+    require_text(text, "  cancel-in-progress: true", path.name)
 
 
 def validate_quality_gates(path: Path) -> None:
@@ -82,6 +95,7 @@ def validate_ci_pr(path: Path) -> None:
     forbid_text(text, "release-intent.sh", "ci-pr.yml")
     forbid_text(text, "workflow_dispatch:", "ci-pr.yml")
     forbid_text(text, "pull_request_target:", "ci-pr.yml")
+    validate_metadata_concurrency(path)
 
 
 def validate_ci_main(path: Path) -> None:
@@ -204,6 +218,7 @@ def validate_label_gate(path: Path) -> None:
     require_text(text, "GET /repos/{owner}/{repo}/commits/{commit_sha}/pulls", "label-gate.yml")
     forbid_text(text, "actions/checkout", "label-gate.yml")
     forbid_text(text, "metadata_gate.py", "label-gate.yml")
+    validate_metadata_concurrency(path)
 
 
 def validate_review_policy(path: Path) -> None:
@@ -217,6 +232,7 @@ def validate_review_policy(path: Path) -> None:
     require_text(text, "GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews", "review-policy.yml")
     forbid_text(text, "actions/checkout", "review-policy.yml")
     forbid_text(text, "metadata_gate.py", "review-policy.yml")
+    validate_metadata_concurrency(path)
 
 
 def validate_merge_group_helpers(module: Any, fixtures_dir: Path) -> None:
